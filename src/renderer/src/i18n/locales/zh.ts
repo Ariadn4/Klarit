@@ -459,6 +459,26 @@ export const zh = {
     confirmBody: '将合并/拆分并删除：{{targets}}。此操作会删卡，确认继续？',
     confirmApply: '确认应用'
   },
+  cardConsult: {
+    title: '单需求 Agent（只读咨询）',
+    placeholder: '问进度 / 讨论 / 干预这张卡…',
+    empty: '跟这张卡的 Agent 聊聊：查进度、暂停/倒回、或提出新想法',
+    send: '发送',
+    thinking: '思考中…',
+    ivPause: '暂停本卡',
+    ivResume: '恢复本卡',
+    ivReenter: '倒回到「{{node}}」并重做',
+    ivInject: '向当前节点注入指令',
+    ivAdjust: '修改本卡资料',
+    apply: '执行',
+    confirmReenter: '将倒回到「{{node}}」前向修复（不重置已有产出），确认？',
+    confirmInject: '将向当前执行节点注入这条指令并重跑，确认？',
+    confirmAdjust: '将修改本卡资料，确认？',
+    proposalNote: '这更像塑造需求——已上抛全局，拟了卡操作提案',
+    applyProposal: '应用 {{count}} 项',
+    applied: '已应用',
+    done: '已执行'
+  },
   engineDecision: {
     // 背景说明
     pushNonFastForward: '推送被拒：远端已有比本地更新的提交。可拉取变基后重推、强推覆盖，或跳过推送。',

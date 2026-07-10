@@ -464,6 +464,26 @@ export const en: Dictionary = {
     confirmBody: 'Will merge/split and delete: {{targets}}. This removes cards — continue?',
     confirmApply: 'Confirm & apply'
   },
+  cardConsult: {
+    title: 'Requirement Agent (read-only)',
+    placeholder: 'Ask progress / discuss / intervene on this card…',
+    empty: 'Chat with this card’s agent: check progress, pause/roll back, or raise a new idea',
+    send: 'Send',
+    thinking: 'Thinking…',
+    ivPause: 'Pause this card',
+    ivResume: 'Resume this card',
+    ivReenter: 'Roll back to “{{node}}” and redo',
+    ivInject: 'Inject an instruction into the current node',
+    ivAdjust: 'Edit this card’s details',
+    apply: 'Run',
+    confirmReenter: 'Roll back to “{{node}}” and fix forward (existing outputs are not reset). Continue?',
+    confirmInject: 'Inject this instruction into the current node and re-run. Continue?',
+    confirmAdjust: 'Edit this card’s details. Continue?',
+    proposalNote: 'This reads as shaping a requirement — escalated to the global agent, which drafted card ops',
+    applyProposal: 'Apply {{count}}',
+    applied: 'Applied',
+    done: 'Done'
+  },
   engineDecision: {
     // Background
     pushNonFastForward:

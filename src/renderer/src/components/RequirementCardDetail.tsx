@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { Play, Pause, RotateCcw, X } from 'lucide-react'
 import type { WorkflowDefinition } from '@shared/types'
 import { RunDecisionPanel } from './RunDecisionPanel'
+import { CardConsultPanel } from './CardConsultPanel'
 import { CommandOutputView } from './CommandOutputView'
 import { CopyButton } from './CopyButton'
 import { cardBadgeClass } from './cardTypeColors'
@@ -209,6 +210,16 @@ export function RequirementCardDetail(): React.JSX.Element | null {
               />
             </div>
           )}
+
+          {/* 单需求 agent 咨询区（查进度 / 本卡干预 / 上抛塑造需求），与决策区并列 */}
+          <CardConsultPanel
+            cardId={card.proposedName}
+            runId={runId ?? undefined}
+            nodes={wf?.nodes}
+            onRunUpdate={(b) => {
+              if (b) setRun(b)
+            }}
+          />
 
           {/* 前台输出分流：agent 节点显示「AI 活动」；命令节点按每条命令各一格（node:<id>:<i>）分流，绝不夹揉。 */}
           {runId && bp?.currentNodeId && currentNode?.executor.kind === 'agent' && (

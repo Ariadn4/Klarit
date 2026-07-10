@@ -43,22 +43,22 @@
 
 ## 7. IPC / preload
 
-- [ ] 7.1 单卡对话通道：每卡会话 get-or-create、发消息（跑咨询核一轮）、编辑/重试（复用 truncate）、选 agent/模型
-- [ ] 7.2 干预应用通道：`engineReenter`/`engineInject`（破坏性确认在渲染层）+ pause/resume/cardsUpdate 复用
-- [ ] 7.3 上抛提案应用：复用 `applyOps`；门分类旁路通道
-- [ ] 7.4 preload 暴露 + 类型；先测试主进程 handler 契约
+- [x] 7.1 单卡对话通道：每卡会话 get-or-create、发消息（跑咨询核一轮）、编辑/重试（复用 truncate）、选 agent/模型
+- [x] 7.2 干预应用通道：`engineReenter`/`engineInject`（破坏性确认在渲染层）+ pause/resume/cardsUpdate 复用
+- [x] 7.3 上抛提案应用：复用 `applyOps`；门分类旁路通道
+- [x] 7.4 preload 暴露 + 类型；先测试主进程 handler 契约
 
 ## 8. 渲染层：卡详情面板咨询区
 
-- [ ] 8.1 咨询区组件：复用全局对话面板消息列表/输入/复制；一卡一会话（无「新建」）；与决策区并列
-- [ ] 8.2 查进度作答呈现（reply）；纯咨询轮空回复不留占位（复用全局对话行为）
-- [ ] 8.3 本卡干预确认流：暂停/恢复直接执行；倒回 K/就地注入/结构改动破坏性二次确认后经 IPC 执行
-- [ ] 8.4 上抛 ops 提案审阅：复用 `card-ops-review-apply` 组件，applyOps 确认后刷看板
-- [ ] 8.5 遵 `docs/brand` 语义令牌、深浅双主题、i18n 文案
+- [x] 8.1 咨询区组件：复用全局对话面板消息列表/输入/复制；一卡一会话（无「新建」）；与决策区并列
+- [x] 8.2 查进度作答呈现（reply）；纯咨询轮空回复不留占位（复用全局对话行为）
+- [x] 8.3 本卡干预确认流：暂停/恢复直接执行；倒回 K/就地注入/结构改动破坏性二次确认后经 IPC 执行
+- [x] 8.4 上抛 ops 提案审阅：复用 `card-ops-review-apply` 组件，applyOps 确认后刷看板
+- [x] 8.5 遵 `docs/brand` 语义令牌、深浅双主题、i18n 文案
 
 ## 9. 收尾与验收
 
-- [ ] 9.1 `npm run typecheck`（node + web 两套）全绿
-- [ ] 9.2 `npm run test:run` 全绿（含新单测 + 既有回退/处置回归）
+- [x] 9.1 `npm run typecheck`（node + web 两套）全绿
+- [x] 9.2 `npm run test:run` 全绿（含新单测 + 既有回退/处置回归）
 - [ ] 9.3 dogfood（`npm start` 不监听源码）：跑到一半的卡开对话 →① 问进度得答复；② 倒回节点 K 并注入→确认→引擎回退+K 重做；③「还要加个需求 X」→上抛→orchestrate 建卡提案→applyOps→看板新卡出现
 - [ ] 9.4 `/opsx:archive` 同步增量 spec 到主 specs
