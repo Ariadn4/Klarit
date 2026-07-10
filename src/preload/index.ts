@@ -33,6 +33,9 @@ const api: KlaritApi = {
   pauseRun: (runId) => ipcRenderer.invoke(IPC.enginePause, runId),
   resumeRun: (runId) => ipcRenderer.invoke(IPC.engineResume, runId),
   decideRun: (runId, response) => ipcRenderer.invoke(IPC.engineDecide, runId, response),
+  reenterRun: (runId, targetNodeId, instruction) =>
+    ipcRenderer.invoke(IPC.engineReenter, runId, targetNodeId, instruction),
+  injectRun: (runId, instruction) => ipcRenderer.invoke(IPC.engineInject, runId, instruction),
   getRunState: (runId) => ipcRenderer.invoke(IPC.engineGetRunState, runId),
   runGateAction: (runId, actionIndex) => ipcRenderer.invoke(IPC.engineRunGateAction, runId, actionIndex),
   stopGateAction: (runId) => ipcRenderer.invoke(IPC.engineStopGateAction, runId),
@@ -134,6 +137,13 @@ const api: KlaritApi = {
     ipcRenderer.invoke(IPC.setConversationAgentModel, id, agentId, model),
   retryLastTurn: (id) => ipcRenderer.invoke(IPC.conversationRetryLast, id),
   dropLastTurn: (id) => ipcRenderer.invoke(IPC.conversationDropLastTurn, id),
+  getCardConversation: (cardId) => ipcRenderer.invoke(IPC.cardConsultGet, cardId),
+  sendCardConsult: (cardId, intent) => ipcRenderer.invoke(IPC.cardConsultSend, cardId, intent),
+  retryLastCardConsult: (cardId) => ipcRenderer.invoke(IPC.cardConsultRetryLast, cardId),
+  dropLastCardConsultTurn: (cardId) => ipcRenderer.invoke(IPC.cardConsultDropLastTurn, cardId),
+  setCardConsultAgentModel: (cardId, agentId, model) =>
+    ipcRenderer.invoke(IPC.cardConsultSetAgentModel, cardId, agentId, model),
+  classifyCardGateInput: (cardId, text) => ipcRenderer.invoke(IPC.cardGateClassify, cardId, text),
   listCardTypes: () => ipcRenderer.invoke(IPC.listCardTypes),
   saveCardType: (def) => ipcRenderer.invoke(IPC.saveCardType, def),
   deleteCardType: (id) => ipcRenderer.invoke(IPC.deleteCardType, id),

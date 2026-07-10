@@ -6,10 +6,9 @@
 
 import type {
   CardAgentTurn,
-  CardIntervention,
+  CardConsultOutcome,
   ConversationMessage,
-  OrchestrationOutcome,
-  OrchestrationProposal
+  OrchestrationOutcome
 } from '../shared/types'
 import { buildCardConsultPrompt } from '../shared/card-agent'
 
@@ -37,14 +36,7 @@ export interface CardConsultInput {
   biasLocal?: boolean
 }
 
-/** 咨询核产物：自然语言回复 + （本卡干预提议 或 上抛得到的 ops 提案）。干预与提案互斥（塑造需求一律上抛）。 */
-export interface CardConsultOutcome {
-  reply: string
-  /** 本卡干预提议（破坏性由 `isDestructiveIntervention` 派生，确认在渲染层）。 */
-  interventions?: CardIntervention[]
-  /** 上抛塑造需求经 orchestrate 得到的 ops 提案（供卡对话内审阅 applyOps）。 */
-  proposal?: OrchestrationProposal
-}
+export type { CardConsultOutcome } from '../shared/types'
 
 export interface CardConsultSeam {
   consult: (input: CardConsultInput) => Promise<CardConsultOutcome>

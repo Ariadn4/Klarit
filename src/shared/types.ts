@@ -626,6 +626,8 @@ export interface ConversationMessage {
   role: ConversationRole
   text: string
   proposal?: OrchestrationProposal
+  /** 单需求 agent 的本卡干预提议（仅卡咨询会话用；供历史重放确认按钮）。 */
+  interventions?: CardIntervention[]
   at: number
 }
 
@@ -678,6 +680,15 @@ export interface CardAgentTurn {
   reply: string
   interventions?: CardIntervention[]
   upshift?: { intent: string }
+}
+
+/** 咨询核产物（跨 IPC）：自然语言回复 + （本卡干预提议 或 上抛得到的 ops 提案）。干预与提案互斥。 */
+export interface CardConsultOutcome {
+  reply: string
+  /** 本卡干预提议（破坏性由 `isDestructiveIntervention` 派生，确认在渲染层）。 */
+  interventions?: CardIntervention[]
+  /** 上抛塑造需求经 orchestrate 得到的 ops 提案（供卡对话内审阅 applyOps）。 */
+  proposal?: OrchestrationProposal
 }
 
 // ── 引擎执行（engine-execution） ───────────────────────────────────────────
@@ -1202,6 +1213,23 @@ export interface KlaritApi {
   retryLastTurn: (id: string) => Promise<Conversation | null>
   /** 编辑：移除最新一轮，返回被移除的用户文字供回填输入。 */
   dropLastTurn: (id: string) => Promise<{ text: string } | null>
+  // ── 单需求 agent（single-card-agent：每卡只读咨询 + 本卡干预 + 门自由输入上抛）──
+  /** 取（或惰性新建）某卡的单需求 agent 会话（id=cardId，一卡一个）；未绑定给 null。 */
+  getCardConversation: (cardId: string) => Promise<Conversation | null>
+  /** 跑一轮咨询：三岔（查进度回复/本卡干预提议/上抛 ops 提案）；记入该卡会话。 */
+  sendCardConsult: (cardId: string, intent: string) => Promise<CardConsultOutcome | null>
+  /** 重试：丢弃末尾 agent 回复、重跑上一条用户意图；返回更新后会话。 */
+  retryLastCardConsult: (cardId: string) => Promise<Conversation | null>
+  /** 编辑：移除最新一轮，返回被移除的用户文字供回填输入。 */
+  dropLastCardConsultTurn: (cardId: string) => Promise<{ text: string } | null>
+  /** 设某卡会话选用的 agent/模型（覆盖全局默认；传 undefined 清除回落默认）。 */
+  setCardConsultAgentModel: (cardId: string, agentId?: string, model?: string) => Promise<void>
+  /** 门自由输入分类前置：反偏置跑一轮；塑造需求→出 ops 提案（不消费门），否则只回复。 */
+  classifyCardGateInput: (cardId: string, text: string) => Promise<CardConsultOutcome | null>
+  /** 用户发起本卡干预——倒回到目标节点前向修复（可带注入指令）；回运行断点。 */
+  reenterRun: (runId: string, targetNodeId: string, instruction?: string) => Promise<RunBreakpoint | null>
+  /** 用户发起本卡干预——就地向当前执行节点注入新指令；回运行断点。 */
+  injectRun: (runId: string, instruction: string) => Promise<RunBreakpoint | null>
   // ── 需求卡类型注册表：增删改查（全局类型库）──
   /** 列出在册需求卡类型（首启种入默认类型）。 */
   listCardTypes: () => Promise<CardTypeDef[]>

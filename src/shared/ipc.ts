@@ -126,6 +126,19 @@ export const IPC = {
   conversationRetryLast: 'conversation:retryLast',
   /** 编辑：移除最新一轮，返回被移除的用户文字供回填输入。 */
   conversationDropLastTurn: 'conversation:dropLastTurn',
+  // ── 单需求 agent（single-card-agent：每卡只读咨询 + 本卡干预 + 门自由输入上抛）──
+  /** 取（或惰性新建）某卡的单需求 agent 会话（id=cardId，一卡一个）；未绑定给 null。 */
+  cardConsultGet: 'cardConsult:get',
+  /** 跑一轮咨询：装配本卡只读读上下文→三岔（查进度回复/本卡干预提议/上抛 ops 提案）；记入该卡会话。 */
+  cardConsultSend: 'cardConsult:send',
+  /** 重试：丢弃末尾 agent 回复、重跑上一条用户意图，返回更新后会话。 */
+  cardConsultRetryLast: 'cardConsult:retryLast',
+  /** 编辑：移除最新一轮，返回被移除的用户文字供回填输入。 */
+  cardConsultDropLastTurn: 'cardConsult:dropLastTurn',
+  /** 设某卡会话选用的 agent/模型（覆盖全局默认，传 undefined 清除回落）。 */
+  cardConsultSetAgentModel: 'cardConsult:setAgentModel',
+  /** 门自由输入分类前置：反偏置跑一轮咨询；塑造需求→出 ops 提案（**不消费该门决策**），否则只回复。 */
+  cardGateClassify: 'cardConsult:gateClassify',
   // ── 需求卡类型注册表：增删改查（全局类型库；archetype 内置 container/leaf）──
   listCardTypes: 'cardType:list',
   saveCardType: 'cardType:save',
@@ -146,6 +159,10 @@ export const IPC = {
   engineResume: 'engine:resume',
   /** 回应一个待决策（选项/多选/填空）。 */
   engineDecide: 'engine:decide',
+  /** 用户发起本卡干预——倒回到目标节点前向修复（可带注入指令）；活跑先安全挂起。回运行断点。 */
+  engineReenter: 'engine:reenter',
+  /** 用户发起本卡干预——就地向当前执行节点注入新指令；无可注入节点优雅无操作。回运行断点。 */
+  engineInject: 'engine:inject',
   /** 查询某运行的当前断点（挂载回灌 UI）。 */
   engineGetRunState: 'engine:getRunState',
   /** 触发某人工门动作按钮（按索引）：worktree 下跑命令、流式回显、不推进运行。 */

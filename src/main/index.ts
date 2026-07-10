@@ -1,12 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AppSettings,
   ApplyOpsResult,
   CandidateCard,
   CandidateIssue,
+  CardConsultOutcome,
   CardOp,
   CardTypeDef,
   CardValidation,
@@ -88,6 +89,11 @@ import { resolveLocalized } from '../shared/localized'
 import { createOpsProducer, type SessionBridge } from './orchestrate-producer'
 import { applyOps as applyOpsToStore, createOpsFromCandidates } from './apply-ops'
 import { createConversationStore } from './conversation-store'
+import { createCardConsultSeam } from './card-consult-service'
+import { createCardConsultProducer } from './card-consult-producer'
+import { getOrCreateCardConversation, cardSessionBridge } from './card-conversation'
+import { buildCardConsultContext } from '../shared/card-agent'
+import { deriveLineage, renderLineage } from './engine/lineage'
 import { realAgentRunner } from './agent/runner'
 import { validateOps } from '../shared/card-ops'
 import { createRulePackStore } from './rule-pack-store'
@@ -371,6 +377,68 @@ const orchestrateProducer = (scope: string, agentId?: string, model?: string): R
     cwd: app.getPath('userData'),
     model: model ?? settings.defaultModel,
     sessions
+  })
+}
+
+// 每卡会话持久化（single-card-agent）：独立桶 card-conversations，与全局对话（conversations 桶）物理隔离；
+// 一卡一会话＝会话 id 恒 = cardId。scope = 项目 id（未绑定回落 __unbound__，同全局对话）。
+const cardConversationStore = createConversationStore(join(app.getPath('userData'), 'card-conversations'))
+
+/** 渲染某卡运行断点为只读文本（当前节点/阶段/最远进展/门进度）。 */
+function renderBreakpoint(bp: RunBreakpoint, nameOf: (id: string) => string): string {
+  const cur = bp.currentNodeId ? `${nameOf(bp.currentNodeId)}（${bp.phase.kind}）` : '（尚未进入首个节点）'
+  const lines = [`- 当前节点：${cur}`, `- 生命周期：${bp.state}`]
+  if (bp.furthestNodeId) lines.push(`- 最远进展：${nameOf(bp.furthestNodeId)}`)
+  if (bp.phase.kind === 'gate') lines.push(`- 门把：停在第 ${bp.phase.index} 道`)
+  if (bp.pendingDecision) lines.push(`- 有待决策：${bp.pendingDecision.source}`)
+  return lines.join('\n')
+}
+
+/** 装配某卡的只读读上下文（活现状 + 断点 + 溯源 + 各仓分支 diff，预算截断）。限本卡。 */
+function buildCardCtx(pid: string, cardId: string): string {
+  const lang = settings.language ?? DEFAULT_LANGUAGE
+  const card = cardStore.get(pid, cardId)
+  if (!card) return '（本卡不存在。）'
+  const project = findProjectById(registry, pid)
+  const nameOfMember = (mid: string): string => project?.members.find((m) => m.id === mid)?.derivedName ?? mid
+  const cardBlock = {
+    title: card.title,
+    typeId: card.typeId,
+    status: card.status,
+    description: card.description,
+    relations: (card.relations ?? []).map((r) => `${r.kind} → ${r.target}`).join('、') || undefined
+  }
+  const bp = card.activeRunId ? engine.getRunState(card.activeRunId) : null
+  if (!bp) return buildCardConsultContext({ card: cardBlock, breakpoint: null, lineage: null, branchDiffs: [] })
+  const nodes = workflows.get(bp.request.workflowId)?.nodes ?? []
+  const nameOf = (id: string): string => {
+    const n = nodes.find((x) => x.id === id)
+    return n ? resolveLocalized(n.name, lang) : id
+  }
+  const gitDiffNames = (repoDir: string, from: string, to: string): string[] =>
+    (makeGitRunner(repoDir)(['diff', '--name-only', `${from}..${to}`]) ?? '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  const members = bp.members ?? {}
+  const diffNames = (memberId: string, from: string, to: string): string[] => {
+    const md = members[memberId]
+    const p = md && existsSync(md.worktreePath) ? md.worktreePath : md?.repoPath ?? bp.request.repoPath
+    return gitDiffNames(p, from, to)
+  }
+  const lineage = renderLineage(deriveLineage(bp, nodes, diffNames), nameOf)
+  const branchDiffs = Object.values(members)
+    .map((md) => {
+      const p = existsSync(md.worktreePath) ? md.worktreePath : md.repoPath
+      const files = gitDiffNames(p, md.baseBranch, md.branch)
+      return { repo: nameOfMember(md.memberId), diff: files.join('\n') }
+    })
+    .filter((d) => d.diff)
+  return buildCardConsultContext({
+    card: cardBlock,
+    breakpoint: renderBreakpoint(bp, nameOf),
+    lineage,
+    branchDiffs
   })
 }
 
@@ -721,6 +789,15 @@ function registerIpc(): void {
     engine.decide(runId, response)
     return engine.getRunState(runId)
   })
+  // 用户发起本卡干预（经引擎中转、破坏性确认在渲染层）：倒回目标节点前向修复 / 就地注入当前节点。
+  ipcMain.handle(IPC.engineReenter, (_e, runId: string, targetNodeId: string, instruction?: string) => {
+    engine.reenter(runId, targetNodeId, instruction)
+    return engine.getRunState(runId)
+  })
+  ipcMain.handle(IPC.engineInject, (_e, runId: string, instruction: string) => {
+    engine.inject(runId, instruction)
+    return engine.getRunState(runId)
+  })
   ipcMain.handle(IPC.engineGetRunState, (_e, runId: string) => engine.getRunState(runId))
   ipcMain.handle(IPC.engineRunGateAction, (_e, runId: string, actionIndex: number) =>
     engine.runGateAction(runId, actionIndex)
@@ -1068,6 +1145,108 @@ function registerIpc(): void {
     (e, id: string, agentId?: string, model?: string): void =>
       conversationStore.setAgentModel(convScope(e), id, agentId, model)
   )
+
+  // ── 单需求 agent：每卡只读咨询 + 本卡干预 + 门自由输入上抛 ──
+  // 构造某卡的咨询核：读上下文限本卡；upshift→转调全局编排核（同全局对话共用 orchestrate）；会话按 cardId。
+  const cardConsultSeamFor = (pid: string, cardId: string) => {
+    const conv = cardConversationStore.get(pid, cardId)
+    const producer = createCardConsultProducer({
+      runner: realAgentRunner,
+      toolId: conv?.agentId ?? settings.defaultAgent ?? null,
+      cwd: app.getPath('userData'),
+      model: conv?.model ?? settings.defaultModel,
+      sessions: cardSessionBridge(cardConversationStore, pid)
+    })
+    return createCardConsultSeam(
+      {
+        buildContext: (cid) => buildCardCtx(pid, cid),
+        orchestrate: async (intent) => {
+          const seam = createOrchestrateSeam(
+            orchestrateDepsFor(pid),
+            orchestrateProducer(pid, conv?.agentId, conv?.model)
+          )
+          return seam.orchestrate({ intent }, pid)
+        },
+        getHistory: (cid) => (cid ? cardConversationStore.get(pid, cid)?.messages ?? [] : [])
+      },
+      producer
+    )
+  }
+
+  // 跑一轮卡咨询：惰性开会话 → 可选先落用户消息 → 三岔 → 落 agent 回复（含提案/干预，空回复不塞占位）。
+  const runCardConsultTurn = async (
+    pid: string,
+    cardId: string,
+    intent: string,
+    appendUser: boolean
+  ): Promise<CardConsultOutcome> => {
+    getOrCreateCardConversation(cardConversationStore, pid, cardId, Date.now())
+    if (appendUser) cardConversationStore.appendMessage(pid, cardId, { role: 'user', text: intent, at: Date.now() })
+    const outcome = await cardConsultSeamFor(pid, cardId).consult({ cardId, intent, conversationId: cardId })
+    cardConversationStore.appendMessage(pid, cardId, {
+      role: 'agent',
+      text: outcome.reply?.trim() ? outcome.reply : '',
+      ...(outcome.proposal ? { proposal: outcome.proposal } : {}),
+      ...(outcome.interventions ? { interventions: outcome.interventions } : {}),
+      at: Date.now()
+    })
+    return outcome
+  }
+
+  ipcMain.handle(IPC.cardConsultGet, (e, cardId: string): Conversation | null => {
+    const pid = currentProjectId(e)
+    return pid ? getOrCreateCardConversation(cardConversationStore, pid, cardId, Date.now()) : null
+  })
+
+  ipcMain.handle(IPC.cardConsultSend, (e, cardId: string, intent: string): Promise<CardConsultOutcome | null> => {
+    const pid = currentProjectId(e)
+    if (!pid) return Promise.resolve(null)
+    return runCardConsultTurn(pid, cardId, intent, true)
+  })
+
+  // 重试：丢弃末尾 agent 回复 → 重跑上一条用户意图 → 追加新回复（替换而非追加多一轮）。
+  ipcMain.handle(IPC.cardConsultRetryLast, async (e, cardId: string): Promise<Conversation | null> => {
+    const pid = currentProjectId(e)
+    if (!pid) return null
+    const conv = cardConversationStore.get(pid, cardId)
+    if (!conv) return null
+    const lastUser = [...conv.messages].map((m) => m.role).lastIndexOf('user')
+    if (lastUser < 0) return conv
+    const text = conv.messages[lastUser].text
+    cardConversationStore.truncateMessages(pid, cardId, lastUser + 1)
+    await runCardConsultTurn(pid, cardId, text, false)
+    return cardConversationStore.get(pid, cardId)
+  })
+
+  // 编辑：移除最新一轮（末条用户消息及其后 agent 回复），返回被移除的用户文字供回填输入。
+  ipcMain.handle(IPC.cardConsultDropLastTurn, (e, cardId: string): { text: string } | null => {
+    const pid = currentProjectId(e)
+    if (!pid) return null
+    const conv = cardConversationStore.get(pid, cardId)
+    if (!conv) return null
+    const lastUser = [...conv.messages].map((m) => m.role).lastIndexOf('user')
+    if (lastUser < 0) return { text: '' }
+    const text = conv.messages[lastUser].text
+    cardConversationStore.truncateMessages(pid, cardId, lastUser)
+    return { text }
+  })
+
+  ipcMain.handle(
+    IPC.cardConsultSetAgentModel,
+    (e, cardId: string, agentId?: string, model?: string): void => {
+      const pid = currentProjectId(e)
+      if (!pid) return
+      getOrCreateCardConversation(cardConversationStore, pid, cardId, Date.now())
+      cardConversationStore.setAgentModel(pid, cardId, agentId, model)
+    }
+  )
+
+  // 门自由输入分类前置：反偏置跑一轮（不落会话、不消费门）；塑造需求→回带 ops 提案，否则只回复。
+  ipcMain.handle(IPC.cardGateClassify, async (e, cardId: string, text: string): Promise<CardConsultOutcome | null> => {
+    const pid = currentProjectId(e)
+    if (!pid) return null
+    return cardConsultSeamFor(pid, cardId).consult({ cardId, intent: text, conversationId: cardId, biasLocal: true })
+  })
 
   // ── 全局覆盖分解 skill：手写/导入/读取（可选高级覆盖；优先于自动生成 skill）──
   ipcMain.handle(IPC.readDefaultDecomposeSkill, (): string => globalSkills.readOverride() ?? '')
