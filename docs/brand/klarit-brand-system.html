@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Klarit · Brand System v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  /* Brand */
+  --cobalt-50: #eef1ff;
+  --cobalt-100: #c4cffd;
+  --cobalt-300: #7c93ff;
+  --cobalt-500: #1e40ff;
+  --cobalt-600: #1530bf;
+  --cobalt-700: #0c2080;
+  --cobalt-800: #08164d;
+  --cobalt-900: #040a2a;
+
+  --signal-50: #fff1ea;
+  --signal-100: #ffd0b8;
+  --signal-300: #ff9971;
+  --signal-500: #ff5a1f;
+  --signal-600: #d63d0f;
+  --signal-700: #9e2806;
+  --signal-800: #6b1903;
+  --signal-900: #3d0e02;
+
+  /* Neutrals */
+  --canvas: #fafaf7;
+  --paper: #f5f1e8;
+  --stone-100: #e8e4dc;
+  --stone-300: #c4c0b8;
+  --stone-600: #6b6862;
+  --stone-800: #3a3835;
+  --ink: #1a1a2e;
+  --ink-deep: #0f1228;
+
+  /* Semantic */
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --info: #0284c7;
+
+  /* Status — 任务圆点四态状态色（与品牌色分离的专用状态色） */
+  --state-idle: #9ca3af;
+  --state-system: #2563eb;
+  --state-agent: #7c3aed;
+  --state-decision: #f97316;
+
+  /* Tag 色板 — 需求卡「类型徽章」选色（装饰性分类色，与品牌/语义色分离；深浅主题同值）。
+     用户为每个类型从中自选；epic/feature/bug 有默认播种色。亮色配 tag-ink 深字。 */
+  --tag-red: #ef4444;
+  --tag-amber: #d97706;
+  --tag-green: #16a34a;
+  --tag-blue: #3b82f6;
+  --tag-violet: #8b5cf6;
+  --tag-yellow: #eab308;
+  --tag-cyan: #06b6d4;
+  --tag-pink: #ec4899;
+  --tag-ink: #1c1917;
+
+  /* Radius */
+  --radius-sharp: 2px;
+  --radius: 6px;
+  --radius-card: 10px;
+  --radius-pill: 999px;
+
+  /* Spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* Type */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--paper);
+  color: var(--ink);
+  margin: 0;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 64px 32px 96px;
+}
+
+/* Header */
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 32px;
+  margin-bottom: 48px;
+  border-bottom: 0.5px solid var(--stone-100);
+}
+.brand-header svg { width: 44px; height: 44px; }
+.brand-header .title-block { flex: 1; }
+.brand-header h1 {
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.8px;
+  margin: 0;
+  color: var(--ink);
+}
+.brand-header .meta {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--stone-600);
+  font-weight: 500;
+  margin: 4px 0 0;
+}
+
+/* Section */
+section { margin-bottom: 64px; }
+section h2 {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--stone-600);
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+section h3 {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+  margin: 0 0 24px;
+  color: var(--ink);
+}
+section .lede {
+  font-size: 15px;
+  color: var(--stone-800);
+  margin: 0 0 24px;
+  max-width: 640px;
+}
+
+.sub {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--stone-600);
+  font-weight: 500;
+  margin: 32px 0 12px;
+}
+
+/* Surfaces */
+.card {
+  background: var(--canvas);
+  border: 0.5px solid var(--stone-100);
+  border-radius: var(--radius-card);
+  padding: 24px;
+}
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+@media (max-width: 640px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+}
+
+/* Logo display */
+.logo-display {
+  background: var(--paper);
+  border-radius: var(--radius-card);
+  padding: 48px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  min-height: 160px;
+}
+.logo-display .mark { display: flex; align-items: center; }
+.logo-display .wordmark {
+  font-size: 42px;
+  font-weight: 500;
+  color: var(--cobalt-500);
+  letter-spacing: -1.2px;
+}
+
+/* Color swatch */
+.swatch {
+  border-radius: var(--radius);
+  padding: 16px;
+  min-height: 100px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.swatch .name {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+.swatch .hex {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+}
+.swatch.dark { color: #fff; }
+.swatch.light { color: var(--ink); }
+
+.ramp {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 0.5px solid var(--stone-100);
+}
+.ramp .stop {
+  padding: 16px 8px;
+  font-size: 10px;
+  text-align: center;
+}
+.ramp .stop .num {
+  font-weight: 500;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.ramp .stop .hex {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+  font-size: 9px;
+}
+
+/* Typography */
+.type-row {
+  background: var(--canvas);
+  border: 0.5px solid var(--stone-100);
+  border-radius: var(--radius-card);
+  padding: 20px 24px;
+  margin-bottom: 12px;
+}
+.type-row .label {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--stone-600);
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+
+/* Spec table */
+table.specs {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+table.specs th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--stone-600);
+  font-weight: 500;
+  padding: 12px 0;
+  border-bottom: 0.5px solid var(--stone-100);
+}
+table.specs td {
+  padding: 10px 0;
+  border-bottom: 0.5px solid var(--stone-100);
+}
+table.specs td.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+table.specs td.muted { color: var(--stone-600); }
+table.specs tr:last-child td { border-bottom: 0; }
+
+/* Spacing demo */
+.space-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  background: var(--canvas);
+  border: 0.5px solid var(--stone-100);
+  border-radius: var(--radius-card);
+  padding: 24px;
+}
+.space-item { text-align: center; }
+.space-item .bar { background: var(--cobalt-500); height: 32px; margin: 0 auto; }
+.space-item .num { font-size: 12px; font-weight: 500; margin-top: 12px; }
+.space-item .token { font-family: var(--font-mono); font-size: 10px; color: var(--stone-600); margin-top: 2px; }
+
+/* Buttons */
+.btn {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 18px;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  /* 绝不 transition: all——显式列出过渡属性（Vercel 指南：避免 transition: all）。 */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn:focus-visible { outline: 2px solid var(--cobalt-500); outline-offset: 2px; }
+.btn-primary { background: var(--cobalt-500); color: #fff; }
+.btn-primary:hover { background: var(--cobalt-600); }
+.btn-secondary { background: #fff; color: var(--ink); border: 0.5px solid var(--stone-300); }
+.btn-secondary:hover { border-color: var(--ink); }
+.btn-ghost { background: transparent; color: var(--cobalt-500); padding: 10px 0; }
+.btn-signal { background: var(--signal-500); color: #fff; }
+.btn-signal:hover { background: var(--signal-600); }
+.btn-disabled { background: #fff; color: var(--stone-600); border: 0.5px solid var(--stone-300); opacity: 0.5; cursor: not-allowed; }
+.btn-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+/* Input */
+.input-group { margin-bottom: 20px; }
+.input-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--stone-600);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.input-label.error { color: var(--danger); }
+.input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 0.5px solid var(--stone-300);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--canvas);
+  outline: none;
+}
+.input:focus, .input.focus {
+  border: 1.5px solid var(--cobalt-500);
+  padding: 9.5px 13.5px;
+}
+.input.error { border: 1px solid var(--danger); color: var(--danger); }
+.input-help { font-size: 12px; color: var(--stone-600); margin: 6px 0 0; }
+.input-help.error { color: var(--danger); }
+textarea.input { min-height: 64px; resize: vertical; }
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Don'ts */
+.dont-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+@media (max-width: 640px) { .dont-grid { grid-template-columns: repeat(2, 1fr); } }
+.dont-card {
+  background: var(--paper);
+  border-radius: var(--radius-card);
+  padding: 24px 16px;
+  text-align: center;
+  position: relative;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.dont-card .x-line {
+  position: absolute;
+  top: 50%; left: 8px; right: 8px;
+  height: 1.5px;
+  background: var(--danger);
+  transform: rotate(-25deg);
+  transform-origin: center;
+}
+.dont-card .label {
+  font-size: 11px;
+  color: var(--danger);
+  font-weight: 500;
+  margin-top: 12px;
+}
+
+/* App mockup */
+.app-shell {
+  background: var(--paper);
+  border: 0.5px solid var(--stone-100);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+.app-topbar {
+  background: var(--canvas);
+  border-bottom: 0.5px solid var(--stone-100);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.app-brand { display: flex; align-items: center; gap: 8px; }
+.app-brand-text { font-size: 16px; font-weight: 500; color: var(--cobalt-500); letter-spacing: -0.3px; }
+.app-nav { display: flex; gap: 20px; }
+.app-nav a { font-size: 13px; color: var(--stone-600); text-decoration: none; }
+.app-nav a.active { color: var(--ink); font-weight: 500; border-bottom: 1.5px solid var(--cobalt-500); padding-bottom: 2px; }
+.app-meta { display: flex; align-items: center; gap: 12px; }
+.app-meta-label { font-size: 11px; color: var(--stone-600); letter-spacing: 1px; }
+.app-meta-value { font-size: 13px; font-weight: 500; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--cobalt-500); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; }
+
+.app-body { display: grid; grid-template-columns: 210px 1fr; height: 540px; }
+@media (max-width: 768px) { .app-body { grid-template-columns: 1fr; } }
+
+.app-sidebar { background: var(--canvas); border-right: 0.5px solid var(--stone-100); padding: 12px 10px; }
+.sidebar-label { font-size: 10px; letter-spacing: 1.5px; color: var(--stone-600); font-weight: 500; margin: 0 0 10px; }
+.sidebar-item { padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; border-radius: var(--radius); }
+.sidebar-item.active { background: var(--cobalt-50); }
+.sidebar-item.active .item-text { color: var(--cobalt-800); font-weight: 500; }
+.item-text { font-size: 13px; color: var(--ink); }
+.item-count { font-size: 11px; color: var(--stone-600); }
+.sidebar-item.active .item-count { color: var(--cobalt-800); opacity: 0.7; }
+
+.app-main { padding: 0; display: flex; flex-direction: column; background: var(--paper); }
+.board-wrap { flex: 1; min-height: 0; padding: 10px; display: flex; }
+.req-list { display: flex; flex-direction: column; gap: 8px; }
+.req-card { background: #fff; border: 0.5px solid var(--stone-100); border-radius: var(--radius-card); padding: 14px 18px; }
+.req-card.focused { border: 1.5px solid var(--cobalt-500); position: relative; padding-left: 24px; }
+.req-card.focused::before { content: ''; position: absolute; left: 6px; top: 14px; bottom: 14px; width: 3px; background: var(--signal-500); border-radius: var(--radius-pill); }
+.req-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.req-id { font-family: var(--font-mono); font-size: 11px; color: var(--stone-600); }
+.req-title { font-size: 15px; color: var(--ink); font-weight: 500; margin: 0 0 4px; }
+.req-meta { font-size: 13px; color: var(--stone-600); margin: 0; }
+.req-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.req-time { font-size: 11px; color: var(--stone-600); white-space: nowrap; }
+.req-actions { display: flex; gap: 6px; margin-top: 12px; }
+.req-actions .btn { font-size: 12px; padding: 6px 12px; }
+.code-inline { font-family: var(--font-mono); font-size: 12px; background: var(--paper); padding: 1px 5px; border-radius: 3px; }
+
+/* 真实产品形态：标题栏 + 侧栏(文件/Git) + 满高看板 + 底栏（对齐 App.tsx，间距收紧、列满高贴边） */
+.win-ctrls { display: flex; gap: 14px; align-items: center; color: var(--stone-600); }
+.win-ctrls svg { width: 13px; height: 13px; }
+.tb-toggle { width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--radius); color: var(--stone-600); border: none; background: transparent; }
+.tb-toggle:hover { background: var(--stone-100); color: var(--ink); }
+
+.side-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; }
+.side-tab { width: 30px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius); color: var(--stone-600); border: none; background: transparent; cursor: pointer; }
+.side-tab svg { display: block; }
+.side-tab.active { background: var(--cobalt-50); color: var(--cobalt-800); }
+.ftree { display: flex; flex-direction: column; gap: 1px; }
+.ftree-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: var(--radius); font-size: 13px; color: var(--ink); }
+.ftree-row:hover { background: var(--stone-100); }
+.ftree-row.indent { padding-left: 20px; }
+.ftree-row .fi { color: var(--stone-600); width: 12px; display: inline-block; }
+.side-footer { margin-top: auto; padding-top: 10px; border-top: 0.5px solid var(--stone-100); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.proj-switch { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); padding: 4px 6px; border-radius: var(--radius); }
+.proj-switch:hover { background: var(--stone-100); }
+.gear { width: 28px; height: 28px; display: grid; place-items: center; border-radius: var(--radius); color: var(--stone-600); border: none; background: transparent; }
+.gear:hover { background: var(--stone-100); color: var(--ink); }
+
+.kb-board { display: flex; gap: 10px; overflow-x: auto; flex: 1; min-height: 0; align-items: stretch; }
+.kb-col { flex: 0 0 184px; border: 0.5px solid var(--stone-100); border-radius: var(--radius-card); background: var(--canvas); display: flex; flex-direction: column; }
+.kb-col-head { padding: 10px 12px; border-bottom: 0.5px solid var(--stone-100); }
+.kb-col-name { font-size: 12px; font-weight: 600; color: var(--ink); }
+.kb-col-body { flex: 1; padding: 10px; display: flex; flex-direction: column; }
+.kb-add { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; margin-top: auto; border: 1px dashed var(--stone-300); border-radius: var(--radius); color: var(--cobalt-500); font-size: 12px; font-weight: 500; background: transparent; }
+.kb-add:hover { border-color: var(--cobalt-500); background: color-mix(in srgb, var(--cobalt-500) 12%, transparent); }
+.app-botbar { height: 26px; flex: none; border-top: 0.5px solid var(--stone-100); display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: var(--stone-600); background: var(--canvas); }
+
+/* ===== 字段标签对 & 列表编辑器（并入自 forms-and-lists 原型，见第 12 章）===== */
+.fl .input { width: 100%; border: 1px solid var(--stone-300); background: var(--canvas); border-radius: var(--radius); padding: 7px 10px; font-size: 13px; color: var(--ink); font-family: inherit; outline: none; }
+.fl .input:focus { border-color: var(--cobalt-500); }
+.fl textarea.input { min-height: 48px; resize: vertical; }
+.fl select.input { cursor: pointer; }
+.field { margin-bottom: 16px; }
+.field:last-child { margin-bottom: 0; }
+.field-label { display: block; font-size: 13px; font-weight: 600; color: var(--ink); line-height: 1.4; margin: 0; }
+.field-desc { font-size: 12px; font-weight: 400; color: var(--stone-600); line-height: 1.5; margin: 2px 0 8px; }
+.field-label + .input, .field-label + .seg { margin-top: 8px; }
+.req { color: var(--signal-500); font-weight: 600; margin-left: 3px; }
+.list { margin: 0; }
+.l-head { padding: 5px 4px 7px; border-bottom: 1px solid var(--stone-300); }
+.l-head-main { display: flex; align-items: center; gap: 8px; }
+.l-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.l-desc { font-size: 12px; font-weight: 400; color: var(--stone-600); line-height: 1.4; margin: 2px 0 0; }
+.l-spacer { flex: 1; }
+.l-count { font-family: var(--font-mono); font-size: 10px; color: var(--stone-600); background: var(--stone-100); border-radius: var(--radius-pill); padding: 1px 7px; }
+.lrow { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--stone-100); }
+.lrow:hover { background: color-mix(in srgb, var(--stone-100) 45%, transparent); }
+.lrow .num { flex: none; width: 16px; text-align: center; font-family: var(--font-mono); font-size: 11px; color: var(--stone-600); }
+.lrow.add { display: inline-flex; width: auto; align-self: flex-start; align-items: center; margin-top: 6px; color: var(--cobalt-500); cursor: pointer; font-size: 13px; font-weight: 500; gap: 6px; border-bottom: 0; padding: 3px 8px; border-radius: var(--radius); }
+/* 加按钮 hover 用半透明 cobalt（在米黄 paper 与近白 canvas 上都可见；纯 cobalt-50 在 paper 上太淡）。 */
+.lrow.add:hover { background: color-mix(in srgb, var(--cobalt-500) 12%, transparent); }
+.lrow.add svg { width: 13px; height: 13px; }
+.icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; flex: none; border: none; background: transparent; border-radius: var(--radius); cursor: pointer; color: var(--stone-600); }
+.icon-btn:hover { background: var(--stone-100); color: var(--ink); }
+.icon-btn.danger:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.icon-btn svg { width: 15px; height: 15px; }
+.handle { color: var(--stone-300); cursor: grab; }
+.handle:hover { color: var(--stone-600); }
+.handle svg { width: 16px; height: 16px; }
+.chev { color: var(--stone-600); transition: transform .15s ease; flex: none; display: inline-grid; place-items: center; cursor: pointer; }
+.litem[open] > summary .chev { transform: rotate(90deg); }
+.chev svg { width: 14px; height: 14px; }
+.reorder { display: inline-flex; flex-direction: column; flex: none; }
+.reorder button { width: 18px; height: 13px; padding: 0; border: none; background: transparent; cursor: pointer; color: var(--stone-600); display: grid; place-items: center; border-radius: 3px; }
+.reorder button:hover { background: var(--stone-100); color: var(--ink); }
+.reorder button:disabled { opacity: .3; cursor: default; }
+.reorder svg { width: 11px; height: 11px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; flex: none; display: inline-block; }
+.cell { display: inline-flex; align-items: center; min-width: 0; }
+.cell.cell-grow { flex: 1; }
+.cell-ro { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 8px; border-radius: var(--radius); cursor: pointer; }
+.cell-ro:hover { background: color-mix(in srgb, var(--stone-100) 55%, transparent); }
+.cell-val { font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell[data-type="select"] .cell-val { color: var(--stone-600); }
+.cell-mono .cell-val { font-family: var(--font-mono); font-size: 12px; }
+.cell .edit-icon, .cell .caret { display: none; flex: none; color: var(--stone-600); }
+.cell .edit-icon svg { width: 12px; height: 12px; } .cell .caret svg { width: 13px; height: 13px; }
+.cell-ro:hover .edit-icon, .cell-ro:hover .caret { display: inline-grid; place-items: center; }
+.cell-ed { display: none; min-width: 0; }
+.cell.cell-grow .cell-ed, .cell.cell-grow .cell-ro { flex: 1; }
+.cell.cell-grow .cell-ed input { width: 100%; }
+.cell.editing .cell-ro { display: none; }
+.cell.editing .cell-ed { display: inline-flex; }
+.litem > summary { list-style: none; cursor: pointer; user-select: none; }
+.litem > summary::-webkit-details-marker { display: none; }
+.l-name { font-size: 13px; font-weight: 500; color: var(--ink); flex: 1; }
+.litem[open] > summary { border-bottom: 0; }
+.l-detail { padding: 16px 6px 16px 28px; border-bottom: 1px solid var(--stone-100); display: flex; flex-direction: column; gap: 24px; }
+.l-detail > * { margin: 0; }
+.sublist .l-head { border-bottom-color: var(--stone-100); padding-top: 2px; }
+.sublist .l-title { font-size: 12px; }
+.sublist .lrow { padding-left: 2px; }
+.seg { display: inline-flex; gap: 2px; background: var(--stone-100); border-radius: var(--radius); padding: 2px; }
+.seg button { font-family: inherit; font-size: 12px; cursor: pointer; border: none; background: transparent; color: var(--ink); border-radius: 4px; padding: 3px 10px; }
+.seg button.on { background: var(--cobalt-500); color: #fff; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink); flex: none; }
+.check input { accent-color: var(--cobalt-500); }
+.cell-ro:focus-visible, .litem > summary:focus-visible, .lrow.add:focus-visible, .handle:focus-visible, .reorder button:focus-visible { outline: 2px solid var(--cobalt-500); outline-offset: 1px; border-radius: var(--radius); }
+.lvl-tag { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--cobalt-700); background: var(--cobalt-50); border-radius: var(--radius-pill); padding: 1px 8px; }
+.anno { font-size: 11px; color: var(--stone-600); margin: 10px 0 0; line-height: 1.6; }
+
+/* Insight box */
+.insight {
+  background: var(--ink-deep);
+  color: #fff;
+  border-radius: var(--radius-card);
+  padding: 32px;
+}
+.insight h4 {
+  font-size: 11px;
+  letter-spacing: 3px;
+  font-weight: 500;
+  margin: 0 0 16px;
+  opacity: 0.6;
+}
+.insight p { color: rgba(255,255,255,0.85); margin: 0 0 12px; font-size: 14px; }
+.insight strong { font-weight: 500; }
+.insight .accent-cobalt { color: var(--cobalt-300); font-weight: 500; }
+.insight .accent-signal { color: var(--signal-500); font-weight: 500; }
+.insight p:last-child { margin-bottom: 0; }
+
+/* Elevation demo */
+.elev-card { padding: 20px; border-radius: var(--radius-card); background: #fff; }
+.elev-0 { border: 0.5px solid var(--stone-100); }
+.elev-1 { border: 1px solid var(--stone-300); }
+.elev-2 { border: 1.5px solid var(--cobalt-500); }
+.elev-label { font-size: 11px; letter-spacing: 1px; color: var(--stone-600); margin: 0 0 8px; }
+.elev-text { font-size: 13px; color: var(--ink); margin: 0; }
+
+/* Radius demo */
+.radius-demo { text-align: center; }
+.radius-demo .swatch-r { background: var(--cobalt-500); height: 56px; margin-bottom: 8px; }
+.radius-demo .name { font-size: 12px; font-weight: 500; }
+.radius-demo .use { font-size: 11px; color: var(--stone-600); margin-top: 2px; }
+
+/* Footer */
+.footer { margin-top: 80px; padding-top: 32px; border-top: 0.5px solid var(--stone-100); font-size: 12px; color: var(--stone-600); }
+.footer .mono { font-family: var(--font-mono); }
+
+/* 尊重 prefers-reduced-motion：全局弱化动画（Vercel 指南）。组件仍可在此基础上做无障碍降级。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<!-- HEADER -->
+<header class="brand-header">
+  <svg viewBox="0 0 50 50">
+    <rect x="6" y="6" width="14" height="2.5" fill="#1e40ff"/>
+    <rect x="6" y="11.5" width="14" height="2.5" fill="#1e40ff"/>
+    <rect x="6" y="17" width="14" height="2.5" fill="#1e40ff"/>
+    <rect x="6" y="22.5" width="14" height="2.5" fill="#ff5a1f"/>
+    <rect x="6" y="28" width="14" height="2.5" fill="#1e40ff"/>
+    <rect x="6" y="33.5" width="14" height="2.5" fill="#1e40ff"/>
+    <rect x="6" y="39" width="14" height="2.5" fill="#1e40ff"/>
+    <polygon points="18,23.75 38,6 44,6 24,23.75" fill="#1e40ff"/>
+    <polygon points="18,23.75 24,23.75 44,41.5 38,41.5" fill="#1e40ff"/>
+  </svg>
+  <div class="title-block">
+    <p class="meta">KLARIT BRAND SYSTEM · v1.0</p>
+    <h1>Build software by managing requirements, not code.</h1>
+  </div>
+</header>
+
+<!-- 1. LOGO -->
+<section>
+<h2>01 — LOGO</h2>
+<h3>Lockups</h3>
+<p class="lede">Logo 由 7 条横线组成 K 字母——每条横线代表一条 requirement，中间橙色那条是当前 focused 的需求。这个图形既是品牌，也是产品功能的视觉化。</p>
+
+<div class="sub">PRIMARY · HORIZONTAL</div>
+<div class="logo-display">
+  <svg width="80" height="80" viewBox="0 0 80 80">
+    <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/>
+    <rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/>
+    <rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/>
+    <rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/>
+    <rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/>
+    <rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/>
+    <rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+    <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/>
+    <polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+  </svg>
+  <span class="wordmark">Klarit</span>
+</div>
+
+<div class="grid-2" style="margin-top: 16px;">
+  <div>
+    <div class="sub">STACKED</div>
+    <div class="logo-display" style="flex-direction: column; gap: 12px;">
+      <svg width="60" height="60" viewBox="0 0 80 80">
+        <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/>
+        <rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+        <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/>
+        <polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+      </svg>
+      <span style="font-size: 28px; font-weight: 500; color: var(--cobalt-500); letter-spacing: -0.8px;">Klarit</span>
+    </div>
+  </div>
+  <div>
+    <div class="sub">MARK ONLY · APP ICON</div>
+    <div class="logo-display">
+      <svg width="100" height="100" viewBox="0 0 80 80">
+        <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/>
+        <rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/>
+        <rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+        <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/>
+        <polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<div class="sub">NEVER DO</div>
+<div class="dont-grid">
+  <div class="dont-card">
+    <svg width="60" height="60" viewBox="0 0 80 80" style="transform: scaleX(1.4) scaleY(0.7);">
+      <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/><rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+      <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/><polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+    </svg>
+    <div class="x-line"></div>
+    <div class="label">don't stretch</div>
+  </div>
+  <div class="dont-card">
+    <svg width="60" height="60" viewBox="0 0 80 80">
+      <rect x="10" y="10" width="22" height="3.5" fill="#dc2626"/><rect x="10" y="20" width="22" height="3.5" fill="#16a34a"/><rect x="10" y="30" width="22" height="3.5" fill="#9333ea"/><rect x="10" y="40" width="22" height="3.5" fill="#facc15"/><rect x="10" y="50" width="22" height="3.5" fill="#ec4899"/><rect x="10" y="60" width="22" height="3.5" fill="#06b6d4"/>
+      <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1a1a2e"/><polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1a1a2e"/>
+    </svg>
+    <div class="x-line"></div>
+    <div class="label">don't recolor</div>
+  </div>
+  <div class="dont-card" style="background: #1e40ff;">
+    <svg width="60" height="60" viewBox="0 0 80 80">
+      <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/><rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+      <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/><polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+    </svg>
+    <div class="x-line"></div>
+    <div class="label">no low contrast</div>
+  </div>
+  <div class="dont-card">
+    <svg width="60" height="60" viewBox="0 0 80 80" style="transform: rotate(15deg);">
+      <rect x="10" y="10" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="20" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="30" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="40" width="22" height="3.5" fill="#ff5a1f"/><rect x="10" y="50" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="60" width="22" height="3.5" fill="#1e40ff"/><rect x="10" y="70" width="22" height="3.5" fill="#1e40ff"/>
+      <polygon points="35,41.75 65,10 75,10 45,41.75" fill="#1e40ff"/><polygon points="35,41.75 45,41.75 75,73.5 65,73.5" fill="#1e40ff"/>
+    </svg>
+    <div class="x-line"></div>
+    <div class="label">don't rotate</div>
+  </div>
+</div>
+
+</section>
+
+<!-- 2. COLOR -->
+<section>
+<h2>02 — COLOR</h2>
+<h3>Brand core</h3>
+
+<div class="grid-2">
+  <div class="swatch dark" style="background: var(--cobalt-500);">
+    <div class="name">PRIMARY · COBALT</div>
+    <div>
+      <div class="hex" style="font-size: 22px;">#1e40ff</div>
+      <div style="font-size: 11px; opacity: 0.7; margin-top: 6px;">rgb(30 64 255)</div>
+    </div>
+  </div>
+  <div class="swatch dark" style="background: var(--signal-500);">
+    <div class="name">ACCENT · SIGNAL</div>
+    <div>
+      <div class="hex" style="font-size: 22px;">#ff5a1f</div>
+      <div style="font-size: 11px; opacity: 0.85; margin-top: 6px;">rgb(255 90 31)</div>
+    </div>
+  </div>
+</div>
+
+<div class="sub">COBALT RAMP</div>
+<div class="ramp">
+  <div class="stop" style="background: var(--cobalt-50);"><div class="num">50</div><div class="hex">#eef1ff</div></div>
+  <div class="stop" style="background: var(--cobalt-100);"><div class="num">100</div><div class="hex">#c4cffd</div></div>
+  <div class="stop" style="background: var(--cobalt-300);"><div class="num" style="color:#fff;">300</div><div class="hex" style="color:#fff;">#7c93ff</div></div>
+  <div class="stop" style="background: var(--cobalt-500); color: #fff;"><div class="num">500 ★</div><div class="hex">#1e40ff</div></div>
+  <div class="stop" style="background: var(--cobalt-600); color: #fff;"><div class="num">600</div><div class="hex">#1530bf</div></div>
+  <div class="stop" style="background: var(--cobalt-700); color: #fff;"><div class="num">700</div><div class="hex">#0c2080</div></div>
+  <div class="stop" style="background: var(--cobalt-800); color: #fff;"><div class="num">800</div><div class="hex">#08164d</div></div>
+  <div class="stop" style="background: var(--cobalt-900); color: #fff;"><div class="num">900</div><div class="hex">#040a2a</div></div>
+</div>
+
+<div class="sub">SIGNAL RAMP</div>
+<div class="ramp">
+  <div class="stop" style="background: var(--signal-50);"><div class="num">50</div><div class="hex">#fff1ea</div></div>
+  <div class="stop" style="background: var(--signal-100);"><div class="num">100</div><div class="hex">#ffd0b8</div></div>
+  <div class="stop" style="background: var(--signal-300);"><div class="num">300</div><div class="hex">#ff9971</div></div>
+  <div class="stop" style="background: var(--signal-500); color: #fff;"><div class="num">500 ★</div><div class="hex">#ff5a1f</div></div>
+  <div class="stop" style="background: var(--signal-600); color: #fff;"><div class="num">600</div><div class="hex">#d63d0f</div></div>
+  <div class="stop" style="background: var(--signal-700); color: #fff;"><div class="num">700</div><div class="hex">#9e2806</div></div>
+  <div class="stop" style="background: var(--signal-800); color: #fff;"><div class="num">800</div><div class="hex">#6b1903</div></div>
+  <div class="stop" style="background: var(--signal-900); color: #fff;"><div class="num">900</div><div class="hex">#3d0e02</div></div>
+</div>
+
+<div class="sub">NEUTRALS</div>
+<div class="ramp">
+  <div class="stop" style="background: var(--canvas);"><div class="num">canvas</div><div class="hex">#fafaf7</div></div>
+  <div class="stop" style="background: var(--paper);"><div class="num">paper</div><div class="hex">#f5f1e8</div></div>
+  <div class="stop" style="background: var(--stone-100);"><div class="num">stone-100</div><div class="hex">#e8e4dc</div></div>
+  <div class="stop" style="background: var(--stone-300);"><div class="num">stone-300</div><div class="hex">#c4c0b8</div></div>
+  <div class="stop" style="background: var(--stone-600); color: #fff;"><div class="num">stone-600</div><div class="hex">#6b6862</div></div>
+  <div class="stop" style="background: var(--stone-800); color: #fff;"><div class="num">stone-800</div><div class="hex">#3a3835</div></div>
+  <div class="stop" style="background: var(--ink); color: #fff;"><div class="num">ink</div><div class="hex">#1a1a2e</div></div>
+  <div class="stop" style="background: var(--ink-deep); color: #fff;"><div class="num">ink-deep</div><div class="hex">#0f1228</div></div>
+</div>
+
+<div class="sub">SEMANTIC</div>
+<div class="grid-4">
+  <div class="swatch dark" style="background: var(--success);"><div class="name">SUCCESS</div><div class="hex">#16a34a</div></div>
+  <div class="swatch light" style="background: var(--warning);"><div class="name" style="color: var(--ink); opacity: 0.7;">WARNING</div><div class="hex">#f59e0b</div></div>
+  <div class="swatch dark" style="background: var(--danger);"><div class="name">DANGER</div><div class="hex">#dc2626</div></div>
+  <div class="swatch dark" style="background: var(--info);"><div class="name">INFO</div><div class="hex">#0284c7</div></div>
+</div>
+
+<div class="sub">STATUS — 任务圆点四态</div>
+<p class="lede">看板任务卡圆点的四态状态色，专用、与品牌色分离。语义：空闲 / 系统在忙（引擎跑校验·准备决策等无可围观 agent）/ agent 在跑（可点开看直播）/ 等待决策（点开进决策 tab）。优先级 决策 &gt; agent &gt; 系统 &gt; 空闲；agent 明显闪、系统更柔更慢呼吸、决策与空闲不闪。</p>
+<div class="grid-4">
+  <div class="swatch light" style="background: var(--state-idle);"><div class="name" style="color: var(--ink); opacity: 0.7;">IDLE 空闲</div><div class="hex">#9ca3af</div></div>
+  <div class="swatch dark" style="background: var(--state-system);"><div class="name">SYSTEM 系统在忙</div><div class="hex">#2563eb</div></div>
+  <div class="swatch dark" style="background: var(--state-agent);"><div class="name">AGENT 在跑</div><div class="hex">#7c3aed</div></div>
+  <div class="swatch dark" style="background: var(--state-decision);"><div class="name">DECISION 等待决策</div><div class="hex">#f97316</div></div>
+</div>
+
+<h3 style="margin-top: 48px;">Dark palette · 深色调色板</h3>
+<p class="lede">深色主题以<strong>令牌覆盖</strong>实现：只改语义令牌的值，组件类名不变即整体翻色（见 <code>index.css</code> 的 <code>html[data-theme="dark"]</code>）。生效主题由主进程依「外观」偏好 + 系统明暗解析后写入 <code>&lt;html data-theme&gt;</code>。下列为深色取值的单一来源——中性反相、品牌色在暗底提亮以保 AA 对比。未列出的色阶沿用浅色值。</p>
+
+<div class="sub">NEUTRALS（深色）</div>
+<div class="ramp">
+  <div class="stop" style="background:#14141c; color:#fff;"><div class="num">canvas</div><div class="hex">#14141c</div></div>
+  <div class="stop" style="background:#1c1c28; color:#fff;"><div class="num">paper</div><div class="hex">#1c1c28</div></div>
+  <div class="stop" style="background:#2c2c3a; color:#fff;"><div class="num">stone-100</div><div class="hex">#2c2c3a</div></div>
+  <div class="stop" style="background:#3f3f50; color:#fff;"><div class="num">stone-300</div><div class="hex">#3f3f50</div></div>
+  <div class="stop" style="background:#a0a0ad;"><div class="num">stone-600</div><div class="hex">#a0a0ad</div></div>
+  <div class="stop" style="background:#d8d6e0;"><div class="num">stone-800</div><div class="hex">#d8d6e0</div></div>
+  <div class="stop" style="background:#eceaf2;"><div class="num">ink</div><div class="hex">#eceaf2</div></div>
+  <div class="stop" style="background:#f6f5fa;"><div class="num">ink-deep</div><div class="hex">#f6f5fa</div></div>
+</div>
+
+<div class="sub">COBALT RAMP（深色，暗底提亮）</div>
+<div class="ramp">
+  <div class="stop" style="background:#1e2a5e; color:#fff;"><div class="num">50</div><div class="hex">#1e2a5e</div></div>
+  <div class="stop" style="background:#2c3d7e; color:#fff;"><div class="num">100</div><div class="hex">#2c3d7e</div></div>
+  <div class="stop" style="background:#4a63d6; color:#fff;"><div class="num">300</div><div class="hex">#4a63d6</div></div>
+  <div class="stop" style="background:#5b78ff; color:#fff;"><div class="num">500 ★</div><div class="hex">#5b78ff</div></div>
+  <div class="stop" style="background:#7c93ff;"><div class="num">600</div><div class="hex">#7c93ff</div></div>
+  <div class="stop" style="background:#9fb0ff;"><div class="num">700</div><div class="hex">#9fb0ff</div></div>
+  <div class="stop" style="background:#aebcff;"><div class="num">800</div><div class="hex">#aebcff</div></div>
+</div>
+
+<div class="sub">SIGNAL / 语义 / 运行态（深色）</div>
+<div class="ramp">
+  <div class="stop" style="background:#3a1d0e; color:#fff;"><div class="num">signal-50</div><div class="hex">#3a1d0e</div></div>
+  <div class="stop" style="background:#ff6a33; color:#fff;"><div class="num">signal-500</div><div class="hex">#ff6a33</div></div>
+  <div class="stop" style="background:#34d27b;"><div class="num">success</div><div class="hex">#34d27b</div></div>
+  <div class="stop" style="background:#f5b73d;"><div class="num">warning</div><div class="hex">#f5b73d</div></div>
+  <div class="stop" style="background:#f0625f; color:#fff;"><div class="num">danger</div><div class="hex">#f0625f</div></div>
+  <div class="stop" style="background:#38a8e6; color:#fff;"><div class="num">info</div><div class="hex">#38a8e6</div></div>
+  <div class="stop" style="background:#a06bf0; color:#fff;"><div class="num">state-agent</div><div class="hex">#a06bf0</div></div>
+  <div class="stop" style="background:#ff9f4a;"><div class="num">state-decision</div><div class="hex">#ff9f4a</div></div>
+</div>
+
+</section>
+
+<!-- 3. TYPOGRAPHY -->
+<section>
+<h2>03 — TYPOGRAPHY</h2>
+<h3>Type system</h3>
+<p class="lede">Inter（UI、正文）+ JetBrains Mono（code、需求 ID）。两套字体免费、open-source、屏幕渲染好。绝不混入第三个字体。</p>
+
+<div class="type-row">
+  <p class="label">DISPLAY · 48 / 600 / -1.5px / 1.05</p>
+  <p style="font-size: 48px; font-weight: 600; letter-spacing: -1.5px; line-height: 1.05; margin: 0;">Build software<br/>by managing requirements.</p>
+</div>
+<div class="type-row">
+  <p class="label">H1 · 32 / 600 / -0.8px / 1.15</p>
+  <p style="font-size: 32px; font-weight: 600; letter-spacing: -0.8px; line-height: 1.15; margin: 0;">把混乱需求变成清晰软件</p>
+</div>
+<div class="type-row">
+  <p class="label">H2 · 22 / 500 / -0.3px / 1.25</p>
+  <p style="font-size: 22px; font-weight: 500; letter-spacing: -0.3px; line-height: 1.25; margin: 0;">Requirements that build themselves</p>
+</div>
+<div class="type-row">
+  <p class="label">H3 · 17 / 500 / 1.3</p>
+  <p style="font-size: 17px; font-weight: 500; line-height: 1.3; margin: 0;">Authentication flow specification</p>
+</div>
+<div class="type-row">
+  <p class="label">BODY · 15 / 400 / 1.6</p>
+  <p style="font-size: 15px; font-weight: 400; line-height: 1.6; margin: 0;">Klarit turns plain-language product requirements into structured, validated specifications. Your team writes intent — we generate the contracts, types, and tests that bring it to life.</p>
+</div>
+<div class="type-row">
+  <p class="label">SMALL · 13 · LABEL · 11 / 1.5px uppercase</p>
+  <p style="font-size: 13px; color: var(--stone-600); margin: 0 0 8px;">Used for secondary info, metadata, captions, helper text.</p>
+  <p style="font-size: 11px; font-weight: 500; color: var(--stone-600); letter-spacing: 1.5px; text-transform: uppercase; margin: 0;">STATUS · CREATED 3D AGO</p>
+</div>
+<div class="type-row">
+  <p class="label">MONO · JetBrains Mono · 13 / 400</p>
+  <p style="font-family: var(--font-mono); font-size: 13px; line-height: 1.5; margin: 0;">REQ-2024-08-A47<br/>const validatePayload = (spec: Spec) =&gt; ...</p>
+</div>
+
+<div class="sub">SCALE REFERENCE</div>
+<div class="card">
+<table class="specs">
+<tr><th>TOKEN</th><th>SIZE</th><th>WEIGHT</th><th>LINE-HEIGHT</th><th>USE</th></tr>
+<tr><td class="mono">display</td><td>48</td><td>600</td><td>1.05</td><td class="muted">Hero title</td></tr>
+<tr><td class="mono">h1</td><td>32</td><td>600</td><td>1.15</td><td class="muted">Page title</td></tr>
+<tr><td class="mono">h2</td><td>22</td><td>500</td><td>1.25</td><td class="muted">Section</td></tr>
+<tr><td class="mono">h3</td><td>17</td><td>500</td><td>1.3</td><td class="muted">Subsection</td></tr>
+<tr><td class="mono">body</td><td>15</td><td>400</td><td>1.6</td><td class="muted">Default</td></tr>
+<tr><td class="mono">small</td><td>13</td><td>400</td><td>1.5</td><td class="muted">Secondary</td></tr>
+<tr><td class="mono">label</td><td>11</td><td>500</td><td>1.4</td><td class="muted">Tag, metadata</td></tr>
+<tr><td class="mono">mono</td><td>13</td><td>400</td><td>1.5</td><td class="muted">Code, IDs</td></tr>
+</table>
+</div>
+
+</section>
+
+<!-- 4. SPACING -->
+<section>
+<h2>04 — SPACING</h2>
+<h3>4px base grid</h3>
+<p class="lede">所有间距基于 4px 网格。token 名直接用数值，避免 sm/md/lg 这种含糊的命名。</p>
+
+<div class="space-row">
+  <div class="space-item"><div class="bar" style="width: 4px;"></div><div class="num">4</div><div class="token">space-1</div></div>
+  <div class="space-item"><div class="bar" style="width: 8px;"></div><div class="num">8</div><div class="token">space-2</div></div>
+  <div class="space-item"><div class="bar" style="width: 12px;"></div><div class="num">12</div><div class="token">space-3</div></div>
+  <div class="space-item"><div class="bar" style="width: 16px;"></div><div class="num">16</div><div class="token">space-4</div></div>
+  <div class="space-item"><div class="bar" style="width: 24px;"></div><div class="num">24</div><div class="token">space-6</div></div>
+  <div class="space-item"><div class="bar" style="width: 32px;"></div><div class="num">32</div><div class="token">space-8</div></div>
+  <div class="space-item"><div class="bar" style="width: 48px;"></div><div class="num">48</div><div class="token">space-12</div></div>
+</div>
+</section>
+
+<!-- 5. RADIUS & ELEVATION -->
+<section>
+<h2>05 — RADIUS &amp; ELEVATION</h2>
+<h3>Border-led hierarchy</h3>
+<p class="lede">Klarit 拒绝 drop-shadow 做层级。只用 border 强度和背景明度差。这是我们的视觉签名——更"印刷品"，更不"软件"。</p>
+
+<div class="sub">RADIUS</div>
+<div class="grid-4 radius-demo">
+  <div><div class="swatch-r" style="border-radius: 2px;"></div><div class="name">2px · sharp</div><div class="use">tags, inputs</div></div>
+  <div><div class="swatch-r" style="border-radius: 6px;"></div><div class="name">6px · default</div><div class="use">buttons, fields</div></div>
+  <div><div class="swatch-r" style="border-radius: 10px;"></div><div class="name">10px · card</div><div class="use">surfaces</div></div>
+  <div><div class="swatch-r" style="border-radius: 999px;"></div><div class="name">pill</div><div class="use">badges, avatars</div></div>
+</div>
+
+<div class="sub">ELEVATION</div>
+<div class="grid-3">
+  <div class="elev-card elev-0">
+    <p class="elev-label">LEVEL 0</p>
+    <p class="elev-text">Flat surface. Default cards.</p>
+  </div>
+  <div class="elev-card elev-1">
+    <p class="elev-label">LEVEL 1</p>
+    <p class="elev-text">Hover, selected items.</p>
+  </div>
+  <div class="elev-card elev-2">
+    <p class="elev-label">LEVEL 2</p>
+    <p class="elev-text">Active, focused, primary.</p>
+  </div>
+</div>
+</section>
+
+<!-- 6. COMPONENTS -->
+<section>
+<h2>06 — COMPONENTS</h2>
+<h3>Buttons</h3>
+
+<div class="card">
+<div class="btn-row">
+<button class="btn btn-primary">Add requirement</button>
+<button class="btn btn-secondary">Cancel</button>
+<button class="btn btn-ghost">Learn more →</button>
+<button class="btn btn-signal">Generate spec</button>
+<button class="btn btn-disabled">Disabled</button>
+</div>
+<p style="font-size: 12px; color: var(--stone-600); margin: 16px 0 0;">primary cobalt / secondary outlined / ghost link / signal CTA / disabled · all 36px height · 6px radius</p>
+</div>
+
+<div class="sub">INPUTS</div>
+<div class="card">
+<div class="input-group">
+  <label class="input-label">Requirement title</label>
+  <input class="input" type="text" value="Users can reset password via email"/>
+</div>
+<div class="input-group">
+  <label class="input-label">Acceptance criteria (focused)</label>
+  <textarea class="input focus">Email is sent within 30 seconds. Reset link expires in 1 hour.</textarea>
+</div>
+<div class="input-group" style="margin-bottom: 0;">
+  <label class="input-label error">Priority (error state)</label>
+  <input class="input error" type="text" value="urgent!!!"/>
+  <p class="input-help error">Must be one of: low, medium, high, critical</p>
+</div>
+</div>
+
+<div class="sub">TYPE BADGES &amp; TAG 色板</div>
+<div class="card">
+<p style="font-size: 13px; color: var(--ink); margin: 0 0 14px; line-height: 1.6;">需求卡按<strong style="font-weight:500;">类型</strong>打徽章（不是工作流状态）。徽章<strong style="font-weight:500;">形态固定</strong>，颜色从下面的 <strong style="font-weight:500;">tag 色板（9 色）</strong>里<strong style="font-weight:500;">由用户为每个类型自选</strong>——所以规范定的是「<strong style="font-weight:500;">可选色板 + 徽章形态 + 默认色</strong>」，具体「类型→颜色」属于用户数据、不写死在规范里。</p>
+<div class="badge-row" style="margin-bottom: 18px;">
+<span class="badge" style="background: var(--tag-violet); color: #fff; text-transform: uppercase; letter-spacing: 0.04em;">Epic</span>
+<span class="badge" style="background: var(--tag-green); color: #fff; text-transform: uppercase; letter-spacing: 0.04em;">Feature</span>
+<span class="badge" style="background: var(--tag-red); color: #fff; text-transform: uppercase; letter-spacing: 0.04em;">Bug</span>
+<span style="font-size: 12px; color: var(--stone-600);">← 默认播种色：epic 紫 / feature 绿 / bug 红</span>
+</div>
+<div class="sub" style="margin: 0 0 10px;">TAG 色板（用户从中为类型选色）</div>
+<div class="badge-row">
+<span class="badge" style="background: var(--tag-red); color: #fff;">red</span>
+<span class="badge" style="background: var(--tag-amber); color: #fff;">amber</span>
+<span class="badge" style="background: var(--tag-green); color: #fff;">green</span>
+<span class="badge" style="background: var(--tag-blue); color: #fff;">blue</span>
+<span class="badge" style="background: var(--tag-violet); color: #fff;">violet</span>
+<span class="badge" style="background: var(--tag-yellow); color: var(--tag-ink);">yellow</span>
+<span class="badge" style="background: var(--tag-cyan); color: var(--tag-ink);">cyan</span>
+<span class="badge" style="background: var(--tag-pink); color: #fff;">pink</span>
+</div>
+<p style="font-size: 12px; color: var(--stone-600); margin: 14px 0 0; line-height: 1.6;">徽章形态：实心 tag 色药丸（radius-pill）· 11/500 · 大写 + 0.04em 字距 · 多数配白字，过亮的 <strong style="font-weight:500;">yellow / cyan</strong> 配 <span class="code-inline">tag-ink</span> 深字（深字固定、深浅主题不翻）。tag 色板深浅主题<strong style="font-weight:500;">同值</strong>。</p>
+<p style="font-size: 12px; color: var(--stone-600); margin: 8px 0 0; line-height: 1.6;">注：需求卡另有 5 个<strong style="font-weight:500;">工作流状态</strong>（<span class="code-inline">未开始 / 进行中 / 已完成 / 已暂停 / 等待决策</span>，见 <span class="code-inline">shared/types.ts · CardStatus</span>），目前<strong style="font-weight:500;">已建模、尚未渲染成徽章</strong>；落地时复用本徽章形态、配语义色而非 tag 色。</p>
+</div>
+
+</section>
+
+<!-- 7. APP UI -->
+<section>
+<h2>07 — APPLICATION UI</h2>
+<h3>Full interface example</h3>
+<p class="lede">规范在<strong>真实产品形态</strong>里如何组合（对齐当前代码：<span class="code-inline">App.tsx</span> 标题栏 + 侧栏 + 看板）。当前主区是横向滚动看板，列＝<span class="code-inline">待办</span> + 工作流阶段 + <span class="code-inline">已完成</span>；卡片尚未落库，列体暂为空，待办列底有「+ 创建」。需求经「描述 → 处理 → 审阅候选」的浮窗流程产生，候选以「类型徽章 + 标题 + 描述」呈现。<strong>暂无 dockview / 终端 / agent 实时视图</strong>（愿景未建）。</p>
+
+<div class="app-shell">
+
+<div class="app-topbar" style="padding: 8px 12px;">
+<button class="tb-toggle" aria-label="折叠侧栏">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+</button>
+<div class="win-ctrls">
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="1"/></svg>
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+</div>
+</div>
+
+<div class="app-body">
+
+<aside class="app-sidebar" style="display: flex; flex-direction: column;">
+<div class="side-tabs">
+<button class="side-tab active" title="文件" aria-label="文件"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg></button>
+<button class="side-tab" title="Git" aria-label="Git"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M8.5 6H14a3 3 0 0 1 3 3v.5"/></svg></button>
+</div>
+<div class="ftree">
+<div class="ftree-row"><span class="fi">▾</span> payment-platform</div>
+<div class="ftree-row indent"><span class="fi">▸</span> src</div>
+<div class="ftree-row indent"><span class="fi">▸</span> docs</div>
+<div class="ftree-row indent"><span class="fi">📄</span> README.md</div>
+<div class="ftree-row indent"><span class="fi">📄</span> package.json</div>
+</div>
+<div class="side-footer">
+<span class="proj-switch">payment-platform <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6"/></svg></span>
+<button class="gear" aria-label="设置"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+</div>
+</aside>
+
+<main class="app-main">
+<div class="board-wrap">
+<div class="kb-board">
+<div class="kb-col">
+<div class="kb-col-head"><span class="kb-col-name">待办</span></div>
+<div class="kb-col-body"><button class="kb-add"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>创建</button></div>
+</div>
+<div class="kb-col">
+<div class="kb-col-head"><span class="kb-col-name">准备</span></div>
+<div class="kb-col-body"></div>
+</div>
+<div class="kb-col">
+<div class="kb-col-head"><span class="kb-col-name">实现</span></div>
+<div class="kb-col-body"></div>
+</div>
+<div class="kb-col">
+<div class="kb-col-head"><span class="kb-col-name">交付</span></div>
+<div class="kb-col-body"></div>
+</div>
+<div class="kb-col">
+<div class="kb-col-head"><span class="kb-col-name">已完成</span></div>
+<div class="kb-col-body"></div>
+</div>
+</div>
+</div>
+<div class="app-botbar">payment-platform · main · 无预览文件</div>
+</main>
+</div>
+</div>
+
+</section>
+
+<!-- 8. INTERACTION, FOCUS & MOTION -->
+<section>
+<h2>08 — INTERACTION · FOCUS · MOTION</h2>
+<h3>交互硬规则</h3>
+<p class="lede">源自 Vercel Web Interface Guidelines，按 Klarit 桌面端（Electron + React）裁剪。这些是可达性与一致性的底线，所有界面通用。</p>
+
+<div class="sub">FOCUS &amp; KEYBOARD</div>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>可见焦点</td><td class="muted">所有可聚焦元素显示焦点环，优先 <span class="code-inline">:focus-visible</span>（键盘才显示，鼠标点击不显示）；环用 cobalt-500、offset 2px</td></tr>
+<tr><td>键盘可达</td><td class="muted">全流程可仅用键盘完成，遵循 WAI-ARIA 模式；自定义「可点」元素（如行内编辑只读块）须 <span class="code-inline">tabindex=0</span> + 角色 + Enter/Space 触发</td></tr>
+<tr><td>焦点管理</td><td class="muted">模态 / 抽屉 / 菜单：进入移焦并陷阱、关闭归还焦点；<span class="code-inline">Esc</span> 关闭（设置面板已做）</td></tr>
+<tr><td>命中区 ≥24px</td><td class="muted">视觉更小的图标也要把可点区域扩到 ≥24px；icon-btn 26×26 已满足</td></tr>
+<tr><td>无死区</td><td class="muted">看着可交互就要可交互；勾选/单选的 label 与控件共享单一命中区</td></tr>
+<tr><td>主输入 autofocus</td><td class="muted">桌面端、单一主输入时可 autofocus 提速</td></tr>
+</table>
+</div>
+
+<div class="sub">STATES：HOVER · ACTIVE · DISABLED · LOADING</div>
+<div class="card">
+<table class="specs">
+<tr><th>态</th><th>规则</th></tr>
+<tr><td>hover / active / focus</td><td class="muted">对比度高于静息态（更深的边/底/字）</td></tr>
+<tr><td>禁用 disabled</td><td class="muted">opacity 降低 + <span class="code-inline">cursor: default</span> + 不响应 hover；与「加载中」区分开</td></tr>
+<tr><td>按钮加载</td><td class="muted">保留原文案 + 加载指示；show-delay ~150–300ms、最短可见 ~300–500ms 防闪</td></tr>
+<tr><td>进行中文案</td><td class="muted">将打开输入或进行中的动作用省略号：「重命名…」「保存中…」</td></tr>
+<tr><td>tooltip 时序</td><td class="muted">首个延迟出现；相邻同组随后无延迟</td></tr>
+</table>
+</div>
+
+<div class="sub">DRAG &amp; MOTION</div>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>拖拽</td><td class="muted">拖拽期间 <span class="code-inline">user-select:none</span> 并对内容用 <span class="code-inline">inert</span>；拖前自动提交编辑、收起展开行（见第 12 章行为速查）</td></tr>
+<tr><td>滚动边界</td><td class="muted">模态 / 抽屉内 <span class="code-inline">overscroll-behavior: contain</span></td></tr>
+<tr><td>只动廉价属性</td><td class="muted">只过渡 <span class="code-inline">transform</span> / <span class="code-inline">opacity</span>；避开触发重排的 width/height/top/left</td></tr>
+<tr><td>禁 transition: all</td><td class="muted">显式列出要过渡的属性（本规范 .btn 已改正）</td></tr>
+<tr><td>有意义且可打断</td><td class="muted">仅当动画澄清因果或有意取悦时才用；可被用户输入打断；不自动播放；transform-origin 锚定起点</td></tr>
+<tr><td>prefers-reduced-motion</td><td class="muted">提供降级；本规范已加全局兜底 <span class="code-inline">@media (prefers-reduced-motion: reduce)</span></td></tr>
+</table>
+</div>
+</section>
+
+<!-- 9. FORMS & INPUTS (behavior) -->
+<section>
+<h2>09 — FORMS &amp; INPUTS（行为）</h2>
+<h3>输入控件的行为规范</h3>
+<p class="lede">视觉样式见 06 COMPONENTS；字段标签/描述类型对、列表编辑器、逐块行内编辑、多级嵌套的完整规范与图例见 <strong>第 12 章</strong>。下列为通用表单行为。</p>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>标签无处不在</td><td class="muted">每个控件有 <span class="code-inline">&lt;label&gt;</span> 或 <span class="code-inline">aria-label</span>；点 label 聚焦控件</td></tr>
+<tr><td>提交键</td><td class="muted">输入为唯一控件时 Enter 提交；textarea 用 ⌘/⌃+Enter 提交、Enter 换行</td></tr>
+<tr><td>提交按钮</td><td class="muted">保持可用直到提交开始再禁用；<b>不</b>因未填完就预先禁用——让用户提交以触发校验</td></tr>
+<tr><td>不拦键入</td><td class="muted">即便只接受数字也允许输入，再做校验反馈；不禁用粘贴；允许粘贴一次性验证码</td></tr>
+<tr><td>错误</td><td class="muted">就近显示在字段处；提交时聚焦第一个错误；校验/toast 用 <span class="code-inline">aria-live="polite"</span> 播报</td></tr>
+<tr><td>类型与输入法</td><td class="muted">正确的 <span class="code-inline">type</span> 与 <span class="code-inline">inputmode</span>；邮箱/代码/用户名关 spellcheck；设 <span class="code-inline">autocomplete</span> 与有意义的 <span class="code-inline">name</span>；搜索框 <span class="code-inline">autocomplete="off"</span></td></tr>
+<tr><td>placeholder</td><td class="muted">以省略号结尾、给示例值（如 <span class="code-inline">+1 (123) 456-7890</span>）；不替代 label</td></tr>
+<tr><td>未保存改动</td><td class="muted">离开/关闭前若可能丢数据要警告</td></tr>
+<tr><td>原生 select 深色</td><td class="muted">显式设 color/background（项目用 <span class="code-inline">color-scheme</span> 已处理）</td></tr>
+</table>
+</div>
+</section>
+
+<!-- 10. CONTENT, LOCALE & STATE -->
+<section>
+<h2>10 — CONTENT · LOCALE · STATE</h2>
+<h3>文案、本地化与状态</h3>
+<div class="sub">CONTENT &amp; TYPOGRAPHY</div>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>标点</td><td class="muted">用弯引号 “” ‘’；用省略号字符 … （非三个句点）</td></tr>
+<tr><td>数字对齐</td><td class="muted">计数 / ID / 金额等需对齐处用 <span class="code-inline">font-variant-numeric: tabular-nums</span>（mono 字体已等宽）</td></tr>
+<tr><td>不靠颜色单独传意</td><td class="muted">状态除颜色外要有文字/图标——任务四态圆点须配可读名称或 aria</td></tr>
+<tr><td>超长内容</td><td class="muted">文案处理 短/平均/超长 三种；超长截断用 … 并在 <span class="code-inline">title</span>/tooltip 给全文</td></tr>
+<tr><td>本地化</td><td class="muted">日期/时间/数字/货币按用户 locale 格式化；品牌名/产品名/代码 token 包 <span class="code-inline">translate="no"</span>；单位/快捷键用不换行空格连接</td></tr>
+</table>
+</div>
+<div class="sub">STATES（每个界面都要设计）</div>
+<div class="card">
+<table class="specs">
+<tr><th>状态</th><th>规则</th></tr>
+<tr><td>空 / 稀疏 / 密集 / 错误 / 加载</td><td class="muted">五态都要设计；列表空态见第 12 章行为速查</td></tr>
+<tr><td>骨架屏</td><td class="muted">与最终内容同尺寸，避免布局跳动（CLS）</td></tr>
+<tr><td>恢复路径</td><td class="muted">每个界面都给「下一步 / 恢复」；密集时父容器滚动、不压缩行高</td></tr>
+</table>
+</div>
+</section>
+
+<!-- 11. ACCESSIBILITY & PERFORMANCE -->
+<section>
+<h2>11 — ACCESSIBILITY &amp; PERFORMANCE</h2>
+<h3>可达性与性能</h3>
+<div class="sub">ACCESSIBILITY</div>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>语义优先</td><td class="muted">先用原生元素，再上 <span class="code-inline">aria-*</span>；标题层级 h1–h6 正确；导航用 <span class="code-inline">&lt;a&gt;</span> 不用 button/div</td></tr>
+<tr><td>命名 / 提示</td><td class="muted">纯图标按钮<strong>必须</strong>有 <span class="code-inline">aria-label</span>（<strong>具体</strong>，如「删除 Epic」，给读屏完整对象）；装饰元素 <span class="code-inline">aria-hidden</span>。hover 的 <span class="code-inline">title</span> 提示用<strong>简洁动作</strong>（「删除」「编辑」，<strong>不带对象名</strong>）——区分清楚：<span class="code-inline">aria-label</span> 是读屏用的、hover 不显示；<span class="code-inline">title</span> 才是鼠标 hover 弹出的灰底提示。二者并存：读屏听完整、鼠标看简洁。</td></tr>
+<tr><td>异步播报</td><td class="muted">toast、行内校验用 <span class="code-inline">aria-live="polite"</span></td></tr>
+<tr><td>缩放与动效</td><td class="muted">不禁用浏览器缩放；尊重 prefers-reduced-motion（见 08）；颜色非唯一信号（见 10）</td></tr>
+</table>
+</div>
+<div class="sub">PERFORMANCE（Electron 桌面）</div>
+<div class="card">
+<table class="specs">
+<tr><th>规则</th><th>做法</th></tr>
+<tr><td>长列表</td><td class="muted">看板列 / 需求列表虚拟化或 <span class="code-inline">content-visibility: auto</span></td></tr>
+<tr><td>无布局跳动</td><td class="muted">图片设显式尺寸预留空间；首屏外懒加载</td></tr>
+<tr><td>资源</td><td class="muted">CDN 域 <span class="code-inline">&lt;link rel="preconnect"&gt;</span>；预载关键字体</td></tr>
+<tr><td>输入与写入</td><td class="muted">优先非受控输入、受控更新要轻；批量读写避免重排；写操作 &lt;500ms</td></tr>
+</table>
+</div>
+</section>
+
+<!-- 12. FIELDS & LIST EDITORS -->
+<section>
+<h2>12 — FIELD LABELS &amp; LIST EDITORS</h2>
+<h3>字段标签对 + 列表编辑器（含多级嵌套）</h3>
+<p class="lede">设置类界面的两大复用模式。控件态/动效/可达性见 08–11；本章定字段标签对、「头+行」列表、逐块行内编辑，并明确<strong>多级列表嵌套</strong>的处理。</p>
+
+<div class="sub">字段标签对 — LABEL 主角 / DESCRIPTION 配角</div>
+<div class="card fl">
+  <div class="field">
+    <label class="field-label">外观</label>
+    <p class="field-desc">决定深浅主题的来源；「跟随系统」随操作系统明暗切换。</p>
+    <select class="input"><option>跟随系统</option><option>浅色</option><option>深色</option></select>
+  </div>
+  <div class="field">
+    <label class="field-label">工作流名称<span class="req">*</span></label>
+    <p class="field-desc">必填；保存时为空会被拦截。</p>
+    <input class="input" placeholder="例如：需求 → 规格 → 交付…"/>
+  </div>
+  <p style="font-size: 12px; color: var(--stone-600); margin: 4px 0 0; line-height: 1.6;">label 13/600/ink · description 12/400/stone-600 · 顺序 label → description → 控件 · 差异靠<strong style="font-weight:500;">字号+字重+颜色</strong>，不靠 uppercase（中文不吃）。选填是默认、不标注；只有必填加 <span class="code-inline">*</span>。</p>
+</div>
+
+<div class="sub">列表编辑器 — 「头 + 行」+ 逐块行内编辑</div>
+<p style="font-size: 13px; color: var(--stone-600); margin: 0 0 12px; line-height: 1.6;">头（标题·计数·可选描述）+ 行（发丝线分隔）+ 末行「加」小按钮，不给每行套盒。<strong style="font-weight:500;">不可展开的行用逐块行内编辑</strong>：静息只读文本，hover 末尾浮现 ✏（文本）/ ▾（下拉），点击就地变控件并聚焦，失焦/回车收回。<strong style="font-weight:500;">点下面的「准备 / 实现 / 交付」试试。</strong></p>
+<div class="card fl">
+  <div class="list">
+    <div class="l-head"><div class="l-head-main"><span class="l-title">阶段</span><span class="l-spacer"></span><span class="l-count">3</span></div></div>
+    <div class="lrow">
+      <span class="icon-btn handle" title="拖拽排序" aria-label="拖拽排序"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+      <span class="cell cell-grow"><span class="cell-ro" onclick="cellEdit(this)"><span class="cell-val">准备</span><span class="edit-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span></span><span class="cell-ed"><input class="input" value="准备"/></span></span>
+      <button class="icon-btn danger" title="删除" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+    <div class="lrow">
+      <span class="icon-btn handle" title="拖拽排序" aria-label="拖拽排序"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+      <span class="cell cell-grow"><span class="cell-ro" onclick="cellEdit(this)"><span class="cell-val">实现</span><span class="edit-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span></span><span class="cell-ed"><input class="input" value="实现"/></span></span>
+      <button class="icon-btn danger" title="删除" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+    <div class="lrow">
+      <span class="icon-btn handle" title="拖拽排序" aria-label="拖拽排序"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+      <span class="cell cell-grow"><span class="cell-ro" onclick="cellEdit(this)"><span class="cell-val">交付</span><span class="edit-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span></span><span class="cell-ed"><input class="input" value="交付"/></span></span>
+      <button class="icon-btn danger" title="删除" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+    <div class="lrow add" role="button" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>加阶段</div>
+  </div>
+</div>
+
+<div class="sub">多级嵌套 — 第一级 vs 第二级</div>
+<p style="font-size: 13px; color: var(--stone-600); margin: 0 0 12px; line-height: 1.6;">列表<strong style="font-weight:500;">最多两级</strong>。<strong style="font-weight:500;">第一级</strong>直接落在设置区，头底有 stone-300 分隔线。进入某项的<strong style="font-weight:500;">详情</strong>后，里面出现<strong style="font-weight:500;">第二级</strong>子列表：整体<strong style="font-weight:500;">缩进 28px</strong>、标题 <strong style="font-weight:500;">12px（非 13）</strong>、<strong style="font-weight:500;">头无下划线</strong>、与详情内其它块靠 <strong style="font-weight:500;">24px 间距</strong>分隔——靠缩进+间距分层，不再往里套盒。<strong style="font-weight:500;">第三级不允许</strong>：需要更深（如「门 → 动作按钮」），该项必须改为<strong style="font-weight:500;">独立详情视图</strong>，其内部才重新从第一/二级计。下例仅演示两级嵌套的视觉层次；<strong style="font-weight:500;">可拖拽排序的列表（如工作流节点）按「拖拽与展开互斥」规则改用独立详情视图，行内不内联展开。</strong></p>
+<div class="card fl">
+  <div class="list">
+    <div class="l-head"><div class="l-head-main"><span class="l-title">节点</span> <span class="lvl-tag">第一级</span><span class="l-spacer"></span><span class="l-count">2</span></div><p class="l-desc">顺序即执行顺序</p></div>
+
+    <!-- 可拖拽列表：只放拖拽柄、不显序号（二者不并存）；行只读，行尾「编辑」铅笔进详情页，无 chevron 内联展开 -->
+    <div class="lrow">
+      <span class="icon-btn handle" title="拖拽排序" aria-label="拖拽排序"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+      <span class="l-name">建分支</span><span style="font-size:12px;color:var(--stone-600);">准备</span>
+      <span class="l-spacer"></span>
+      <button class="icon-btn" title="编辑" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+      <button class="icon-btn danger" title="删除节点" aria-label="删除节点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+
+    <div class="lrow">
+      <span class="icon-btn handle" title="拖拽排序" aria-label="拖拽排序"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></span>
+      <span class="l-name">写代码</span><span style="font-size:12px;color:var(--stone-600);">实现</span>
+      <span class="l-spacer"></span>
+      <button class="icon-btn" title="编辑" aria-label="编辑"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+      <button class="icon-btn danger" title="删除节点" aria-label="删除节点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+    </div>
+
+    <div class="lrow add" role="button" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>加节点</div>
+  </div>
+  <p class="anno">可拖拽列表<strong>只放拖拽柄、不显序号</strong>（顺序由位置表达，二者不并存）；行只读，点行尾「编辑」铅笔进详情页——<strong>不在行内 chevron 展开</strong>（拖拽与展开互斥）。</p>
+</div>
+
+<div class="sub" style="margin-top:18px;">↑ 点某节点的「编辑」→ 节点详情页（第二级子列表在页内）</div>
+<div class="card fl">
+  <div class="list">
+    <!-- 详情顶栏：返回 chevron + 保存，与模态「关闭」同行 -->
+    <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--stone-100);padding:2px 2px 8px;">
+      <span class="icon-btn" title="返回" aria-label="返回"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></span>
+      <button style="height:28px;border:none;border-radius:var(--radius);background:var(--cobalt-500);color:#fff;font-size:13px;font-weight:500;padding:0 12px;cursor:pointer;">保存</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:18px;padding-top:14px;">
+      <!-- 每行单输入：名称、执行工具、执行模型各占一行 -->
+      <div class="field"><label class="field-label">名称</label><input class="input" value="写代码" style="margin-top:6px;"/></div>
+      <div class="field"><label class="field-label">执行工具<span style="font-size:11px;font-weight:400;color:var(--stone-600);margin-left:6px;">空＝跟随全局</span></label><select class="input" style="margin-top:6px;"><option>跟随全局</option><option>Claude Code</option></select></div>
+      <div class="field"><label class="field-label">执行模型</label><select class="input" style="margin-top:6px;"><option>跟随全局</option></select></div>
+
+      <div class="list sublist">
+        <div class="l-head"><div class="l-head-main"><span class="l-title">可写范围</span> <span class="lvl-tag">第二级</span><span class="l-spacer"></span><span class="l-count">1</span></div><p class="l-desc">空＝整条分支可写</p></div>
+        <div class="lrow">
+          <span class="num">1</span>
+          <span class="cell cell-grow cell-mono"><span class="cell-ro" onclick="cellEdit(this)"><span class="cell-val">src/**</span><span class="edit-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span></span><span class="cell-ed"><input class="input" value="src/**" style="font-family:var(--font-mono);font-size:12px;"/></span></span>
+          <button class="icon-btn danger" title="删除" aria-label="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+        </div>
+        <div class="lrow add" role="button" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>加可写路径</div>
+      </div>
+
+      <div class="list sublist">
+        <div class="l-head"><div class="l-head-main"><span class="l-title">产出</span> <span class="lvl-tag">第二级</span><span class="l-spacer"></span><span class="l-count">1</span></div></div>
+        <div class="lrow">
+          <span class="num">1</span>
+          <!-- 同项含「必选」常存复选 → 路径用常存输入框，不混点击编辑 -->
+          <input class="input" value="docs/spec.md" style="flex:1;font-family:var(--font-mono);font-size:12px;"/>
+          <label class="check"><input type="checkbox" checked/> 必选</label>
+          <button class="icon-btn danger" title="删除产出" aria-label="删除产出"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+        </div>
+        <div class="lrow add" role="button" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>加产出</div>
+      </div>
+
+      <div class="list sublist">
+        <div class="l-head"><div class="l-head-main"><span class="l-title">门</span> <span class="lvl-tag">第二级</span></div></div>
+        <div class="lrow add" role="button" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>加门</div>
+      </div>
+    </div>
+  </div>
+  <p class="anno">「第一级 / 第二级」标识仅为讲解，真实界面不显示。第二级缩进 28px、标题 12px、头无下划线，与详情内各块靠 24px 间距分隔——全程无嵌套盒。</p>
+</div>
+
+<div class="sub">嵌套层级速查</div>
+<div class="card">
+<table class="specs">
+<tr><th>层级</th><th>容器 / 缩进</th><th>头</th><th>行分隔</th></tr>
+<tr><td>第一级</td><td class="muted">无外框，直接落在设置区</td><td class="muted">标题 13/600/ink；可带描述 12/stone-600；计数仅 >0 显示；头底 1px <strong>stone-300</strong></td><td class="muted">行间 1px stone-100</td></tr>
+<tr><td>第二级</td><td class="muted">随详情缩进 28px</td><td class="muted">标题 12/600/ink；<strong>无头底线</strong>；与详情内其它块靠 24px 间距分隔</td><td class="muted">行间 1px stone-100</td></tr>
+</table>
+<p style="font-size: 12px; color: var(--stone-600); margin: 12px 0 0;">单元格、序号（纯数字不带 #）、删除、加按钮 两级一致。需要第三级 → 改用独立详情页。</p>
+</div>
+
+<div class="sub">逐块行内编辑 — 状态机</div>
+<div class="card">
+<table class="specs">
+<tr><th>状态</th><th>表现 / 触发</th></tr>
+<tr><td>静息（只读）</td><td class="muted">只读文本；下拉类值显示为 stone-600 次要色；路径类用 mono 12</td></tr>
+<tr><td>hover</td><td class="muted">块底淡高亮 + 末尾提示：自由文本 ✏、下拉 ▾</td></tr>
+<tr><td>进入编辑</td><td class="muted">点该块 → 就地替换为控件（input/select），自动聚焦并选中文本；键盘 Enter/Space 亦可</td></tr>
+<tr><td>提交 / 取消</td><td class="muted">焦点移出该块或回车 → 写回只读；Esc → 丢弃</td></tr>
+<tr><td>独立性</td><td class="muted">每块独立，可单独改某一块；拖拽柄/删除/勾选/色块 常驻、不进只读-编辑切换</td></tr>
+</table>
+</div>
+
+<div class="sub">行为速查</div>
+<div class="card">
+<table class="specs">
+<tr><th>行为</th><th>规则</th></tr>
+<tr><td><strong>拖拽与展开互斥</strong></td><td class="muted"><strong>可拖拽排序的列表不得内联展开编辑</strong>，反之亦然。同时存在会导致拖拽时的收起/reflow 把行挪走、光标与目标错位。二选一：① 列表项可拖拽 → 行只读、点击<strong>进入独立详情视图</strong>编辑（外层只留只读摘要）；② 列表项内联展开/编辑 → 不提供拖拽排序（如需排序用 ▲▼）。</td></tr>
+<tr><td>编辑入口</td><td class="muted">字段少的简单项：行内逐块编辑（见上）。字段多的项（工作流节点、需求卡类型等）：用<strong>独立详情视图</strong>，列表行只读、<strong>行尾放一个「编辑」铅笔图标按钮</strong>进入详情——<strong>不要整行点击进入</strong>。详情顶栏用统一返回 chevron + 保存（见「详情返回」）。</td></tr>
+<tr><td>铅笔 vs chevron（两种 affordance 不混用）</td><td class="muted"><strong>铅笔（Pencil）= 进入独立详情页</strong>；<strong>chevron = 就地展开/收起</strong>。一个列表只用其中一种语义，不得用铅笔却做成展开、或反之。字段多的项一律走铅笔→详情页（详情页内可再放第二级子列表）。</td></tr>
+<tr><td>双信息行</td><td class="muted">一行需同时显示两条信息时（如 节点名 + 阶段名），<strong>主信息</strong>用 13/ink、<strong>次信息</strong>紧随其后用 12/stone-600（次要色小字）；主在前、次在后，二者间留白分隔，<strong>次信息不可编辑</strong>。不得随意排布。</td></tr>
+<tr><td>字重层级</td><td class="muted"><strong>分区/列表标题</strong>用 13/<strong>600</strong>（semibold）；<strong>行内项名</strong>（条目摘要名，如规则名、节点名）用 13/<strong>500</strong>（medium）——<strong>不要和分区标题同为 600</strong>，否则项名与标题视觉打架。正文/描述 400。</td></tr>
+<tr><td>设置界面每行单输入</td><td class="muted"><strong>设置界面内每行最多一个输入框</strong>：禁止并列输入框（如「名称+阶段+类型」「工具+模型」「文案+命令」）。每个字段各占一行（label→description→控件）。注：此约束限设置界面，软件其它区域可能并列。</td></tr>
+<tr><td>点击编辑 vs 常存输入不混用</td><td class="muted"><strong>同一个项（item/表单）内不得混用「点击编辑（read-only→点击变输入）」与「常存控件」</strong>。判定：若该项含任何<strong>常存控件</strong>（单选/复选/下拉/常显输入），则该项的<strong>所有</strong>字段都必须是常存输入框——其中的文本字段不能做成点击编辑。点击编辑只用于<strong>纯单值列表</strong>（每行只有一个可编辑值、无其它控件，如阶段名、可写路径）。反例：产出项里路径用点击编辑、却与「模板单选/必选复选」并存 → 路径须改为常存输入框。</td></tr>
+<tr><td>详情返回 / 详情顶栏</td><td class="muted">所有设置/详情/编辑视图共用<strong>同一套顶栏</strong>：左 <strong>返回 chevron 图标按钮（无文字，h-7）</strong>、右 <strong>保存（紧凑主按钮 h-7，与返回等高）</strong>+「已保存」提示。该顶栏与模态<strong>「关闭(X)」同一行</strong>（内部视图把 返回/保存 传送到模态顶栏插槽）；<strong>不得各处自画返回/保存——必须复用统一组件</strong>。保存按钮为紧凑高度，<strong>不要用偏高的 py-1.5</strong>。</td></tr>
+<tr><td>排序</td><td class="muted">可排序列表（阶段、节点）<strong>只放拖拽柄、不显序号</strong>——顺序由位置表达。拖拽柄为主、▲▼ 为次（少量项/纯点击），二者择一。非排序的纯标号列表（如可写范围/产出）可保留 #N 行号。</td></tr>
+<tr><td>加 / 空 / 计数</td><td class="muted">「加」是末行小按钮（左对齐、hover 用半透明 cobalt 以适配米黄 paper 底，只高亮自身）；空列表只剩 头(标题·描述·分割线)+加末行、无占位文案、无空盒；计数 badge 仅 >0 显示</td></tr>
+<tr><td>库列表（managed）</td><td class="muted">工作流库 / 需求卡类型 / 规则库这类「库」列表与普通列表<strong>同构</strong>：同一个头（标题 13/600 + 计数 + 头底 stone-300 线）、行、末行「+ 新建」add 按钮——<strong>不要把「新建」做成顶部填色按钮</strong>。库级动作（导入 / 预览 / 导出）放<strong>头部右侧</strong>作次级 ghost 按钮（stone-600、hover stone-100），与计数并排。</td></tr>
+<tr><td>多字段项整块 hover</td><td class="muted">含多字段的复合项（如「产出 = 路径+模板+必选」）与<strong>可展开行</strong>（展开后＝摘要+详情）都<strong>整块</strong>给 hover 底色（<span class="code-inline">stone-100/45</span>，同单行），而非只高亮其中某一行——视觉上是「一项」。可展开行的底线放在外层包裹上，展开时摘要与详情连成一体。展开详情内字段间距 16px（label+控件为一组），不用 24px。</td></tr>
+</table>
+</div>
+</section>
+
+<!-- 13. PHILOSOPHY -->
+<section>
+<h2>13 — DESIGN PHILOSOPHY</h2>
+<h3>Why it works</h3>
+
+<div class="insight">
+<h4>VISUAL SIGNATURE</h4>
+<p><span class="accent-cobalt">钴蓝是品牌锚点</span>，不是装饰。出现位置：logo、主 CTA、focused 卡片边框、active nav、用户头像。每一处都承担功能。</p>
+<p><span class="accent-signal">信号橙是 focus indicator</span>。只用于：logo 中间那条横线、当前正在工作的需求标记、generate spec 按钮、focused 卡片左侧 3px 标记条。它是产品的"光标"——告诉用户"现在看这里"。</p>
+<p><strong>米底（paper #f5f1e8）做背景</strong>而不是冷白。长时间使用更舒服，差异化也强——大部分 SaaS 用 #fff 或 #f9fafb。</p>
+<p><strong>没有任何 drop-shadow</strong>。层级靠 border + 背景对比。这是 Klarit 区别于 Notion/Linear 的视觉签名——更"印刷品"，更不"软件"。</p>
+<p><strong>Mono 字体专门留给"产品的语言"</strong>——需求 ID、git refs、API endpoint。这强化了核心叙事：requirements 是和 code 同等重要的工程产物，配得上同样的字体仪式感。</p>
+</div>
+</section>
+
+<footer class="footer">
+<p>Klarit Brand System · v1.0 · <span class="mono">build software by managing requirements, not code</span></p>
+</footer>
+
+</div>
+
+<script>
+// 第 12 章 列表编辑器交互：逐块行内编辑 + 手风琴展开 + 拖拽前收回。
+function cellEdit(ro) {
+  const cell = ro.closest('.cell'); cell.classList.add('editing')
+  const ctrl = cell.querySelector('.cell-ed input, .cell-ed select')
+  if (ctrl) { ctrl.focus(); if (ctrl.select) ctrl.select() }
+}
+function commitCell(cell) {
+  const ctrl = cell.querySelector('.cell-ed input, .cell-ed select')
+  const val = cell.querySelector('.cell-val')
+  if (ctrl && val) val.textContent = ctrl.tagName === 'SELECT' ? ctrl.options[ctrl.selectedIndex].text : ctrl.value
+  cell.classList.remove('editing')
+}
+document.querySelectorAll('.cell').forEach((cell) => {
+  cell.addEventListener('focusout', (e) => { if (!cell.contains(e.relatedTarget)) commitCell(cell) })
+  cell.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); if (e.target.blur) e.target.blur() }
+    if (e.key === 'Escape') { cell.classList.remove('editing') }
+  })
+})
+// 只读块键盘可达：tabindex + Enter/Space 进入编辑
+document.querySelectorAll('.cell-ro').forEach((ro) => {
+  ro.tabIndex = 0; ro.setAttribute('role', 'button')
+  ro.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); cellEdit(ro) } })
+})
+// 手风琴：同列表最多展开一行
+document.querySelectorAll('.litem').forEach((item) => {
+  item.addEventListener('toggle', () => {
+    if (!item.open) return
+    item.parentElement.querySelectorAll(':scope > .litem[open]').forEach((o) => { if (o !== item) o.open = false })
+  })
+})
+// 拖拽前：提交编辑中的块、收起本行
+document.querySelectorAll('.handle, .reorder').forEach((h) => {
+  h.addEventListener('mousedown', () => {
+    const row = h.closest('.lrow, summary'); if (row) row.querySelectorAll('.cell.editing').forEach(commitCell)
+    const it = h.closest('.litem'); if (it) it.removeAttribute('open')
+  })
+})
+</script>
+</body>
+</html>

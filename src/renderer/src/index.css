@@ -1,0 +1,189 @@
+@import 'tailwindcss';
+
+/* 设计令牌——单一来源，对齐 docs/brand/klarit-brand-system.html。
+   新界面只用这里的令牌，不要另起配色或加投影。 */
+@theme {
+  /* Cobalt（主色） */
+  --color-cobalt-50: #eef1ff;
+  --color-cobalt-100: #c4cffd;
+  --color-cobalt-300: #7c93ff;
+  --color-cobalt-500: #1e40ff;
+  --color-cobalt-600: #1530bf;
+  --color-cobalt-700: #0c2080;
+  --color-cobalt-800: #08164d;
+  --color-cobalt-900: #040a2a;
+
+  /* Signal（强调橙——focused requirement） */
+  --color-signal-50: #fff1ea;
+  --color-signal-100: #ffd0b8;
+  --color-signal-300: #ff9971;
+  --color-signal-500: #ff5a1f;
+  --color-signal-600: #d63d0f;
+  --color-signal-700: #9e2806;
+  --color-signal-800: #6b1903;
+  --color-signal-900: #3d0e02;
+
+  /* 中性 / 纸张 */
+  --color-canvas: #fafaf7;
+  --color-paper: #f5f1e8;
+  --color-stone-100: #e8e4dc;
+  --color-stone-300: #c4c0b8;
+  --color-stone-600: #6b6862;
+  --color-stone-800: #3a3835;
+  --color-ink: #1a1a2e;
+  --color-ink-deep: #0f1228;
+
+  /* 语义 */
+  --color-success: #16a34a;
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-info: #0284c7;
+
+  /* Agent / 运行态 */
+  --color-state-idle: #9ca3af;
+  --color-state-system: #2563eb;
+  --color-state-agent: #7c3aed;
+  --color-state-decision: #f97316;
+
+  /* 标签色板（需求卡类型徽章专用——装饰性分类色，与品牌/语义色分离；深浅主题同值，自成一体）。
+     彩色背景配文字：多数白字，过亮的黄/青蓝配 tag-ink 深字（深字固定、深浅主题不翻）。 */
+  --color-tag-red: #ef4444;
+  --color-tag-amber: #d97706;
+  --color-tag-green: #16a34a;
+  --color-tag-blue: #3b82f6;
+  --color-tag-violet: #8b5cf6;
+  --color-tag-yellow: #eab308;
+  --color-tag-cyan: #06b6d4;
+  --color-tag-pink: #ec4899;
+  --color-tag-ink: #1c1917;
+
+  /* 圆角 */
+  --radius-sharp: 2px;
+  --radius-DEFAULT: 6px;
+  --radius-card: 10px;
+  --radius-pill: 999px;
+
+  /* 字体 */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+}
+
+/* 深色主题：仅覆盖语义令牌值，组件类名不变即整体翻色。
+   取值对齐 docs/brand/klarit-brand-system.html 的「深色调色板」段（单一来源）。
+   生效主题由主进程依外观偏好 + 系统明暗解析后写入 <html data-theme>。 */
+html[data-theme='dark'] {
+  /* 让原生滚动条、<select> 下拉、表单控件随深色（消除亮色滚动条/弹层）。 */
+  color-scheme: dark;
+
+  /* 中性 / 纸张（反相：最亮→最深，文字反成近白） */
+  --color-canvas: #14141c;
+  --color-paper: #1c1c28;
+  --color-stone-100: #2c2c3a;
+  --color-stone-300: #3f3f50;
+  --color-stone-600: #a0a0ad;
+  --color-stone-800: #d8d6e0;
+  --color-ink: #eceaf2;
+  --color-ink-deep: #f6f5fa;
+
+  /* Cobalt（暗底提亮；50=选中底、800=选中字，正确反转） */
+  --color-cobalt-50: #1e2a5e;
+  --color-cobalt-100: #2c3d7e;
+  --color-cobalt-300: #4a63d6;
+  --color-cobalt-500: #5b78ff;
+  --color-cobalt-600: #7c93ff;
+  --color-cobalt-700: #9fb0ff;
+  --color-cobalt-800: #aebcff;
+
+  /* Signal（强调橙：50 反成深暖底，500 微提亮） */
+  --color-signal-50: #3a1d0e;
+  --color-signal-500: #ff6a33;
+
+  /* 语义 / 运行态（暗底微提亮以保对比） */
+  --color-success: #34d27b;
+  --color-warning: #f5b73d;
+  --color-danger: #f0625f;
+  --color-info: #38a8e6;
+  --color-state-system: #5b8bf5;
+  --color-state-agent: #a06bf0;
+  --color-state-decision: #ff9f4a;
+  /* 标签色板深浅同值（实色背景配白字，无需翻色）——见 @theme。 */
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  /* 默认浅色控件（深色由 html[data-theme='dark'] 覆盖）。 */
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* 可点击处一律手指光标（Tailwind v4 的 preflight 默认是箭头）。 */
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+[role='menuitem']:not([aria-disabled='true']),
+[role='menuitemradio'] {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+
+/* 看板横向滚动条：始终可见、用语义令牌（深浅随主题翻色），让“可左右滑”被发现。
+   用标准 scrollbar-color（滑块 stone-600 / 轨道 stone-100），深浅主题都看得清。 */
+.board-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-stone-600) var(--color-stone-100);
+}
+
+/* 键盘焦点环（仅键盘可见）——所有可聚焦控件统一（品牌规范 08 章：可见焦点）。
+   组件可在此基础上用 focus-visible: 工具类覆盖 offset。 */
+:focus-visible {
+  outline: 2px solid var(--color-cobalt-500);
+  outline-offset: 2px;
+}
+/* 表单控件用「边框变色」做聚焦指示（focus:border-cobalt-500），不再叠加 outline 形成双层蓝框。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* 运行圆点「呼吸」动画（执行/检查中）；静止点不加此类。reduced-motion 下被下方媒体查询弱化。 */
+@keyframes dot-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.78);
+  }
+}
+.dot-breathe {
+  animation: dot-breathe 1.4s ease-in-out infinite;
+}
+
+/* 尊重 prefers-reduced-motion：弱化动画与过渡（品牌规范 08 章）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

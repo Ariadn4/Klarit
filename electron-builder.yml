@@ -1,0 +1,14 @@
+appId: com.klarit.app
+productName: Klarit
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+win:
+  target: nsis
+mac:
+  target: dmg
+linux:
+  target: AppImage
