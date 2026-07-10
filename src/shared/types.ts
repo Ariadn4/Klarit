@@ -645,6 +645,41 @@ export interface Conversation {
   updatedAt: number
 }
 
+// ── 单需求 agent（single-card-agent） ──────────────────────────────────────
+
+/**
+ * 单需求 agent 的一次本卡执行干预（agent 只**提议**，引擎/store 执行）。节点以 id 引用（读上下文已含节点断点）。
+ * - `pause`/`resume`：无损，可直接执行；
+ * - `reenter`：倒回到节点 K 前向修复（可带注入指令），复用内容驱动回退「重入不重置」，破坏性·须确认；
+ * - `inject`：就地向当前执行节点注入新指令，须确认；
+ * - `adjustCard`：改本卡字段（title/description/typeId），经 cardsUpdate。
+ */
+export type CardIntervention =
+  | { kind: 'pause' }
+  | { kind: 'resume' }
+  | { kind: 'reenter'; nodeId: string; instruction?: string }
+  | { kind: 'inject'; instruction: string }
+  | { kind: 'adjustCard'; patch: CardAdjustPatch }
+
+/** 干预类别标签。 */
+export type CardInterventionKind = CardIntervention['kind']
+
+/** 破坏性干预（执行前须二次确认）：倒回/就地注入/改卡字段。暂停/恢复为无损、可直接执行。 */
+export const DESTRUCTIVE_INTERVENTION_KINDS: ReadonlyArray<CardInterventionKind> = ['reenter', 'inject', 'adjustCard']
+
+/**
+ * 单需求 agent 一轮的输出（自由对话·技能内联的**三岔**收敛为一个对象）：
+ * - 只 `reply`（`interventions` 空、无 `upshift`）＝ 查进度/答疑/讨论；
+ * - `reply` + `interventions[]` ＝ 识别到「本卡怎么执行」的意图；
+ * - `reply` + `upshift{intent}` ＝ 识别到「塑造需求」，交系统转调 `orchestrate`。
+ * `interventions` 与 `upshift` 互斥（塑造需求优先上抛，不在单卡内产干预）。
+ */
+export interface CardAgentTurn {
+  reply: string
+  interventions?: CardIntervention[]
+  upshift?: { intent: string }
+}
+
 // ── 引擎执行（engine-execution） ───────────────────────────────────────────
 
 /** 多仓运行里一个成员仓的运行上下文（由 card.repos 解析而来）。 */

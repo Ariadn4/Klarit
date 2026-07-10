@@ -4,22 +4,22 @@
 
 ## 1. 共享层：三岔输出 + 干预 op + 咨询契约
 
-- [ ] 1.1 加类型 `CardAgentTurn`（判别联合：`{reply}` / `{reply, interventions}` / `{reply, upshift{intent}}`）与干预 op 联合 `CardIntervention`（pause/resume/reenter{nodeId,指令?}/inject{指令}/adjustCard{patch}），节点以 id 引用（写测试锁定序列化往返）
-- [ ] 1.2 写单卡咨询 prompt 契约（自由对话·技能内联：查进度/干预/上抛塑造需求；只读红线；输出格式），供解析单一来源（先测试 prompt 装配含三类技能与只读说明）
-- [ ] 1.3 写三岔输出解析器 `parseCardTurn`（优先结构化 JSON 取 reply/interventions/upshift；退而整段当 reply；容错收敛干预 op），先测试各分支
+- [x] 1.1 加类型 `CardAgentTurn`（判别联合：`{reply}` / `{reply, interventions}` / `{reply, upshift{intent}}`）与干预 op 联合 `CardIntervention`（pause/resume/reenter{nodeId,指令?}/inject{指令}/adjustCard{patch}），节点以 id 引用（写测试锁定序列化往返）
+- [x] 1.2 写单卡咨询 prompt 契约（自由对话·技能内联：查进度/干预/上抛塑造需求；只读红线；输出格式），供解析单一来源（先测试 prompt 装配含三类技能与只读说明）
+- [x] 1.3 写三岔输出解析器 `parseCardTurn`（优先结构化 JSON 取 reply/interventions/upshift；退而整段当 reply；容错收敛干预 op），先测试各分支
 
 ## 2. 共享层：只读读上下文装配
 
-- [ ] 2.1 写读上下文装配纯函数 `buildCardConsultContext`（活现状 + 运行断点摘要 + `renderLineage` 溯源 + 各仓分支 diff 概要），diffNames/断点注入式，先测试
-- [ ] 2.2 预算截断（分支 diff 优先截）+ 显式标「省略 N…」，先测试超预算路径
-- [ ] 2.3 未运行卡（无 activeRunId）上下文：给活现状 + 标明尚未运行，先测试
+- [x] 2.1 写读上下文装配纯函数 `buildCardConsultContext`（活现状 + 运行断点摘要 + `renderLineage` 溯源 + 各仓分支 diff 概要），diffNames/断点注入式，先测试
+- [x] 2.2 预算截断（分支 diff 优先截）+ 显式标「省略 N…」，先测试超预算路径
+- [x] 2.3 未运行卡（无 activeRunId）上下文：给活现状 + 标明尚未运行，先测试
 
 ## 3. engine：用户可发起干预入口
 
-- [ ] 3.1 把 `reenterFromRollback` 提为公开 `engine.reenter(runId, targetNodeId, 指令)`：加节点存在校验（非真实节点拒绝）；复用同一重入实现（不复制），先测试重入不重置 + 非法目标拒绝
-- [ ] 3.2 加 `engine.inject(runId, 指令)`：设当前执行节点 pendingAnswer + 重跑 executing；无可注入节点优雅无操作，先测试注入重跑与无操作
-- [ ] 3.3 干预活跑运行先安全挂起：`reenter`/`inject` 检测活 drive → 复用 pause 边界落 paused 再改断点再 drive；已 parked/paused 直接改，先测试活跑与已挂起两态
-- [ ] 3.4 回归测试：既有 `:rollback-confirm` → 重入路径行为不变（两条发起路径复用同一重入）
+- [x] 3.1 把 `reenterFromRollback` 提为公开 `engine.reenter(runId, targetNodeId, 指令)`：加节点存在校验（非真实节点拒绝）；复用同一重入实现（不复制），先测试重入不重置 + 非法目标拒绝
+- [x] 3.2 加 `engine.inject(runId, 指令)`：设当前执行节点 pendingAnswer + 重跑 executing；无可注入节点优雅无操作，先测试注入重跑与无操作
+- [x] 3.3 干预活跑运行先安全挂起：`reenter`/`inject` 检测活 drive → 复用 pause 边界落 paused 再改断点再 drive；已 parked/paused 直接改，先测试活跑与已挂起两态
+- [x] 3.4 回归测试：既有 `:rollback-confirm` → 重入路径行为不变（两条发起路径复用同一重入）
 
 ## 4. 咨询核：单卡 agent 服务
 

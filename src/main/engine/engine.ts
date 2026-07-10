@@ -160,6 +160,16 @@ export interface Engine {
   resume: (runId: string) => Launched
   decide: (runId: string, response: DecisionResponse) => Launched
   pause: (runId: string) => Promise<RunBreakpoint>
+  /**
+   * 用户可发起的本卡干预——**重入**目标节点前向修复（复用内容驱动回退「重入不重置」）：拨回 K、重锚 K..N 基线、
+   * 把 `instruction` 作「修复前向」注入 K 的执行者、前向重流。目标非本运行真实节点则拒绝、不改动。活跑运行先安全挂起。
+   */
+  reenter: (runId: string, targetNodeId: string, instruction?: string) => Launched
+  /**
+   * 用户可发起的本卡干预——就地向**当前执行节点**注入新指令（设 pendingAnswer + 重跑 executing）。
+   * 当前无可注入的 agent 节点则优雅无操作。活跑运行先安全挂起。
+   */
+  inject: (runId: string, instruction: string) => Launched
   getRunState: (runId: string) => RunBreakpoint | null
   resumeAll: () => Promise<void>
   /** 触发某人工门第 index 个动作按钮:登记为后台命令(各自 bgId/桶/中止/后台生命周期)、立即返回其 bgId、不推进运行。 */
@@ -342,6 +352,20 @@ export function createEngine(deps: EngineDeps): Engine {
     a.detachResolvers = []
     a.driving = true
     return a
+  }
+
+  /**
+   * 干预（reenter/inject）前的**安全挂起**：若运行正在驱动，复用暂停机制在阶段边界静止（杀前台+后台活进程、
+   * 保留可重启记录与续接 token、drive 自落 paused），再由调用方变更断点重驱。未在驱动（parked/paused）则 noop。
+   */
+  async function suspendIfDriving(runId: string): Promise<void> {
+    const a = active.get(runId)
+    if (a && a.driving) {
+      a.paused = true
+      suspendBackground(a)
+      a.abort.abort()
+      await a.settled.catch(() => {})
+    }
   }
 
   /**
@@ -1749,6 +1773,62 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       bp.state = 'paused'
       return persist(bp)
+    },
+
+    reenter(runId, targetNodeId, instruction) {
+      const bp0 = deps.store.load(runId)
+      if (!bp0) throw new Error(`未知运行:${runId}`)
+      if (bp0.state === 'done' || bp0.state === 'aborted') return { runId, settled: Promise.resolve(bp0) }
+      const nodes = nodesOf(bp0)
+      const target = nodes.find((n) => n.id === targetNodeId)
+      if (!target) return { runId, settled: Promise.resolve(bp0) } // 非法目标：拒绝、不改动运行
+      const settled = (async (): Promise<RunBreakpoint> => {
+        await suspendIfDriving(runId) // 活跑先安全挂起
+        const bp = deps.store.load(runId)!
+        bp.pendingDecision = null // 干预 supersede 任何待决策
+        bp.state = 'running'
+        bp.request = derive(bp.request, bp.runId)
+        bp.members = deriveMembers(bp.request)
+        const a = freshActive(runId)
+        ensureBackgroundRunning(bp, a)
+        const gateNode = nodes.find((n) => n.id === bp.currentNodeId) ?? target
+        return reenterFromRollback(bp, gateNode, targetNodeId, instruction ?? '', a)
+      })().finally(() => {
+        const a = active.get(runId)
+        if (a) a.driving = false
+      })
+      ensureActive(runId).settled = settled
+      settled.catch(() => {})
+      return { runId, settled }
+    },
+
+    inject(runId, instruction) {
+      const bp0 = deps.store.load(runId)
+      if (!bp0) throw new Error(`未知运行:${runId}`)
+      if (bp0.state === 'done' || bp0.state === 'aborted') return { runId, settled: Promise.resolve(bp0) }
+      const settled = (async (): Promise<RunBreakpoint> => {
+        await suspendIfDriving(runId) // 活跑先安全挂起
+        const bp = deps.store.load(runId)!
+        const node = nodesOf(bp).find((n) => n.id === bp.currentNodeId)
+        // 无当前可注入的 agent 节点 → 优雅无操作。
+        if (!node || node.executor.kind !== 'agent') return persist(bp)
+        bp.pendingDecision = null
+        bp.state = 'running'
+        bp.request = derive(bp.request, bp.runId)
+        bp.members = deriveMembers(bp.request)
+        const nr = (bp.agentRuns ??= {})[node.id] ?? ((bp.agentRuns[node.id] = {}) as NonNullable<RunBreakpoint['agentRuns']>[string])
+        nr.pendingAnswer = instruction
+        const a = freshActive(runId)
+        ensureBackgroundRunning(bp, a)
+        setPhase(bp, node, { kind: 'executing' })
+        return drive(bp, a)
+      })().finally(() => {
+        const a = active.get(runId)
+        if (a) a.driving = false
+      })
+      ensureActive(runId).settled = settled
+      settled.catch(() => {})
+      return { runId, settled }
     },
 
     getRunState(runId) {
