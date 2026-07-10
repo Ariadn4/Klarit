@@ -39,9 +39,18 @@ export const CARD_CONSULT_CONTRACT = `# 你是这张需求卡的只读顾问（�
 - 塑造需求 → \`{ "reply": "...", "upshift": { "intent": "..." } }\`
 （interventions 与 upshift 互斥；塑造需求一律走 upshift。）`
 
-/** 拼咨询指令：本卡只读读上下文 + 咨询契约 + 用户这轮的话。 */
-export function buildCardConsultPrompt(context: string, intent: string): string {
-  return [context, '', CARD_CONSULT_CONTRACT, '', '# 用户这轮说', intent].join('\n')
+/**
+ * 门语境的**反偏置**说明（门自由输入分类前置用）：卡对话默认歧义→上抛；但用户在**评审本卡产出**的门里，
+ * 默认语境是「对本卡不满意」，故歧义→留在本地（当驳回），只有**明确**的塑造需求才上抛。见 content-driven-rollback。
+ */
+export const GATE_LOCAL_BIAS_NOTE = `# 当前语境：用户正在评审本卡的产出
+除非用户**明确**表达「新增需求/扩大范围/牵动别的卡/新建项目」这类**塑造需求**的意图，否则**不要** upshift——
+把含糊或针对本卡产出的意见一律当作对本卡的驳回/反馈，只回复即可（不产 upshift、不产干预）。`
+
+/** 拼咨询指令：本卡只读读上下文 + 咨询契约（+ 门语境反偏置）+ 用户这轮的话。 */
+export function buildCardConsultPrompt(context: string, intent: string, opts: { biasLocal?: boolean } = {}): string {
+  const contract = opts.biasLocal ? `${CARD_CONSULT_CONTRACT}\n\n${GATE_LOCAL_BIAS_NOTE}` : CARD_CONSULT_CONTRACT
+  return [context, '', contract, '', '# 用户这轮说', intent].join('\n')
 }
 
 function str(v: unknown): string {

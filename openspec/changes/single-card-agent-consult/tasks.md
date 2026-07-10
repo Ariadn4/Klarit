@@ -23,23 +23,23 @@
 
 ## 4. 咨询核：单卡 agent 服务
 
-- [ ] 4.1 写咨询核 `createCardConsultSeam`（注入 deps：读上下文 provider + 假 producer）：意图→三岔（reply/interventions/upshift），先测试三岔全链路（假 producer）
-- [ ] 4.2 干预映射：interventions → 引擎方法/`cardsUpdate`（pause/resume 直接、reenter/inject/结构改动标破坏性待确认），先测试映射与破坏性标记
-- [ ] 4.3 upshift → 转调 `orchestrate(intent, projectId)` 得 ops 提案（假 orchestrate 返固定提案），先测试上抛链路与「单卡不产卡操作」
-- [ ] 4.4 优雅降级：未配置/失败/不可解析 → 只回复 + 可读提示、无干预无上抛，先测试
-- [ ] 4.5 真实只读 producer：复用脱 worktree、只读续接 runner（仿 orchestrate-producer），解析三岔；注入式（真 runner 桩测试，不触真 CLI）
+- [x] 4.1 写咨询核 `createCardConsultSeam`（注入 deps：读上下文 provider + 假 producer）：意图→三岔（reply/interventions/upshift），先测试三岔全链路（假 producer）
+- [x] 4.2 干预映射：interventions → 引擎方法/`cardsUpdate`（pause/resume 直接、reenter/inject/结构改动标破坏性待确认），先测试映射与破坏性标记
+- [x] 4.3 upshift → 转调 `orchestrate(intent, projectId)` 得 ops 提案（假 orchestrate 返固定提案），先测试上抛链路与「单卡不产卡操作」
+- [x] 4.4 优雅降级：未配置/失败/不可解析 → 只回复 + 可读提示、无干预无上抛，先测试
+- [x] 4.5 真实只读 producer：复用脱 worktree、只读续接 runner（仿 orchestrate-producer），解析三岔；注入式（真 runner 桩测试，不触真 CLI）
 
 ## 5. 每卡会话持久化
 
-- [ ] 5.1 card-conversations 桶：复用 `conversation-store` 指向 `userData/card-conversations`，scope=projectId、id=cardId；打开=get-or-create 同一会话，先测试「同卡续同一会话、不可多开」
-- [ ] 5.2 与全局对话物理隔离：卡会话不入全局 `list`、全局会话不入卡咨询，先测试隔离
-- [ ] 5.3 多轮原生续接：复用 `launchContinuation` 阶梯（sessionId 桥接卡会话），先测试续接接上/回落重建
+- [x] 5.1 card-conversations 桶：复用 `conversation-store` 指向 `userData/card-conversations`，scope=projectId、id=cardId；打开=get-or-create 同一会话，先测试「同卡续同一会话、不可多开」
+- [x] 5.2 与全局对话物理隔离：卡会话不入全局 `list`、全局会话不入卡咨询，先测试隔离
+- [x] 5.3 多轮原生续接：复用 `launchContinuation` 阶梯（sessionId 桥接卡会话），先测试续接接上/回落重建
 
 ## 6. 门自由输入分类前置（上抛接线）
 
-- [ ] 6.1 分类旁路 IPC（不消费决策）：把门/失败决策自由输入交单卡 agent 分类；塑造需求 → orchestrate 出提案、**不调 decide**（门仍 pending）；先测试「上抛不消费门」
-- [ ] 6.2 门语境反偏置：歧义→留本地（当驳回/处置）；仅明确塑造需求引流，先测试偏置
-- [ ] 6.3 回归：明确驳回仍走 `runRollbackJudge`、失败自由输入仍走 `runDispositionAgent`（既有 decide 路由零改），先测试
+- [x] 6.1 分类旁路 IPC（不消费决策）：把门/失败决策自由输入交单卡 agent 分类；塑造需求 → orchestrate 出提案、**不调 decide**（门仍 pending）；先测试「上抛不消费门」
+- [x] 6.2 门语境反偏置：歧义→留本地（当驳回/处置）；仅明确塑造需求引流，先测试偏置
+- [x] 6.3 回归：明确驳回仍走 `runRollbackJudge`、失败自由输入仍走 `runDispositionAgent`（既有 decide 路由零改），先测试
 
 ## 7. IPC / preload
 
