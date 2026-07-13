@@ -69,10 +69,13 @@ function InterventionRow({
     if (destructive) setConfirming(true)
     else void run()
   }
-  return (
-    <div className="flex items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2 py-1">
-      <span className="min-w-0 flex-1 truncate text-[11px] text-ink">{describeIntervention(iv, nameOf, t)}</span>
-      {confirming ? (
+  const label = describeIntervention(iv, nameOf, t)
+
+  // 确认态：整行不再是单一按钮，右侧给出「确认 / 取消」两个独立控件。
+  if (confirming) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded border border-warning/40 bg-canvas px-2 py-1.5">
+        <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -90,19 +93,29 @@ function InterventionRow({
             {t('cardConsult.cancel')}
           </button>
         </div>
-      ) : (
-        <button
-          type="button"
-          disabled={done || busy}
-          onClick={onClick}
-          className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${
-            destructive ? 'bg-warning/15 text-warning hover:bg-warning/25' : 'bg-cobalt-600 text-white hover:bg-cobalt-700'
-          } disabled:opacity-50`}
-        >
-          {done ? t('cardConsult.done') : t('cardConsult.apply')}
-        </button>
-      )}
-    </div>
+      </div>
+    )
+  }
+
+  // 默认态：**整个选项方框可点击**（不只右侧小按钮）——悬停高亮 + 手型；右侧 pill 只作视觉提示（属按钮的一部分）。
+  return (
+    <button
+      type="button"
+      disabled={done || busy}
+      onClick={onClick}
+      className={`flex w-full items-center justify-between gap-2 rounded border px-2 py-1.5 text-left transition-colors ${
+        done ? 'border-stone-300 bg-canvas' : 'border-stone-300 bg-canvas hover:border-cobalt-500 hover:bg-cobalt-50'
+      } disabled:opacity-50`}
+    >
+      <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
+      <span
+        className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${
+          done ? 'text-stone-500' : destructive ? 'bg-warning/15 text-warning' : 'bg-cobalt-600 text-white'
+        }`}
+      >
+        {done ? t('cardConsult.done') : t('cardConsult.apply')}
+      </span>
+    </button>
   )
 }
 

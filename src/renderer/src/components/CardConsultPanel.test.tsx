@@ -66,12 +66,12 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'done' })
   })
 
-  it('暂停干预按钮 → 直接调 pauseRun（无损、无确认）', async () => {
+  it('暂停干预：点整个选项方框（点标签即可）→ 直接调 pauseRun（无损、无确认）', async () => {
     const api = installKlarit(makeConv([{ role: 'agent', text: '好的', interventions: [{ kind: 'pause' }], at: 1 }]))
     const onRunUpdate = vi.fn()
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={onRunUpdate} />)
-    const btn = await screen.findByText(/^执行$|^Run$/)
-    await userEvent.click(btn)
+    // 点标签文字（不是右侧 pill）也能触发——证明整框可点
+    await userEvent.click(await screen.findByText(/暂停本卡|Pause this card/))
     await waitFor(() => expect(api.pauseRun).toHaveBeenCalledWith('r1'))
     expect(onRunUpdate).toHaveBeenCalled()
   })
@@ -81,8 +81,8 @@ describe('CardConsultPanel', () => {
       makeConv([{ role: 'agent', text: '建议倒回', interventions: [{ kind: 'reenter', nodeId: 'impl', instruction: '换方案' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    // 破坏性：先点「执行」出内联确认，未确认前不执行
-    await userEvent.click(await screen.findByText(/^执行$|^Run$/))
+    // 破坏性：点整框（点标签）出内联确认，未确认前不执行
+    await userEvent.click(await screen.findByText(/倒回到/))
     expect(api.reenterRun).not.toHaveBeenCalled()
     await userEvent.click(await screen.findByText(/^确认$|^Confirm$/))
     await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', '换方案'))
@@ -108,7 +108,7 @@ describe('CardConsultPanel', () => {
       makeConv([{ role: 'agent', text: 'x', interventions: [{ kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    await userEvent.click(await screen.findByText(/^执行$|^Run$/))
+    await userEvent.click(await screen.findByText(/倒回到/))
     await userEvent.click(await screen.findByText(/^取消$|^Cancel$/))
     await new Promise((r) => setTimeout(r, 10))
     expect(api.reenterRun).not.toHaveBeenCalled()
