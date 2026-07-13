@@ -71,24 +71,24 @@ function InterventionRow({
   }
   const label = describeIntervention(iv, nameOf, t)
 
-  // 确认态：整行不再是单一按钮，右侧给出「确认 / 取消」两个独立控件。
+  // 确认态：整行保持 secondary 外观，右侧给「确认（primary cobalt）/ 取消（secondary 描边）」——对齐品牌按钮系统。
   if (confirming) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded border border-warning/40 bg-canvas px-2 py-1.5">
+      <div className="flex items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5">
         <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1.5">
           <button
             type="button"
             disabled={busy}
             onClick={() => void run()}
-            className="rounded bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning hover:bg-warning/25 disabled:opacity-50"
+            className="rounded bg-cobalt-500 px-2.5 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600 disabled:opacity-50"
           >
             {t('cardConsult.confirm')}
           </button>
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-stone-600 hover:bg-stone-100"
+            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-ink"
           >
             {t('cardConsult.cancel')}
           </button>
@@ -97,22 +97,17 @@ function InterventionRow({
     )
   }
 
-  // 默认态：**整个选项方框可点击**（不只右侧小按钮）——悬停高亮 + 手型；右侧 pill 只作视觉提示（属按钮的一部分）。
+  // 默认态：**整个选项方框可点击**（不只右侧）——secondary 按钮样式：中性描边、悬停边框转 ink（品牌 .btn-secondary），
+  // 右侧「执行」为 ghost cobalt 文字提示（属按钮一部分，单一 cobalt 强调色，不再蓝→橙跳色）。
   return (
     <button
       type="button"
       disabled={done || busy}
       onClick={onClick}
-      className={`flex w-full items-center justify-between gap-2 rounded border px-2 py-1.5 text-left transition-colors ${
-        done ? 'border-stone-300 bg-canvas' : 'border-stone-300 bg-canvas hover:border-cobalt-500 hover:bg-cobalt-50'
-      } disabled:opacity-50`}
+      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-ink disabled:opacity-50 disabled:hover:border-stone-300"
     >
       <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
-      <span
-        className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${
-          done ? 'text-stone-500' : destructive ? 'bg-warning/15 text-warning' : 'bg-cobalt-600 text-white'
-        }`}
-      >
+      <span className={`shrink-0 text-[10px] font-medium ${done ? 'text-stone-500' : 'text-cobalt-500'}`}>
         {done ? t('cardConsult.done') : t('cardConsult.apply')}
       </span>
     </button>
