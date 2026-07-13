@@ -88,7 +88,7 @@ function InterventionRow({
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-ink"
+            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-cobalt-500"
           >
             {t('cardConsult.cancel')}
           </button>
