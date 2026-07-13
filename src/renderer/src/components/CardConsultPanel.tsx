@@ -96,12 +96,12 @@ function MessageRow({
   onApplyProposal: (ops: CardOp[], messageAt: number) => Promise<void>
 }): React.JSX.Element {
   const isUser = message.role === 'user'
-  // 用户与 agent 气泡**均左对齐**（窄面板下更顺眼）；靠底色区分：用户 cobalt-100、agent paper。
+  // 气泡位置：用户靠右、agent 靠左（同全局对话）；气泡**内**文字一律左对齐（text-left）。
   return (
-    <div className="flex flex-col items-start gap-1">
+    <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
       {message.text && (
         <div
-          className={`max-w-[92%] select-text rounded-card px-2.5 py-1.5 text-[12px] text-ink ${
+          className={`max-w-[92%] select-text rounded-card px-2.5 py-1.5 text-left text-[12px] text-ink ${
             isUser ? 'whitespace-pre-wrap bg-cobalt-100' : 'bg-paper'
           }`}
         >
