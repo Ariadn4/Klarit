@@ -104,7 +104,7 @@ function InterventionRow({
       type="button"
       disabled={done || busy}
       onClick={onClick}
-      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-ink disabled:opacity-50 disabled:hover:border-stone-300"
+      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-cobalt-500 disabled:opacity-50 disabled:hover:border-stone-300"
     >
       <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
       <span className={`shrink-0 text-[10px] font-medium ${done ? 'text-stone-500' : 'text-cobalt-500'}`}>
