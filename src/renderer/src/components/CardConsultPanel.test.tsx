@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Conversation, WorkflowNode } from '@shared/types'
 import { CardConsultPanel } from './CardConsultPanel'
+import { useCardsStore } from '../stores/cards'
 
 const NODES: WorkflowNode[] = [
   { id: 'impl', name: { zh: '实现' }, stageId: 's', executor: { kind: 'agent', instruction: { kind: 'inline', text: '' } }, outputs: [] }
@@ -31,6 +32,8 @@ function installKlarit(conv: Conversation, extra: Record<string, unknown> = {}):
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  // 隔离看板刷新：applyProposal/adjustCard 后调 useCardsStore.load()，用桩避免触真 IPC。
+  useCardsStore.setState({ load: vi.fn(async () => {}) })
 })
 
 describe('CardConsultPanel', () => {
@@ -82,6 +85,21 @@ describe('CardConsultPanel', () => {
     const btn = await screen.findByText(/^执行$|^Run$/)
     await userEvent.click(btn)
     await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', '换方案'))
+  })
+
+  it('上抛提案：可勾选审阅 + 应用调 applyOps', async () => {
+    const proposal = {
+      ops: [{ kind: 'create' as const, card: { proposedName: 'export', title: '导出功能', description: '导出为 CSV', typeId: 'feature', relations: [] } }],
+      issues: []
+    }
+    const api = installKlarit(makeConv([{ role: 'agent', text: '这像新需求', proposal, at: 1 }]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    // 复用全局提案审阅 UI：勾选框 + 可读描述
+    expect(await screen.findByText(/导出功能/)).toBeTruthy()
+    expect(screen.getByRole('checkbox')).toBeTruthy()
+    await userEvent.click(screen.getByText(/应用|Apply/))
+    await waitFor(() => expect(api.applyOps).toHaveBeenCalled())
+    expect(api.applyOps.mock.calls[0][0]).toHaveLength(1) // 勾选的 create op
   })
 
   it('倒回干预取消确认 → 不执行', async () => {

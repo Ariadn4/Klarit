@@ -9,14 +9,15 @@ import { useTranslation } from 'react-i18next'
 import { Send, Loader2 } from 'lucide-react'
 import type {
   CardIntervention,
+  CardOp,
   Conversation,
   ConversationMessage,
-  OrchestrationProposal,
   RunBreakpoint,
   WorkflowNode
 } from '@shared/types'
 import { isDestructiveIntervention } from '@shared/card-agent'
 import { MarkdownView } from './NewRequirementFlow'
+import { ProposalReview } from './ProposalReview'
 import { useCardsStore } from '../stores/cards'
 
 /** 干预可读文案（节点 id 映射为名）。 */
@@ -79,72 +80,49 @@ function InterventionRow({
   )
 }
 
-function ProposalRow({ proposal, onApply }: { proposal: OrchestrationProposal; onApply: () => Promise<void> }): React.JSX.Element | null {
-  const { t } = useTranslation()
-  const [applied, setApplied] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const valid = proposal.ops.filter((_, i) => !proposal.issues.some((iss) => iss.index === i))
-  if (valid.length === 0) return null
-  const apply = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      await onApply()
-      setApplied(true)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <div className="mt-1 rounded border border-stone-300 bg-canvas px-2 py-1.5">
-      <div className="mb-1 text-[10px] font-medium text-cobalt-500">{t('cardConsult.proposalNote')}</div>
-      <ul className="mb-1.5 space-y-0.5 text-[11px] text-ink">
-        {valid.map((op, i) => (
-          <li key={i} className="truncate">
-            • {op.kind === 'create' ? op.card.title : op.kind}
-          </li>
-        ))}
-      </ul>
-      <button
-        type="button"
-        disabled={applied || busy}
-        onClick={() => void apply()}
-        className="rounded bg-cobalt-600 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-cobalt-700 disabled:opacity-50"
-      >
-        {applied ? t('cardConsult.applied') : t('cardConsult.applyProposal', { count: valid.length })}
-      </button>
-    </div>
-  )
-}
-
 function MessageRow({
   message,
   nameOf,
+  applied,
+  applying,
   onApplyIntervention,
   onApplyProposal
 }: {
   message: ConversationMessage
   nameOf: (id: string) => string
+  applied: boolean
+  applying: boolean
   onApplyIntervention: (iv: CardIntervention) => Promise<void>
-  onApplyProposal: (p: OrchestrationProposal) => Promise<void>
+  onApplyProposal: (ops: CardOp[], messageAt: number) => Promise<void>
 }): React.JSX.Element {
   const isUser = message.role === 'user'
+  // 用户与 agent 气泡**均左对齐**（窄面板下更顺眼）；靠底色区分：用户 cobalt-100、agent paper。
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[85%] space-y-1 ${isUser ? 'text-right' : 'text-left'}`}>
-        {message.text && (
-          <div
-            className={`inline-block select-text rounded-card px-2.5 py-1.5 text-[12px] text-ink ${
-              isUser ? 'bg-cobalt-100' : 'bg-paper'
-            }`}
-          >
-            {isUser ? message.text : <MarkdownView content={message.text} />}
-          </div>
-        )}
-        {message.interventions?.map((iv, i) => (
-          <InterventionRow key={i} iv={iv} nameOf={nameOf} onApply={onApplyIntervention} />
-        ))}
-        {message.proposal && <ProposalRow proposal={message.proposal} onApply={() => onApplyProposal(message.proposal!)} />}
-      </div>
+    <div className="flex flex-col items-start gap-1">
+      {message.text && (
+        <div
+          className={`max-w-[92%] select-text rounded-card px-2.5 py-1.5 text-[12px] text-ink ${
+            isUser ? 'whitespace-pre-wrap bg-cobalt-100' : 'bg-paper'
+          }`}
+        >
+          {isUser ? message.text : <MarkdownView content={message.text} />}
+        </div>
+      )}
+      {message.interventions?.map((iv, i) => (
+        <div key={i} className="w-full">
+          <InterventionRow iv={iv} nameOf={nameOf} onApply={onApplyIntervention} />
+        </div>
+      ))}
+      {message.proposal && (
+        <div className="w-full">
+          <ProposalReview
+            proposal={message.proposal}
+            applied={applied}
+            applying={applying}
+            onApply={(ops) => void onApplyProposal(ops, message.at)}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -164,6 +142,8 @@ export function CardConsultPanel({
   const [conv, setConv] = useState<Conversation | null>(null)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [appliedAt, setAppliedAt] = useState<ReadonlySet<number>>(new Set())
+  const [applying, setApplying] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const reloadBoard = useCardsStore((s) => s.load)
 
@@ -229,11 +209,19 @@ export function CardConsultPanel({
     }
   }
 
-  const applyProposal = async (p: OrchestrationProposal): Promise<void> => {
-    const valid = p.ops.filter((_, i) => !p.issues.some((iss) => iss.index === i))
-    const destructive = valid.some((op) => op.kind === 'split' || op.kind === 'merge')
-    await window.klarit.applyOps(valid, destructive)
-    await reloadBoard()
+  // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项）：破坏性二次确认 → applyOps → 刷看板 → 标记已应用。
+  const applyProposal = async (ops: CardOp[], messageAt: number): Promise<void> => {
+    const destructive = ops.some((op) => op.kind === 'split' || op.kind === 'merge')
+    // eslint-disable-next-line no-alert
+    if (destructive && !confirm(t('globalChat.confirmBody', { targets: ops.map((o) => (o.kind === 'merge' ? o.sources.join('、') : o.kind === 'split' ? o.source : '')).filter(Boolean).join('；') }))) return
+    setApplying(true)
+    try {
+      await window.klarit.applyOps(ops, destructive)
+      await reloadBoard()
+      setAppliedAt((prev) => new Set(prev).add(messageAt))
+    } finally {
+      setApplying(false)
+    }
   }
 
   const messages = conv?.messages ?? []
@@ -250,6 +238,8 @@ export function CardConsultPanel({
               key={i}
               message={m}
               nameOf={nameOf}
+              applied={appliedAt.has(m.at)}
+              applying={applying}
               onApplyIntervention={applyIntervention}
               onApplyProposal={applyProposal}
             />
