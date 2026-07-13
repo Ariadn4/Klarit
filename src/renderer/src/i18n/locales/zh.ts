@@ -471,6 +471,8 @@ export const zh = {
     ivInject: '向当前节点注入指令',
     ivAdjust: '修改本卡资料',
     apply: '执行',
+    confirm: '确认',
+    cancel: '取消',
     confirmReenter: '将倒回到「{{node}}」前向修复（不重置已有产出），确认？',
     confirmInject: '将向当前执行节点注入这条指令并重跑，确认？',
     confirmAdjust: '将修改本卡资料，确认？',

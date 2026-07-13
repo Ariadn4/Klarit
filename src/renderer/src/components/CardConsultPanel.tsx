@@ -52,8 +52,11 @@ function InterventionRow({
   const { t } = useTranslation()
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
-  const apply = async (): Promise<void> => {
+  const [confirming, setConfirming] = useState(false)
+  const destructive = isDestructiveIntervention(iv)
+  const run = async (): Promise<void> => {
     setBusy(true)
+    setConfirming(false)
     try {
       await onApply(iv)
       setDone(true)
@@ -61,21 +64,44 @@ function InterventionRow({
       setBusy(false)
     }
   }
+  // 破坏性（倒回/注入/改资料）：先内联二次确认（不用原生 confirm——Electron 下不可靠）；无损（暂停/恢复）直接执行。
+  const onClick = (): void => {
+    if (destructive) setConfirming(true)
+    else void run()
+  }
   return (
     <div className="flex items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2 py-1">
       <span className="min-w-0 flex-1 truncate text-[11px] text-ink">{describeIntervention(iv, nameOf, t)}</span>
-      <button
-        type="button"
-        disabled={done || busy}
-        onClick={() => void apply()}
-        className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${
-          isDestructiveIntervention(iv)
-            ? 'bg-warning/15 text-warning hover:bg-warning/25'
-            : 'bg-cobalt-600 text-white hover:bg-cobalt-700'
-        } disabled:opacity-50`}
-      >
-        {done ? t('cardConsult.done') : t('cardConsult.apply')}
-      </button>
+      {confirming ? (
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run()}
+            className="rounded bg-warning/15 px-2 py-0.5 text-[10px] font-medium text-warning hover:bg-warning/25 disabled:opacity-50"
+          >
+            {t('cardConsult.confirm')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-stone-600 hover:bg-stone-100"
+          >
+            {t('cardConsult.cancel')}
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={done || busy}
+          onClick={onClick}
+          className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-medium ${
+            destructive ? 'bg-warning/15 text-warning hover:bg-warning/25' : 'bg-cobalt-600 text-white hover:bg-cobalt-700'
+          } disabled:opacity-50`}
+        >
+          {done ? t('cardConsult.done') : t('cardConsult.apply')}
+        </button>
+      )}
     </div>
   )
 }
@@ -188,32 +214,24 @@ export function CardConsultPanel({
       if (runId) onRunUpdate(await window.klarit.resumeRun(runId))
       return
     }
-    // 破坏性：二次确认后经引擎/store 执行。
+    // 破坏性干预：二次确认已由 InterventionRow 内联把关，此处直接经引擎/store 执行。
     if (iv.kind === 'reenter') {
-      // eslint-disable-next-line no-alert
-      if (!runId || !confirm(t('cardConsult.confirmReenter', { node: nameOf(iv.nodeId) }))) return
-      onRunUpdate(await window.klarit.reenterRun(runId, iv.nodeId, iv.instruction))
+      if (runId) onRunUpdate(await window.klarit.reenterRun(runId, iv.nodeId, iv.instruction))
       return
     }
     if (iv.kind === 'inject') {
-      // eslint-disable-next-line no-alert
-      if (!runId || !confirm(t('cardConsult.confirmInject'))) return
-      onRunUpdate(await window.klarit.injectRun(runId, iv.instruction))
+      if (runId) onRunUpdate(await window.klarit.injectRun(runId, iv.instruction))
       return
     }
     if (iv.kind === 'adjustCard') {
-      // eslint-disable-next-line no-alert
-      if (!confirm(t('cardConsult.confirmAdjust'))) return
       await window.klarit.updateCard(cardId, iv.patch)
       await reloadBoard()
     }
   }
 
-  // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项）：破坏性二次确认 → applyOps → 刷看板 → 标记已应用。
+  // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项，勾选+点应用即明确同意）：applyOps → 刷看板 → 标记已应用。
   const applyProposal = async (ops: CardOp[], messageAt: number): Promise<void> => {
     const destructive = ops.some((op) => op.kind === 'split' || op.kind === 'merge')
-    // eslint-disable-next-line no-alert
-    if (destructive && !confirm(t('globalChat.confirmBody', { targets: ops.map((o) => (o.kind === 'merge' ? o.sources.join('、') : o.kind === 'split' ? o.source : '')).filter(Boolean).join('；') }))) return
     setApplying(true)
     try {
       await window.klarit.applyOps(ops, destructive)

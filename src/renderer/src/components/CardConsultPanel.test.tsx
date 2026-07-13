@@ -76,14 +76,15 @@ describe('CardConsultPanel', () => {
     expect(onRunUpdate).toHaveBeenCalled()
   })
 
-  it('倒回干预 → 二次确认后调 reenterRun', async () => {
+  it('倒回干预 → 内联二次确认后调 reenterRun', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: '建议倒回', interventions: [{ kind: 'reenter', nodeId: 'impl', instruction: '换方案' }], at: 1 }])
     )
-    window.confirm = vi.fn(() => true)
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const btn = await screen.findByText(/^执行$|^Run$/)
-    await userEvent.click(btn)
+    // 破坏性：先点「执行」出内联确认，未确认前不执行
+    await userEvent.click(await screen.findByText(/^执行$|^Run$/))
+    expect(api.reenterRun).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByText(/^确认$|^Confirm$/))
     await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', '换方案'))
   })
 
@@ -102,13 +103,13 @@ describe('CardConsultPanel', () => {
     expect(api.applyOps.mock.calls[0][0]).toHaveLength(1) // 勾选的 create op
   })
 
-  it('倒回干预取消确认 → 不执行', async () => {
+  it('倒回干预取消内联确认 → 不执行', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: 'x', interventions: [{ kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
-    window.confirm = vi.fn(() => false)
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
     await userEvent.click(await screen.findByText(/^执行$|^Run$/))
+    await userEvent.click(await screen.findByText(/^取消$|^Cancel$/))
     await new Promise((r) => setTimeout(r, 10))
     expect(api.reenterRun).not.toHaveBeenCalled()
   })
