@@ -1377,6 +1377,9 @@ function restoreOrStart(): void {
   }
 }
 
+// 开发期开放渲染层远程调试端口（仅未打包时），便于用 CDP 检查 DOM/覆盖层。打包版不开。
+if (!app.isPackaged) app.commandLine.appendSwitch('remote-debugging-port', '9333')
+
 app.whenReady().then(() => {
   // 首启检测：无已存 language 时按系统语言初始化并持久化（仅一次）。
   settings = initSettings({
