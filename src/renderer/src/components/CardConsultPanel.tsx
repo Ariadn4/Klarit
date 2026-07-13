@@ -246,8 +246,13 @@ export function CardConsultPanel({
       await window.klarit.updateCard(cardId, iv.patch)
       await reloadBoard()
     }
-    await window.klarit.markCardInterventionApplied(cardId, messageAt, index)
-    await reload()
+    // 持久化「已执行」+ 刷会话——失败不应回滚本次已执行的展示（本地 done 仍标记成功）。
+    try {
+      await window.klarit.markCardInterventionApplied(cardId, messageAt, index)
+      await reload()
+    } catch {
+      /* 持久化失败（如旧 preload 尚未加载该通道）：忽略，本地仍显已执行 */
+    }
   }
 
   // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项，勾选+点应用即明确同意）：applyOps → 刷看板 → 标记已应用。
