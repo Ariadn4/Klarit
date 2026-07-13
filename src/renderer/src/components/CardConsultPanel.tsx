@@ -43,22 +43,26 @@ function describeIntervention(
 function InterventionRow({
   iv,
   nameOf,
+  applied,
   onApply
 }: {
   iv: CardIntervention
   nameOf: (id: string) => string
-  onApply: (iv: CardIntervention) => Promise<void>
+  /** 已执行（持久化，重开卡后仍为真）：显「已执行」、不可再触发。 */
+  applied: boolean
+  onApply: () => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const destructive = isDestructiveIntervention(iv)
+  const isDone = applied || done
   const run = async (): Promise<void> => {
     setBusy(true)
     setConfirming(false)
     try {
-      await onApply(iv)
+      await onApply()
       setDone(true)
     } finally {
       setBusy(false)
@@ -70,6 +74,17 @@ function InterventionRow({
     else void run()
   }
   const label = describeIntervention(iv, nameOf, t)
+  // 右侧状态提示：执行中（转圈）> 已执行（灰）> 执行（cobalt）。
+  const hint = busy ? (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-stone-500">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      {t('cardConsult.running')}
+    </span>
+  ) : (
+    <span className={`text-[10px] font-medium ${isDone ? 'text-stone-500' : 'text-cobalt-500'}`}>
+      {isDone ? t('cardConsult.done') : t('cardConsult.apply')}
+    </span>
+  )
 
   // 确认态：整行保持 secondary 外观，右侧给「确认（primary cobalt）/ 取消（secondary 描边）」——对齐品牌按钮系统。
   if (confirming) {
@@ -97,19 +112,17 @@ function InterventionRow({
     )
   }
 
-  // 默认态：**整个选项方框可点击**（不只右侧）——secondary 按钮样式：中性描边、悬停边框转 ink（品牌 .btn-secondary），
-  // 右侧「执行」为 ghost cobalt 文字提示（属按钮一部分，单一 cobalt 强调色，不再蓝→橙跳色）。
+  // 默认态：**整个选项方框可点击**（不只右侧）——secondary 按钮样式：中性描边、悬停边框转 cobalt，
+  // 右侧提示随状态切换（执行中转圈 / 已执行灰 / 执行 cobalt）；已执行或执行中禁用不可再触发。
   return (
     <button
       type="button"
-      disabled={done || busy}
+      disabled={isDone || busy}
       onClick={onClick}
-      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-cobalt-500 disabled:opacity-50 disabled:hover:border-stone-300"
+      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-cobalt-500 disabled:opacity-60 disabled:hover:border-stone-300"
     >
       <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
-      <span className={`shrink-0 text-[10px] font-medium ${done ? 'text-stone-500' : 'text-cobalt-500'}`}>
-        {done ? t('cardConsult.done') : t('cardConsult.apply')}
-      </span>
+      <span className="shrink-0">{hint}</span>
     </button>
   )
 }
@@ -126,7 +139,7 @@ function MessageRow({
   nameOf: (id: string) => string
   applied: boolean
   applying: boolean
-  onApplyIntervention: (iv: CardIntervention) => Promise<void>
+  onApplyIntervention: (iv: CardIntervention, messageAt: number, index: number) => Promise<void>
   onApplyProposal: (ops: CardOp[], messageAt: number) => Promise<void>
 }): React.JSX.Element {
   const isUser = message.role === 'user'
@@ -144,7 +157,12 @@ function MessageRow({
       )}
       {message.interventions?.map((iv, i) => (
         <div key={i} className="w-full">
-          <InterventionRow iv={iv} nameOf={nameOf} onApply={onApplyIntervention} />
+          <InterventionRow
+            iv={iv}
+            nameOf={nameOf}
+            applied={message.appliedInterventions?.includes(i) ?? false}
+            onApply={() => onApplyIntervention(iv, message.at, i)}
+          />
         </div>
       ))}
       {message.proposal && (
@@ -213,28 +231,23 @@ export function CardConsultPanel({
     }
   }
 
-  const applyIntervention = async (iv: CardIntervention): Promise<void> => {
+  // 执行一个本卡干预（经引擎/store 中转）；成功后持久化「已执行」标记并刷新会话（重开卡仍显已执行）。
+  const applyIntervention = async (iv: CardIntervention, messageAt: number, index: number): Promise<void> => {
     if (iv.kind === 'pause') {
       if (runId) onRunUpdate(await window.klarit.pauseRun(runId))
-      return
-    }
-    if (iv.kind === 'resume') {
+    } else if (iv.kind === 'resume') {
       if (runId) onRunUpdate(await window.klarit.resumeRun(runId))
-      return
-    }
-    // 破坏性干预：二次确认已由 InterventionRow 内联把关，此处直接经引擎/store 执行。
-    if (iv.kind === 'reenter') {
+    } else if (iv.kind === 'reenter') {
+      // 破坏性干预：二次确认已由 InterventionRow 内联把关，此处直接经引擎执行。
       if (runId) onRunUpdate(await window.klarit.reenterRun(runId, iv.nodeId, iv.instruction))
-      return
-    }
-    if (iv.kind === 'inject') {
+    } else if (iv.kind === 'inject') {
       if (runId) onRunUpdate(await window.klarit.injectRun(runId, iv.instruction))
-      return
-    }
-    if (iv.kind === 'adjustCard') {
+    } else if (iv.kind === 'adjustCard') {
       await window.klarit.updateCard(cardId, iv.patch)
       await reloadBoard()
     }
+    await window.klarit.markCardInterventionApplied(cardId, messageAt, index)
+    await reload()
   }
 
   // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项，勾选+点应用即明确同意）：applyOps → 刷看板 → 标记已应用。

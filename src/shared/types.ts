@@ -628,6 +628,8 @@ export interface ConversationMessage {
   proposal?: OrchestrationProposal
   /** 单需求 agent 的本卡干预提议（仅卡咨询会话用；供历史重放确认按钮）。 */
   interventions?: CardIntervention[]
+  /** 已执行的干预下标（持久化：重开卡后仍显「已执行」、不再可重复触发）。 */
+  appliedInterventions?: number[]
   at: number
 }
 
@@ -1226,6 +1228,8 @@ export interface KlaritApi {
   setCardConsultAgentModel: (cardId: string, agentId?: string, model?: string) => Promise<void>
   /** 门自由输入分类前置：反偏置跑一轮；塑造需求→出 ops 提案（不消费门），否则只回复。 */
   classifyCardGateInput: (cardId: string, text: string) => Promise<CardConsultOutcome | null>
+  /** 标记某消息第 index 个干预已执行（持久化，供重开卡后显「已执行」）。 */
+  markCardInterventionApplied: (cardId: string, messageAt: number, index: number) => Promise<void>
   /** 用户发起本卡干预——倒回到目标节点前向修复（可带注入指令）；回运行断点。 */
   reenterRun: (runId: string, targetNodeId: string, instruction?: string) => Promise<RunBreakpoint | null>
   /** 用户发起本卡干预——就地向当前执行节点注入新指令；回运行断点。 */

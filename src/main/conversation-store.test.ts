@@ -82,6 +82,21 @@ function contract(name: string, make: () => ConversationStore): void {
       expect(store.get('p1', 'c')?.messages).toHaveLength(2)
     })
 
+    it('markInterventionApplied 按 at 定位消息、去重累积已执行下标', () => {
+      store.create('p1', 'c', NOW)
+      store.appendMessage('p1', 'c', { role: 'agent', text: 'x', interventions: [{ kind: 'pause' }, { kind: 'resume' }], at: NOW + 5 })
+      store.markInterventionApplied('p1', 'c', NOW + 5, 1)
+      store.markInterventionApplied('p1', 'c', NOW + 5, 0)
+      store.markInterventionApplied('p1', 'c', NOW + 5, 0) // 去重
+      expect(store.get('p1', 'c')?.messages[0].appliedInterventions).toEqual([0, 1])
+    })
+
+    it('markInterventionApplied 到不存在消息/会话 → no-op、不抛', () => {
+      store.create('p1', 'c', NOW)
+      expect(() => store.markInterventionApplied('p1', 'c', 999, 0)).not.toThrow()
+      expect(() => store.markInterventionApplied('p1', 'ghost', NOW, 0)).not.toThrow()
+    })
+
     it('remove 删会话', () => {
       store.create('p1', 'c', NOW)
       store.remove('p1', 'c')

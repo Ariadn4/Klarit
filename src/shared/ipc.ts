@@ -139,6 +139,8 @@ export const IPC = {
   cardConsultSetAgentModel: 'cardConsult:setAgentModel',
   /** 门自由输入分类前置：反偏置跑一轮咨询；塑造需求→出 ops 提案（**不消费该门决策**），否则只回复。 */
   cardGateClassify: 'cardConsult:gateClassify',
+  /** 标记某消息第 index 个干预已执行（持久化，供重开卡后显「已执行」、不再重复触发）。 */
+  cardConsultMarkApplied: 'cardConsult:markApplied',
   // ── 需求卡类型注册表：增删改查（全局类型库；archetype 内置 container/leaf）──
   listCardTypes: 'cardType:list',
   saveCardType: 'cardType:save',

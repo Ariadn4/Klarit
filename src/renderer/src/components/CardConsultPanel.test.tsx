@@ -23,6 +23,7 @@ function installKlarit(conv: Conversation, extra: Record<string, unknown> = {}):
     injectRun: vi.fn(async () => ({ state: 'running' })),
     updateCard: vi.fn(async () => null),
     applyOps: vi.fn(async () => ({ created: [], updated: [], removed: [], issues: [] })),
+    markCardInterventionApplied: vi.fn(async () => {}),
     cardsList: vi.fn(async () => []),
     ...extra
   }
@@ -74,6 +75,19 @@ describe('CardConsultPanel', () => {
     await userEvent.click(await screen.findByText(/暂停本卡|Pause this card/))
     await waitFor(() => expect(api.pauseRun).toHaveBeenCalledWith('r1'))
     expect(onRunUpdate).toHaveBeenCalled()
+    // 执行后持久化「已执行」标记（重开卡仍显已执行）
+    await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 0))
+  })
+
+  it('已执行的干预（appliedInterventions 含该项）→ 显「已执行」且禁用', async () => {
+    const api = installKlarit(
+      makeConv([{ role: 'agent', text: 'ok', interventions: [{ kind: 'pause' }], appliedInterventions: [0], at: 1 }])
+    )
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    expect(await screen.findByText(/已执行|Done/)).toBeTruthy()
+    await userEvent.click(screen.getByText(/已执行|Done/))
+    await new Promise((r) => setTimeout(r, 10))
+    expect(api.pauseRun).not.toHaveBeenCalled() // 已执行不可再触发
   })
 
   it('倒回干预 → 内联二次确认后调 reenterRun', async () => {

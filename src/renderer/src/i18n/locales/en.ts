@@ -476,6 +476,7 @@ export const en: Dictionary = {
     ivInject: 'Inject an instruction into the current node',
     ivAdjust: 'Edit this card’s details',
     apply: 'Run',
+    running: 'Running…',
     confirm: 'Confirm',
     cancel: 'Cancel',
     confirmReenter: 'Roll back to “{{node}}” and fix forward (existing outputs are not reset). Continue?',
