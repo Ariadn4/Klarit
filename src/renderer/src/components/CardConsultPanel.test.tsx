@@ -50,6 +50,19 @@ describe('CardConsultPanel', () => {
     expect(api.getCardConversation).toHaveBeenCalledTimes(2) // 初始 + 发送后刷新
   })
 
+  it('发送后立即乐观显示用户气泡（思考期间可见，不等 agent 回复）', async () => {
+    let resolveSend: (v: { reply: string }) => void = () => {}
+    const pending = new Promise<{ reply: string }>((r) => (resolveSend = r))
+    installKlarit(makeConv([]), { sendCardConsult: vi.fn(() => pending) })
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    const box = await screen.findByPlaceholderText(/问进度|Ask progress/)
+    await userEvent.type(box, '恢复')
+    await userEvent.keyboard('{Enter}')
+    // agent 还没回（send 未 resolve），用户气泡已可见
+    expect(await screen.findByText('恢复')).toBeTruthy()
+    resolveSend({ reply: 'done' })
+  })
+
   it('暂停干预按钮 → 直接调 pauseRun（无损、无确认）', async () => {
     const api = installKlarit(makeConv([{ role: 'agent', text: '好的', interventions: [{ kind: 'pause' }], at: 1 }]))
     const onRunUpdate = vi.fn()

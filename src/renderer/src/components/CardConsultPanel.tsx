@@ -185,6 +185,12 @@ export function CardConsultPanel({
     if (!intent || busy) return
     setInput('')
     setBusy(true)
+    // 乐观追加用户气泡：主进程落库前先显示，思考期间用户能看到自己刚发的话（reload 后以权威历史替换）。
+    setConv((c) =>
+      c
+        ? { ...c, messages: [...c.messages, { role: 'user', text: intent, at: Date.now() }] }
+        : { id: cardId, projectId: '', title: cardId, messages: [{ role: 'user', text: intent, at: Date.now() }], createdAt: Date.now(), updatedAt: Date.now() }
+    )
     try {
       await window.klarit.sendCardConsult(cardId, intent)
       await reload()
