@@ -181,24 +181,27 @@ describe('CardConsultPanel', () => {
   it('底部抽屉：默认折叠（不显标题/清空），点把手展开/收起', async () => {
     installKlarit(makeConv([{ role: 'agent', text: '历史', at: 1 }]))
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const handle = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ }) // aria-label 即使折叠也可寻
-    expect(handle.getAttribute('aria-expanded')).toBe('false') // 默认折叠
+    // 折叠态：把手是输入框上方的上拉箭头（aria-label 可寻）
+    const collapsed = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })
+    expect(collapsed.getAttribute('aria-expanded')).toBe('false') // 默认折叠
     expect(screen.queryByText(/清空对话|Clear chat/)).toBeNull() // 折叠不显清空
-    await userEvent.click(handle)
-    expect(handle.getAttribute('aria-expanded')).toBe('true') // 展开
-    expect(screen.getByText(/清空对话|Clear chat/)).toBeTruthy() // 展开显清空
-    await userEvent.click(handle)
-    expect(handle.getAttribute('aria-expanded')).toBe('false') // 收起
+    await userEvent.click(collapsed) // 展开（折叠箭头卸载、顶部把手栏挂载）
+    const header = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })
+    expect(header.getAttribute('aria-expanded')).toBe('true') // 展开
+    expect(screen.getByText(/清空对话|Clear chat/)).toBeTruthy() // 展开显清空（顶部）
+    await userEvent.click(header) // 收起
+    expect((await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })).getAttribute('aria-expanded')).toBe('false')
   })
 
   it('发送问题即展开底部抽屉', async () => {
     installKlarit(makeConv([]))
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const handle = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })
-    expect(handle.getAttribute('aria-expanded')).toBe('false')
+    expect((await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })).getAttribute('aria-expanded')).toBe('false')
     await userEvent.type(screen.getByPlaceholderText(/问进度|Ask progress/), '在跑吗')
     await userEvent.keyboard('{Enter}')
-    await waitFor(() => expect(handle.getAttribute('aria-expanded')).toBe('true'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /询问 Agent|Ask Agent/ }).getAttribute('aria-expanded')).toBe('true')
+    )
   })
 
   it('无历史时不显示清空入口', async () => {
