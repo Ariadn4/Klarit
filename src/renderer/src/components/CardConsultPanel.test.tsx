@@ -177,6 +177,27 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'x' })
   })
 
+  it('底部抽屉：默认折叠，点把手展开/收起', async () => {
+    installKlarit(makeConv([{ role: 'agent', text: '历史', at: 1 }]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    const handle = (await screen.findByText(/询问 Agent|Ask Agent/)).closest('button') as HTMLButtonElement
+    expect(handle.getAttribute('aria-expanded')).toBe('false') // 默认折叠
+    await userEvent.click(handle)
+    expect(handle.getAttribute('aria-expanded')).toBe('true') // 展开
+    await userEvent.click(handle)
+    expect(handle.getAttribute('aria-expanded')).toBe('false') // 收起
+  })
+
+  it('发送问题即展开底部抽屉', async () => {
+    installKlarit(makeConv([]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    const handle = (await screen.findByText(/询问 Agent|Ask Agent/)).closest('button') as HTMLButtonElement
+    expect(handle.getAttribute('aria-expanded')).toBe('false')
+    await userEvent.type(screen.getByPlaceholderText(/问进度|Ask progress/), '在跑吗')
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() => expect(handle.getAttribute('aria-expanded')).toBe('true'))
+  })
+
   it('无历史时不显示清空入口', async () => {
     installKlarit(makeConv([]))
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)

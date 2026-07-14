@@ -102,10 +102,10 @@ export function RequirementCardDetail(): React.JSX.Element | null {
     !!wf && wf.nodes.length > 0 && wf.nodes[wf.nodes.length - 1].id === bp?.currentNodeId
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 p-6">
-      <div className="flex max-h-full w-[34rem] max-w-full flex-col overflow-hidden rounded-card border border-stone-300 bg-paper">
-        {/* 头部：标题 + 类型 + 关闭 */}
-        <header className="flex items-start gap-2 border-b border-stone-100 px-4 py-3">
+    // 右侧推挤式侧抽屉（无遮罩、看板让位）：作为主区 flex 行的兄弟占宽；relative 供底部咨询抽屉绝对定位。
+    <div className="relative flex h-full w-[36rem] max-w-full shrink-0 flex-col overflow-hidden border-l border-stone-300 bg-paper">
+      {/* 头部：标题 + 类型 + 关闭 */}
+      <header className="flex items-start gap-2 border-b border-stone-100 px-4 py-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-[14px] font-semibold text-ink">{card.title}</h2>
@@ -129,7 +129,7 @@ export function RequirementCardDetail(): React.JSX.Element | null {
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-3 text-[12px]">
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 pb-28 pt-3 text-[12px]">
           {card.description && (
             <p className="whitespace-pre-wrap break-words text-ink">{card.description}</p>
           )}
@@ -210,16 +210,6 @@ export function RequirementCardDetail(): React.JSX.Element | null {
               />
             </div>
           )}
-
-          {/* 单需求 agent 咨询区（查进度 / 本卡干预 / 上抛塑造需求），与决策区并列 */}
-          <CardConsultPanel
-            cardId={card.proposedName}
-            runId={runId ?? undefined}
-            nodes={wf?.nodes}
-            onRunUpdate={(b) => {
-              if (b) setRun(b)
-            }}
-          />
 
           {/* 前台输出分流：agent 节点显示「AI 活动」；命令节点按每条命令各一格（node:<id>:<i>）分流，绝不夹揉。 */}
           {runId && bp?.currentNodeId && currentNode?.executor.kind === 'agent' && (
@@ -304,7 +294,15 @@ export function RequirementCardDetail(): React.JSX.Element | null {
             </div>
           )}
         </div>
-      </div>
+      {/* 询问 Agent：底部可开合抽屉（绝对定位、折叠只露把手+输入、发送/拉起展开覆盖任务内容） */}
+      <CardConsultPanel
+        cardId={card.proposedName}
+        runId={runId ?? undefined}
+        nodes={wf?.nodes}
+        onRunUpdate={(b) => {
+          if (b) setRun(b)
+        }}
+      />
     </div>
   )
 }

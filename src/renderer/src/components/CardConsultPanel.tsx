@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Loader2, Copy, Pencil, RotateCcw, Square } from 'lucide-react'
+import { Send, Loader2, Copy, Pencil, RotateCcw, Square, ChevronUp, ChevronDown, Trash2 } from 'lucide-react'
 import type {
   CardIntervention,
   CardOp,
@@ -242,6 +242,7 @@ export function CardConsultPanel({
   const [appliedAt, setAppliedAt] = useState<ReadonlySet<number>>(new Set())
   const [applying, setApplying] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [expanded, setExpanded] = useState(false) // 底部抽屉：默认折叠（只露把手 + 输入）
   const listRef = useRef<HTMLDivElement>(null)
   const reloadBoard = useCardsStore((s) => s.load)
 
@@ -261,6 +262,7 @@ export function CardConsultPanel({
   const send = async (): Promise<void> => {
     const intent = input.trim()
     if (!intent || busy) return
+    setExpanded(true) // 发送即展开底部抽屉
     setInput('')
     setBusy(true)
     // 乐观追加用户气泡：主进程落库前先显示，思考期间用户能看到自己刚发的话（reload 后以权威历史替换）。
@@ -344,6 +346,7 @@ export function CardConsultPanel({
   // 重试最新用户消息：丢弃该轮 agent 回复、按本会话选型重跑该条意图。
   const retryLast = async (): Promise<void> => {
     if (busy) return
+    setExpanded(true)
     // 乐观：立即截到最新用户消息（下方 agent 气泡即刻消失）+ 显示思考中；重跑完 reload 以新回复替换。
     setConv((c) => {
       if (!c) return c
@@ -367,9 +370,23 @@ export function CardConsultPanel({
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
 
   return (
-    <div className="flex flex-col">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-stone-600">{t('cardConsult.title')}</span>
+    // 底部可开合抽屉：绝对定位贴 RequirementCardDetail 底部；折叠=把手+输入，展开=向上覆盖任务内容区。
+    <div
+      className={`absolute inset-x-0 bottom-0 z-10 flex flex-col border-t border-stone-300 bg-paper ${
+        expanded ? 'top-[32%] shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)]' : ''
+      }`}
+    >
+      {/* 把手栏：展开/收起 + 「询问 Agent」+ 清空按钮 */}
+      <div className="flex items-center justify-between gap-2 border-b border-stone-100 px-3 py-1.5">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex min-w-0 items-center gap-1 text-[11px] font-medium text-stone-600 transition-colors hover:text-ink"
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+          <span className="truncate">{t('cardConsult.title')}</span>
+        </button>
         {messages.length > 0 &&
           (clearing ? (
             <span className="flex items-center gap-1.5">
@@ -393,13 +410,19 @@ export function CardConsultPanel({
             <button
               type="button"
               onClick={() => setClearing(true)}
-              className="text-[10px] text-stone-500 transition-colors hover:text-ink"
+              className="flex shrink-0 items-center gap-1 rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-600 transition-colors hover:border-cobalt-500 hover:text-ink"
             >
-              {t('cardConsult.clear')}
+              <Trash2 size={12} /> {t('cardConsult.clear')}
             </button>
           ))}
       </div>
-      <div ref={listRef} className="max-h-64 space-y-2 overflow-auto rounded-card border border-stone-300 bg-canvas p-2">
+      {/* 消息列表：折叠时高度收 0（内容仍在 DOM，供续接/滚动）；展开时占满剩余高度、覆盖任务内容 */}
+      <div
+        ref={listRef}
+        className={
+          expanded ? 'min-h-0 flex-1 space-y-2 overflow-auto bg-canvas px-3 py-2' : 'max-h-0 overflow-hidden'
+        }
+      >
         {messages.length === 0 && !busy ? (
           <div className="py-4 text-center text-[11px] text-stone-500">{t('cardConsult.empty')}</div>
         ) : (
@@ -424,7 +447,8 @@ export function CardConsultPanel({
           </div>
         )}
       </div>
-      <div className="mt-1.5 flex items-end gap-1.5">
+      {/* 输入行（常驻，折叠态也露出） */}
+      <div className="flex items-end gap-1.5 border-t border-stone-100 px-3 py-2">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

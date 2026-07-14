@@ -460,7 +460,7 @@ export const zh = {
     confirmApply: '确认应用'
   },
   cardConsult: {
-    title: '单需求 Agent（只读咨询）',
+    title: '询问 Agent',
     placeholder: '问进度 / 讨论 / 干预这张卡…',
     empty: '跟这张卡的 Agent 聊聊：查进度、暂停/倒回、或提出新想法',
     send: '发送',
@@ -472,7 +472,7 @@ export const zh = {
     ivAdjust: '修改本卡资料',
     apply: '执行',
     running: '执行中…',
-    interventionsTitle: '本卡干预（选一个执行）',
+    interventionsTitle: '建议：',
     clear: '清空对话',
     clearConfirm: '清空这张卡的对话记录？',
     stop: '停止',

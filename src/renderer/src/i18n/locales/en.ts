@@ -465,7 +465,7 @@ export const en: Dictionary = {
     confirmApply: 'Confirm & apply'
   },
   cardConsult: {
-    title: 'Requirement Agent (read-only)',
+    title: 'Ask Agent',
     placeholder: 'Ask progress / discuss / intervene on this card…',
     empty: 'Chat with this card’s agent: check progress, pause/roll back, or raise a new idea',
     send: 'Send',
@@ -477,7 +477,7 @@ export const en: Dictionary = {
     ivAdjust: 'Edit this card’s details',
     apply: 'Run',
     running: 'Running…',
-    interventionsTitle: 'Interventions (pick one to run)',
+    interventionsTitle: 'Suggestions:',
     clear: 'Clear chat',
     clearConfirm: 'Clear this card’s chat history?',
     stop: 'Stop',

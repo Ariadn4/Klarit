@@ -287,18 +287,21 @@ export function App(): React.JSX.Element {
             onResizeEnd={onResizeEnd}
           />
         )}
-        {/* 主面板区：文件查看器浮层/蒙层/底栏都限定在此（不跨到侧边栏）。overflow-hidden 让看板成为唯一滚动主。 */}
-        <main className="relative min-w-0 flex-1 overflow-hidden bg-paper">
-          {/* 需求看板：列按激活工作流阶段渲染，承载本项目真需求卡（按 cardColumn 派生入列）。 */}
-          <KanbanBoard
-            activeWorkflow={activeWorkflow}
-            cards={cards}
-            cardTypes={cardTypes}
-            runs={runs}
-          />
-          {/* 应用级文件查看器：由全局 store 驱动，供文件树及未来其它入口调用。 */}
-          <FileViewer />
-          {/* 需求卡详情面板：运行控制 + 单卡决策 + 命令输出分流（由 cards store 驱动）。 */}
+        {/* 主面板区：改 flex 行——看板 flex-1 + 详情侧抽屉推挤（无遮罩、看板让位）。浮层/蒙层/底栏仍限定在此。 */}
+        <main className="relative flex min-w-0 flex-1 overflow-hidden bg-paper">
+          {/* 看板区（flex-1，详情抽屉打开时让位收窄）；relative 供其内浮层定位。 */}
+          <div className="relative min-w-0 flex-1 overflow-hidden">
+            {/* 需求看板：列按激活工作流阶段渲染，承载本项目真需求卡（按 cardColumn 派生入列）。 */}
+            <KanbanBoard
+              activeWorkflow={activeWorkflow}
+              cards={cards}
+              cardTypes={cardTypes}
+              runs={runs}
+            />
+            {/* 应用级文件查看器：由全局 store 驱动，供文件树及未来其它入口调用。 */}
+            <FileViewer />
+          </div>
+          {/* 需求卡详情：右侧推挤式侧抽屉（含底部询问 Agent 抽屉）；关闭时 null 不占宽。 */}
           <RequirementCardDetail />
           {/* 新建需求流程：描述想法→建卡中→审阅候选，由全局 store 驱动、无蒙层浮窗；全程状态由「待办」列「+ 创建」按钮承载。 */}
           <NewRequirementFlow />
