@@ -39,9 +39,13 @@ function describeIntervention(
   }
 }
 
+/** 与 ops 提案审阅按钮同款（bg-cobalt-500 / px-3 py-1.5 / text-[13px]）——两处 UI 尺寸一致。 */
+const primaryBtn =
+  'inline-flex items-center gap-1 rounded bg-cobalt-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600 disabled:opacity-50'
+
 /**
- * 一轮的本卡干预：**统一框起、逐项勾选（可单可多）、选完点「执行选中」一次执行**（保序，处理两步计划），
- * 执行后已执行项锁定（勾选+禁用+「已执行」）。与 ops 提案审阅同构：选中→提交→锁定。
+ * 一轮的本卡干预：**统一框起、默认全勾**（同 ops 提案：进来即全选，一次「执行 N 项」整套跑完，处理两步计划），
+ * 可取消勾选做子集；按序执行、执行后锁定（勾选+禁用+「已执行」）。尺寸/样式与 `ProposalReview` 一致。
  */
 function InterventionGroup({
   interventions,
@@ -56,61 +60,57 @@ function InterventionGroup({
   onExecute: (indices: number[]) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
+  // 未执行项**默认全选**（excluded 模型，同 ProposalReview）：取消勾选才排除。
+  const [excluded, setExcluded] = useState<ReadonlySet<number>>(new Set())
   const [busy, setBusy] = useState(false)
   const appliedSet = new Set(applied)
   const allApplied = interventions.every((_, i) => appliedSet.has(i))
+  const included = (i: number): boolean => !excluded.has(i)
+  const runnable = interventions.map((_, i) => i).filter((i) => !appliedSet.has(i) && included(i))
   const toggle = (i: number): void =>
-    setSelected((prev) => {
+    setExcluded((prev) => {
       const next = new Set(prev)
       next.has(i) ? next.delete(i) : next.add(i)
       return next
     })
-  const runnable = interventions.map((_, i) => i).filter((i) => selected.has(i) && !appliedSet.has(i))
   const execute = async (): Promise<void> => {
     if (runnable.length === 0) return
     setBusy(true)
     try {
       await onExecute(runnable)
-      setSelected(new Set())
     } finally {
       setBusy(false)
     }
   }
   return (
-    <div className="mt-1 w-full rounded border border-stone-300 bg-canvas p-2">
-      <div className="mb-1.5 text-[11px] font-medium text-stone-600">{t('cardConsult.interventionsTitle')}</div>
-      <ul className="flex flex-col gap-1">
+    <div className="mt-2 w-full rounded border border-stone-300 bg-canvas p-2">
+      <div className="mb-1 text-[12px] font-semibold text-ink">{t('cardConsult.interventionsTitle')}</div>
+      <ul className="flex flex-col gap-1.5">
         {interventions.map((iv, i) => {
           const done = appliedSet.has(i)
           return (
-            <li key={i} className="text-[11px] leading-snug">
+            <li key={i} className="text-[13px] leading-snug">
               <label className={`flex cursor-pointer items-start gap-1.5 ${done ? 'opacity-60' : ''}`}>
                 <input
                   type="checkbox"
-                  className="mt-[2px] accent-cobalt-500"
+                  className="mt-[3px] accent-cobalt-500"
                   disabled={done || busy}
-                  checked={done || selected.has(i)}
+                  checked={done || included(i)}
                   onChange={() => toggle(i)}
                   aria-label={describeIntervention(iv, nameOf, t)}
                 />
-                <span className="min-w-0 flex-1 text-ink">{describeIntervention(iv, nameOf, t)}</span>
-                {done && <span className="shrink-0 text-[10px] font-medium text-stone-500">{t('cardConsult.done')}</span>}
+                <span className="min-w-0 flex-1 font-medium text-ink">{describeIntervention(iv, nameOf, t)}</span>
+                {done && <span className="shrink-0 text-[11px] font-medium text-stone-500">{t('cardConsult.done')}</span>}
               </label>
             </li>
           )
         })}
       </ul>
       {!allApplied && (
-        <div className="mt-2 flex justify-end">
-          <button
-            type="button"
-            disabled={busy || runnable.length === 0}
-            onClick={() => void execute()}
-            className="inline-flex items-center gap-1 rounded bg-cobalt-500 px-2.5 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600 disabled:opacity-50"
-          >
-            {busy && <Loader2 className="h-3 w-3 animate-spin" />}
-            {busy ? t('cardConsult.running') : t('cardConsult.runSelected', { count: runnable.length })}
+        <div className="mt-2 flex items-center justify-end gap-2">
+          <button type="button" disabled={busy || runnable.length === 0} onClick={() => void execute()} className={primaryBtn}>
+            {busy && <Loader2 size={14} className="animate-spin" />}
+            {t('cardConsult.runSelected', { count: runnable.length })}
           </button>
         </div>
       )}

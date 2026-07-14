@@ -478,7 +478,7 @@ export const en: Dictionary = {
     apply: 'Run',
     running: 'Running…',
     interventionsTitle: 'Interventions (select, then run)',
-    runSelected: 'Run selected ({{count}})',
+    runSelected: 'Run {{count}}',
     confirm: 'Confirm',
     cancel: 'Cancel',
     confirmReenter: 'Roll back to “{{node}}” and fix forward (existing outputs are not reset). Continue?',

@@ -473,7 +473,7 @@ export const zh = {
     apply: '执行',
     running: '执行中…',
     interventionsTitle: '本卡干预（勾选后执行）',
-    runSelected: '执行选中（{{count}}）',
+    runSelected: '执行 {{count}} 项',
     confirm: '确认',
     cancel: '取消',
     confirmReenter: '将倒回到「{{node}}」前向修复（不重置已有产出），确认？',

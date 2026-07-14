@@ -67,30 +67,25 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'done' })
   })
 
-  it('干预组：勾选 + 执行选中 → 调 pauseRun 并持久化已执行', async () => {
+  it('干预组默认全勾 → 一次「执行」即跑 + 持久化已执行', async () => {
     const api = installKlarit(makeConv([{ role: 'agent', text: '好的', interventions: [{ kind: 'pause' }], at: 1 }]))
     const onRunUpdate = vi.fn()
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={onRunUpdate} />)
-    // 未勾选前不执行
-    await userEvent.click(await screen.findByRole('checkbox'))
-    await userEvent.click(screen.getByText(/执行选中|Run selected/))
+    // 无需勾选（默认已选）——直接点执行
+    await userEvent.click(await screen.findByText(/执行 \d+ 项|Run \d+/))
     await waitFor(() => expect(api.pauseRun).toHaveBeenCalledWith('r1'))
     expect(onRunUpdate).toHaveBeenCalled()
     await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 0))
   })
 
-  it('两步计划：勾选两项 → 保序执行两个干预', async () => {
+  it('两步计划：默认两项全勾 → 一次点击保序执行两个干预（不需操作两次）', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: '两步', interventions: [{ kind: 'adjustCard', patch: { title: 'T' } }, { kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const boxes = await screen.findAllByRole('checkbox')
-    await userEvent.click(boxes[0])
-    await userEvent.click(boxes[1])
-    await userEvent.click(screen.getByText(/执行选中|Run selected/))
+    await userEvent.click(await screen.findByText(/执行 2 项|Run 2/)) // 一次点击
     await waitFor(() => expect(api.updateCard).toHaveBeenCalled())
     await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', undefined))
-    // 两项都持久化
     await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledTimes(2))
   })
 
@@ -103,8 +98,8 @@ describe('CardConsultPanel', () => {
     expect(cb.checked).toBe(true)
     expect(cb.disabled).toBe(true)
     expect(screen.getByText(/已执行|Done/)).toBeTruthy()
-    // 全部已执行 → 无「执行选中」按钮
-    expect(screen.queryByText(/执行选中|Run selected/)).toBeNull()
+    // 全部已执行 → 无执行按钮
+    expect(screen.queryByText(/执行 \d+ 项|Run \d+/)).toBeNull()
     await new Promise((r) => setTimeout(r, 10))
     expect(api.pauseRun).not.toHaveBeenCalled()
   })
@@ -124,12 +119,13 @@ describe('CardConsultPanel', () => {
     expect(api.applyOps.mock.calls[0][0]).toHaveLength(1) // 勾选的 create op
   })
 
-  it('未勾选任何项 → 执行按钮禁用、不执行', async () => {
+  it('取消全部勾选 → 执行按钮禁用、不执行（可做子集）', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: 'x', interventions: [{ kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const btn = (await screen.findByText(/执行选中|Run selected/)).closest('button') as HTMLButtonElement
+    await userEvent.click(await screen.findByRole('checkbox')) // 取消默认勾选
+    const btn = (await screen.findByText(/执行 0 项|Run 0/)).closest('button') as HTMLButtonElement
     expect(btn.disabled).toBe(true)
     await userEvent.click(btn)
     await new Promise((r) => setTimeout(r, 10))
