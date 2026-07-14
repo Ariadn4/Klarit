@@ -67,41 +67,44 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'done' })
   })
 
-  it('干预组默认全勾 → 一次「执行」即跑 + 持久化已执行', async () => {
+  it('单个干预默认预选 → 点「执行」即跑 + 持久化已执行', async () => {
     const api = installKlarit(makeConv([{ role: 'agent', text: '好的', interventions: [{ kind: 'pause' }], at: 1 }]))
     const onRunUpdate = vi.fn()
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={onRunUpdate} />)
-    // 无需勾选（默认已选）——直接点执行
-    await userEvent.click(await screen.findByText(/执行 \d+ 项|Run \d+/))
+    ;((await screen.findByRole('radio')) as HTMLInputElement) // 默认已预选
+    await userEvent.click(screen.getByText(/^执行$|^Run$/))
     await waitFor(() => expect(api.pauseRun).toHaveBeenCalledWith('r1'))
     expect(onRunUpdate).toHaveBeenCalled()
     await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 0))
   })
 
-  it('两步计划：默认两项全勾 → 一次点击保序执行两个干预（不需操作两次）', async () => {
+  it('互斥备选：单选第二个 → 只执行所选那个（不执行第一个）', async () => {
     const api = installKlarit(
-      makeConv([{ role: 'agent', text: '两步', interventions: [{ kind: 'adjustCard', patch: { title: 'T' } }, { kind: 'reenter', nodeId: 'impl' }], at: 1 }])
+      makeConv([{ role: 'agent', text: '两个做法', interventions: [{ kind: 'pause' }, { kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    await userEvent.click(await screen.findByText(/执行 2 项|Run 2/)) // 一次点击
-    await waitFor(() => expect(api.updateCard).toHaveBeenCalled())
+    const radios = await screen.findAllByRole('radio')
+    await userEvent.click(radios[1]) // 选第二个（倒回）
+    await userEvent.click(screen.getByText(/^执行$|^Run$/))
     await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', undefined))
-    await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledTimes(2))
+    expect(api.pauseRun).not.toHaveBeenCalled() // 未选的不执行
+    await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 1))
+    expect(api.markCardInterventionApplied).toHaveBeenCalledTimes(1) // 只执行一个
   })
 
-  it('已执行的干预 → 勾选框选中且禁用、显「已执行」、不再重复触发', async () => {
+  it('已执行 → 整组锁死：radio 禁用、显「已执行」、无执行按钮、不可再触发别的', async () => {
     const api = installKlarit(
-      makeConv([{ role: 'agent', text: 'ok', interventions: [{ kind: 'pause' }], appliedInterventions: [0], at: 1 }])
+      makeConv([{ role: 'agent', text: 'ok', interventions: [{ kind: 'pause' }, { kind: 'reenter', nodeId: 'impl' }], appliedInterventions: [0], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const cb = (await screen.findByRole('checkbox')) as HTMLInputElement
-    expect(cb.checked).toBe(true)
-    expect(cb.disabled).toBe(true)
+    const radios = (await screen.findAllByRole('radio')) as HTMLInputElement[]
+    expect(radios[0].checked).toBe(true)
+    expect(radios.every((r) => r.disabled)).toBe(true) // 全锁
     expect(screen.getByText(/已执行|Done/)).toBeTruthy()
-    // 全部已执行 → 无执行按钮
-    expect(screen.queryByText(/执行 \d+ 项|Run \d+/)).toBeNull()
+    expect(screen.queryByText(/^执行$|^Run$/)).toBeNull() // 无执行按钮
     await new Promise((r) => setTimeout(r, 10))
     expect(api.pauseRun).not.toHaveBeenCalled()
+    expect(api.reenterRun).not.toHaveBeenCalled()
   })
 
   it('上抛提案：可勾选审阅 + 应用调 applyOps', async () => {
@@ -119,16 +122,4 @@ describe('CardConsultPanel', () => {
     expect(api.applyOps.mock.calls[0][0]).toHaveLength(1) // 勾选的 create op
   })
 
-  it('取消全部勾选 → 执行按钮禁用、不执行（可做子集）', async () => {
-    const api = installKlarit(
-      makeConv([{ role: 'agent', text: 'x', interventions: [{ kind: 'reenter', nodeId: 'impl' }], at: 1 }])
-    )
-    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    await userEvent.click(await screen.findByRole('checkbox')) // 取消默认勾选
-    const btn = (await screen.findByText(/执行 0 项|Run 0/)).closest('button') as HTMLButtonElement
-    expect(btn.disabled).toBe(true)
-    await userEvent.click(btn)
-    await new Promise((r) => setTimeout(r, 10))
-    expect(api.reenterRun).not.toHaveBeenCalled()
-  })
 })

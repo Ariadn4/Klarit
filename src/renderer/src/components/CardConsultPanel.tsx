@@ -44,73 +44,79 @@ const primaryBtn =
   'inline-flex items-center gap-1 rounded bg-cobalt-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600 disabled:opacity-50'
 
 /**
- * 一轮的本卡干预：**统一框起、默认全勾**（同 ops 提案：进来即全选，一次「执行 N 项」整套跑完，处理两步计划），
- * 可取消勾选做子集；按序执行、执行后锁定（勾选+禁用+「已执行」）。尺寸/样式与 `ProposalReview` 一致。
+ * 一轮的本卡干预：**互斥备选方案，单选（radio）一个 → 点「执行」跑那一个**。执行开始即锁定全部选项、
+ * 在所选项上显执行状态（执行中…）；执行完**整组锁死**——不能再选、不能执行别的，所选项标「已执行」。
+ * 尺寸/样式与 `ProposalReview` 一致。
  */
 function InterventionGroup({
   interventions,
   applied,
+  groupKey,
   nameOf,
   onExecute
 }: {
   interventions: CardIntervention[]
-  /** 已执行的干预下标（持久化）。 */
+  /** 已执行的干预下标（持久化）；非空即整组已定、锁死。 */
   applied: number[]
+  /** radio name 用（同组互斥、跨组不串）。 */
+  groupKey: string
   nameOf: (id: string) => string
   onExecute: (indices: number[]) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
-  // 未执行项**默认全选**（excluded 模型，同 ProposalReview）：取消勾选才排除。
-  const [excluded, setExcluded] = useState<ReadonlySet<number>>(new Set())
-  const [busy, setBusy] = useState(false)
   const appliedSet = new Set(applied)
-  const allApplied = interventions.every((_, i) => appliedSet.has(i))
-  const included = (i: number): boolean => !excluded.has(i)
-  const runnable = interventions.map((_, i) => i).filter((i) => !appliedSet.has(i) && included(i))
-  const toggle = (i: number): void =>
-    setExcluded((prev) => {
-      const next = new Set(prev)
-      next.has(i) ? next.delete(i) : next.add(i)
-      return next
-    })
+  const resolved = applied.length > 0 // 已执行过一个 → 整组锁死
+  const firstPending = interventions.findIndex((_, i) => !appliedSet.has(i))
+  // 默认预选第一个未执行项：单个干预时=一键执行；多个备选时可切换。
+  const [selected, setSelected] = useState<number | null>(firstPending >= 0 ? firstPending : null)
+  const [busy, setBusy] = useState(false)
   const execute = async (): Promise<void> => {
-    if (runnable.length === 0) return
+    if (selected == null) return
     setBusy(true)
     try {
-      await onExecute(runnable)
+      await onExecute([selected])
     } finally {
       setBusy(false)
     }
   }
+  const locked = resolved || busy
   return (
     <div className="mt-2 w-full rounded border border-stone-300 bg-canvas p-2">
       <div className="mb-1 text-[12px] font-semibold text-ink">{t('cardConsult.interventionsTitle')}</div>
       <ul className="flex flex-col gap-1.5">
         {interventions.map((iv, i) => {
           const done = appliedSet.has(i)
+          const running = busy && selected === i
           return (
             <li key={i} className="text-[13px] leading-snug">
-              <label className={`flex cursor-pointer items-start gap-1.5 ${done ? 'opacity-60' : ''}`}>
+              <label className={`flex cursor-pointer items-start gap-1.5 ${done ? '' : resolved ? 'opacity-50' : ''}`}>
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name={`iv-${groupKey}`}
                   className="mt-[3px] accent-cobalt-500"
-                  disabled={done || busy}
-                  checked={done || included(i)}
-                  onChange={() => toggle(i)}
+                  disabled={locked}
+                  checked={done || selected === i}
+                  onChange={() => setSelected(i)}
                   aria-label={describeIntervention(iv, nameOf, t)}
                 />
                 <span className="min-w-0 flex-1 font-medium text-ink">{describeIntervention(iv, nameOf, t)}</span>
                 {done && <span className="shrink-0 text-[11px] font-medium text-stone-500">{t('cardConsult.done')}</span>}
+                {running && (
+                  <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-stone-500">
+                    <Loader2 size={12} className="animate-spin" />
+                    {t('cardConsult.running')}
+                  </span>
+                )}
               </label>
             </li>
           )
         })}
       </ul>
-      {!allApplied && (
+      {!resolved && (
         <div className="mt-2 flex items-center justify-end gap-2">
-          <button type="button" disabled={busy || runnable.length === 0} onClick={() => void execute()} className={primaryBtn}>
+          <button type="button" disabled={busy || selected == null} onClick={() => void execute()} className={primaryBtn}>
             {busy && <Loader2 size={14} className="animate-spin" />}
-            {t('cardConsult.runSelected', { count: runnable.length })}
+            {t('cardConsult.apply')}
           </button>
         </div>
       )}
@@ -150,6 +156,7 @@ function MessageRow({
         <InterventionGroup
           interventions={message.interventions}
           applied={message.appliedInterventions ?? []}
+          groupKey={String(message.at)}
           nameOf={nameOf}
           onExecute={(indices) => onExecuteInterventions(message.at, message.interventions!, indices)}
         />

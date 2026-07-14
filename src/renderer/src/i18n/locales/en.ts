@@ -477,7 +477,7 @@ export const en: Dictionary = {
     ivAdjust: 'Edit this card’s details',
     apply: 'Run',
     running: 'Running…',
-    interventionsTitle: 'Interventions (select, then run)',
+    interventionsTitle: 'Interventions (pick one to run)',
     runSelected: 'Run {{count}}',
     confirm: 'Confirm',
     cancel: 'Cancel',

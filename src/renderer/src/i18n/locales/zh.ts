@@ -472,7 +472,7 @@ export const zh = {
     ivAdjust: '修改本卡资料',
     apply: '执行',
     running: '执行中…',
-    interventionsTitle: '本卡干预（勾选后执行）',
+    interventionsTitle: '本卡干预（选一个执行）',
     runSelected: '执行 {{count}} 项',
     confirm: '确认',
     cancel: '取消',
