@@ -82,5 +82,5 @@
 
 - [x] 9.1 `npm run typecheck`（node + web 两套）全绿
 - [x] 9.2 `npm run test:run` 全绿（含新单测 + 既有回退/处置回归）
-- [ ] 9.3 dogfood（`npm start` 不监听源码）：跑到一半的卡开对话 →① 问进度得答复；② 倒回节点 K 并注入→确认→引擎回退+K 重做；③「还要加个需求 X」→上抛→orchestrate 建卡提案→applyOps→看板新卡出现
-- [ ] 9.4 `/opsx:archive` 同步增量 spec 到主 specs
+- [x] 9.3 dogfood（`npm start` 不监听源码）：跑到一半的卡开对话 →① 问进度得答复；② 倒回节点 K 并注入→确认→引擎回退+K 重做；③「还要加个需求 X」→上抛→orchestrate 建卡提案→applyOps→看板新卡出现
+- [x] 9.4 `/opsx:archive` 同步增量 spec 到主 specs
