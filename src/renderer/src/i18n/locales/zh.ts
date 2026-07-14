@@ -473,6 +473,8 @@ export const zh = {
     apply: '执行',
     running: '执行中…',
     interventionsTitle: '本卡干预（选一个执行）',
+    clear: '清空对话',
+    clearConfirm: '清空这张卡的对话记录？',
     runSelected: '执行 {{count}} 项',
     confirm: '确认',
     cancel: '取消',

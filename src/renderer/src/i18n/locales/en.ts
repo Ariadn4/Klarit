@@ -478,6 +478,8 @@ export const en: Dictionary = {
     apply: 'Run',
     running: 'Running…',
     interventionsTitle: 'Interventions (pick one to run)',
+    clear: 'Clear chat',
+    clearConfirm: 'Clear this card’s chat history?',
     runSelected: 'Run {{count}}',
     confirm: 'Confirm',
     cancel: 'Cancel',

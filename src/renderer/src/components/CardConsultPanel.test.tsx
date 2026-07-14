@@ -24,6 +24,7 @@ function installKlarit(conv: Conversation, extra: Record<string, unknown> = {}):
     updateCard: vi.fn(async () => null),
     applyOps: vi.fn(async () => ({ created: [], updated: [], removed: [], issues: [] })),
     markCardInterventionApplied: vi.fn(async () => {}),
+    clearCardConversation: vi.fn(async () => {}),
     cardsList: vi.fn(async () => []),
     ...extra
   }
@@ -90,6 +91,31 @@ describe('CardConsultPanel', () => {
     expect(api.pauseRun).not.toHaveBeenCalled() // 未选的不执行
     await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 1))
     expect(api.markCardInterventionApplied).toHaveBeenCalledTimes(1) // 只执行一个
+  })
+
+  it('清空对话：二次确认后调 clearCardConversation 并刷新（确认前不清）', async () => {
+    let cleared = false
+    const conv = makeConv([{ role: 'user', text: '历史', at: 1 }])
+    const api = installKlarit(conv, {
+      clearCardConversation: vi.fn(async () => {
+        cleared = true
+      }),
+      getCardConversation: vi.fn(async () => (cleared ? makeConv([]) : conv))
+    })
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    await screen.findByText('历史')
+    await userEvent.click(screen.getByText(/清空对话|Clear chat/))
+    expect(api.clearCardConversation).not.toHaveBeenCalled() // 确认前不清
+    await userEvent.click(screen.getByText(/^确认$|^Confirm$/))
+    await waitFor(() => expect(api.clearCardConversation).toHaveBeenCalledWith('login'))
+    await waitFor(() => expect(screen.queryByText('历史')).toBeNull()) // 回空态
+  })
+
+  it('无历史时不显示清空入口', async () => {
+    installKlarit(makeConv([]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    await screen.findByPlaceholderText(/问进度|Ask progress/)
+    expect(screen.queryByText(/清空对话|Clear chat/)).toBeNull()
   })
 
   it('已执行 → 整组锁死：radio 禁用、显「已执行」、无执行按钮、不可再触发别的', async () => {

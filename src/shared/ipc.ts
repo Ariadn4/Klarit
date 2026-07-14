@@ -141,6 +141,8 @@ export const IPC = {
   cardGateClassify: 'cardConsult:gateClassify',
   /** 标记某消息第 index 个干预已执行（持久化，供重开卡后显「已执行」、不再重复触发）。 */
   cardConsultMarkApplied: 'cardConsult:markApplied',
+  /** 清空某卡会话：清消息 + 断续接，保留会话与 agent/模型；回到空态。 */
+  cardConsultClear: 'cardConsult:clear',
   // ── 需求卡类型注册表：增删改查（全局类型库；archetype 内置 container/leaf）──
   listCardTypes: 'cardType:list',
   saveCardType: 'cardType:save',

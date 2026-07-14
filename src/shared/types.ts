@@ -1230,6 +1230,8 @@ export interface KlaritApi {
   classifyCardGateInput: (cardId: string, text: string) => Promise<CardConsultOutcome | null>
   /** 标记某消息第 index 个干预已执行（持久化，供重开卡后显「已执行」）。 */
   markCardInterventionApplied: (cardId: string, messageAt: number, index: number) => Promise<void>
+  /** 清空某卡会话：清消息 + 断续接，保留会话与 agent/模型；回到空态。 */
+  clearCardConversation: (cardId: string) => Promise<void>
   /** 用户发起本卡干预——倒回到目标节点前向修复（可带注入指令）；回运行断点。 */
   reenterRun: (runId: string, targetNodeId: string, instruction?: string) => Promise<RunBreakpoint | null>
   /** 用户发起本卡干预——就地向当前执行节点注入新指令；回运行断点。 */

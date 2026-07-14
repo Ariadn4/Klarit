@@ -56,6 +56,13 @@
 - [x] 8.4 上抛 ops 提案审阅：复用 `card-ops-review-apply` 组件，applyOps 确认后刷看板
 - [x] 8.5 遵 `docs/brand` 语义令牌、深浅双主题、i18n 文案
 
+## 10. 清空该卡会话（增量）
+
+- [x] 10.1 conversation-store 加 `clearMessages(projectId, id)`：消息清空 + 清 sessionId、保留 agentId/model/title；先测试（会话/消息保留元数据、断续接）
+- [x] 10.2 IPC `cardConsultClear` + preload + KlaritApi + 主进程 handler（scope 本卡）
+- [x] 10.3 咨询区「清空对话」入口 + 内联二次确认 → 调 clear → reload 回空态；先测试（确认前不清、确认后清空且回空态）
+- [x] 10.4 i18n（zh/en）文案；语义令牌、深浅双主题
+
 ## 9. 收尾与验收
 
 - [x] 9.1 `npm run typecheck`（node + web 两套）全绿

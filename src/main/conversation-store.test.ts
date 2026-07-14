@@ -97,6 +97,24 @@ function contract(name: string, make: () => ConversationStore): void {
       expect(() => store.markInterventionApplied('p1', 'ghost', NOW, 0)).not.toThrow()
     })
 
+    it('clearMessages 清消息 + 断续接（清 sessionId），保留会话与 agent/模型/标题', () => {
+      store.create('p1', 'c', NOW, '标题')
+      store.setAgentModel('p1', 'c', 'claude', 'opus')
+      store.setSessionId('p1', 'c', 'sess-1')
+      store.appendMessage('p1', 'c', userMsg('x', NOW + 1))
+      const r = store.clearMessages('p1', 'c')
+      expect(r?.messages).toEqual([])
+      expect(r?.sessionId).toBeUndefined()
+      expect(r?.agentId).toBe('claude')
+      expect(r?.model).toBe('opus')
+      expect(r?.title).toBe('标题')
+      expect(store.get('p1', 'c')?.messages).toEqual([]) // 落库
+    })
+
+    it('clearMessages 不存在会话 → null', () => {
+      expect(store.clearMessages('p1', 'ghost')).toBeNull()
+    })
+
     it('remove 删会话', () => {
       store.create('p1', 'c', NOW)
       store.remove('p1', 'c')

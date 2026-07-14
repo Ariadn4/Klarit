@@ -24,6 +24,8 @@ export interface ConversationStore {
   truncateMessages(projectId: string, id: string, keepCount: number): Conversation | null
   /** 标记某消息（按 at 定位）的第 index 个干预已执行（持久化，供重开后显「已执行」）。会话/消息不存在为 no-op。 */
   markInterventionApplied(projectId: string, id: string, messageAt: number, index: number): void
+  /** 清空会话消息 + 断原生续接（清 sessionId），保留会话本身与 agent/模型/标题；会话不存在返回 null。 */
+  clearMessages(projectId: string, id: string): Conversation | null
   remove(projectId: string, id: string): void
 }
 
@@ -90,6 +92,14 @@ function makeStore(b: Backend): ConversationStore {
     b.write({ ...cur, messages })
   }
 
+  function clearMessages(projectId: string, id: string): Conversation | null {
+    const cur = b.read(projectId, id)
+    if (!cur) return null
+    const next: Conversation = { ...cur, messages: [], sessionId: undefined }
+    b.write(next)
+    return next
+  }
+
   return {
     list: (projectId) => b.listProject(projectId).sort((a, c) => c.updatedAt - a.updatedAt),
     get: (projectId, id) => b.read(projectId, id),
@@ -99,6 +109,7 @@ function makeStore(b: Backend): ConversationStore {
     setAgentModel,
     truncateMessages,
     markInterventionApplied,
+    clearMessages,
     remove: (projectId, id) => b.del(projectId, id)
   }
 }

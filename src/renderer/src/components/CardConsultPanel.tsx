@@ -192,6 +192,7 @@ export function CardConsultPanel({
   const [busy, setBusy] = useState(false)
   const [appliedAt, setAppliedAt] = useState<ReadonlySet<number>>(new Set())
   const [applying, setApplying] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   const reloadBoard = useCardsStore((s) => s.load)
 
@@ -273,11 +274,53 @@ export function CardConsultPanel({
     }
   }
 
+  // 清空对话：清消息 + 断续接（保留会话与所选 agent/模型），回到空态。二次确认（内联，不用原生弹窗）。
+  const clearChat = async (): Promise<void> => {
+    setClearing(false)
+    setAppliedAt(new Set())
+    try {
+      await window.klarit.clearCardConversation(cardId)
+    } catch {
+      /* 旧 preload 尚无该通道时忽略 */
+    }
+    await reload()
+  }
+
   const messages = conv?.messages ?? []
 
   return (
     <div className="flex flex-col">
-      <div className="mb-1 text-[11px] font-medium text-stone-600">{t('cardConsult.title')}</div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-stone-600">{t('cardConsult.title')}</span>
+        {messages.length > 0 &&
+          (clearing ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-[10px] text-stone-500">{t('cardConsult.clearConfirm')}</span>
+              <button
+                type="button"
+                onClick={() => void clearChat()}
+                className="rounded bg-cobalt-500 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600"
+              >
+                {t('cardConsult.confirm')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setClearing(false)}
+                className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-cobalt-500"
+              >
+                {t('cardConsult.cancel')}
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setClearing(true)}
+              className="text-[10px] text-stone-500 transition-colors hover:text-ink"
+            >
+              {t('cardConsult.clear')}
+            </button>
+          ))}
+      </div>
       <div ref={listRef} className="max-h-64 space-y-2 overflow-auto rounded-card border border-stone-300 bg-canvas p-2">
         {messages.length === 0 && !busy ? (
           <div className="py-4 text-center text-[11px] text-stone-500">{t('cardConsult.empty')}</div>

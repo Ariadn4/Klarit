@@ -1253,6 +1253,11 @@ function registerIpc(): void {
     if (pid) cardConversationStore.markInterventionApplied(pid, cardId, messageAt, index)
   })
 
+  ipcMain.handle(IPC.cardConsultClear, (e, cardId: string): void => {
+    const pid = currentProjectId(e)
+    if (pid) cardConversationStore.clearMessages(pid, cardId)
+  })
+
   // ── 全局覆盖分解 skill：手写/导入/读取（可选高级覆盖；优先于自动生成 skill）──
   ipcMain.handle(IPC.readDefaultDecomposeSkill, (): string => globalSkills.readOverride() ?? '')
   ipcMain.handle(IPC.writeDefaultDecomposeSkill, (_e, content: string): void =>
