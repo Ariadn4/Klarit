@@ -480,6 +480,7 @@ export const en: Dictionary = {
     interventionsTitle: 'Interventions (pick one to run)',
     clear: 'Clear chat',
     clearConfirm: 'Clear this card’s chat history?',
+    stop: 'Stop',
     runSelected: 'Run {{count}}',
     confirm: 'Confirm',
     cancel: 'Cancel',

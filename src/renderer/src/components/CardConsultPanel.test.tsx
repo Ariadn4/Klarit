@@ -25,6 +25,10 @@ function installKlarit(conv: Conversation, extra: Record<string, unknown> = {}):
     applyOps: vi.fn(async () => ({ created: [], updated: [], removed: [], issues: [] })),
     markCardInterventionApplied: vi.fn(async () => {}),
     clearCardConversation: vi.fn(async () => {}),
+    abortCardConsult: vi.fn(async () => {}),
+    dropLastCardConsultTurn: vi.fn(async () => ({ text: '上一条' })),
+    retryLastCardConsult: vi.fn(async () => makeConv([])),
+    copyText: vi.fn(async () => {}),
     cardsList: vi.fn(async () => []),
     ...extra
   }
@@ -109,6 +113,60 @@ describe('CardConsultPanel', () => {
     await userEvent.click(screen.getByText(/^确认$|^Confirm$/))
     await waitFor(() => expect(api.clearCardConversation).toHaveBeenCalledWith('login'))
     await waitFor(() => expect(screen.queryByText('历史')).toBeNull()) // 回空态
+  })
+
+  it('消息底部操作：所有消息「复制」；仅最新用户消息另有「编辑」「重试」', async () => {
+    const api = installKlarit(
+      makeConv([
+        { role: 'user', text: '旧问题', at: 1 },
+        { role: 'agent', text: '旧回复', at: 2 },
+        { role: 'user', text: '新问题', at: 3 },
+        { role: 'agent', text: '新回复', at: 4 }
+      ])
+    )
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    await screen.findByText('新问题')
+    // 复制：4 条消息各一个
+    expect(screen.getAllByTitle(/复制|Copy/)).toHaveLength(4)
+    // 编辑/重试：只在最新用户消息 → 各一个
+    expect(screen.getAllByTitle(/编辑|Edit/)).toHaveLength(1)
+    expect(screen.getAllByTitle(/重试|Retry/)).toHaveLength(1)
+    // 点复制 → 走剪贴板
+    await userEvent.click(screen.getAllByTitle(/复制|Copy/)[0])
+    await waitFor(() => expect(api.copyText).toHaveBeenCalled())
+  })
+
+  it('编辑最新用户消息 → 移除该轮并回填输入', async () => {
+    const api = installKlarit(makeConv([{ role: 'user', text: '改我', at: 1 }, { role: 'agent', text: 'a', at: 2 }]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    await screen.findByText('改我')
+    await userEvent.click(screen.getByTitle(/编辑|Edit/))
+    await waitFor(() => expect(api.dropLastCardConsultTurn).toHaveBeenCalledWith('login'))
+    // 回填输入框
+    expect((await screen.findByPlaceholderText(/问进度|Ask progress/)) as HTMLTextAreaElement).toHaveValue('上一条')
+  })
+
+  it('重试最新用户消息 → 调 retryLastCardConsult', async () => {
+    const api = installKlarit(makeConv([{ role: 'user', text: '重来', at: 1 }, { role: 'agent', text: 'a', at: 2 }]))
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    await screen.findByText('重来')
+    await userEvent.click(screen.getByTitle(/重试|Retry/))
+    await waitFor(() => expect(api.retryLastCardConsult).toHaveBeenCalledWith('login'))
+  })
+
+  it('思考中显示「停止」→ 点击调 abortCardConsult', async () => {
+    let resolveSend: (v: { reply: string }) => void = () => {}
+    const pending = new Promise<{ reply: string }>((r) => (resolveSend = r))
+    const api = installKlarit(makeConv([]), { sendCardConsult: vi.fn(() => pending) })
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    const box = await screen.findByPlaceholderText(/问进度|Ask progress/)
+    await userEvent.type(box, '问一下')
+    await userEvent.keyboard('{Enter}')
+    // 思考中：出现「停止」
+    const stopBtn = await screen.findByLabelText(/停止|Stop/)
+    await userEvent.click(stopBtn)
+    expect(api.abortCardConsult).toHaveBeenCalledWith('login')
+    resolveSend({ reply: 'x' })
   })
 
   it('无历史时不显示清空入口', async () => {

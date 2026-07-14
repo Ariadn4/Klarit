@@ -63,6 +63,13 @@
 - [x] 10.3 咨询区「清空对话」入口 + 内联二次确认 → 调 clear → reload 回空态；先测试（确认前不清、确认后清空且回空态）
 - [x] 10.4 i18n（zh/en）文案；语义令牌、深浅双主题
 
+## 11. 消息底部操作（复制/编辑/重试）+ 打断思考（增量）
+
+- [x] 11.1 消息底部操作条（复用全局对话 patterns、顺序复制→编辑→重试）：所有消息「复制」（含提案/干预可读描述）、仅最新用户消息「编辑」「重试」；先测试呈现与调用（编辑走 dropLastCardConsultTurn 回填、重试走 retryLastCardConsult）
+- [x] 11.2 咨询 producer 可中止：`createCardConsultProducer` 注册当前 launch 的 kill；index.ts 按 cardId 存 kill；IPC `cardConsultAbort` + preload + api；先测试 producer 注册/清理与 abort 杀进程
+- [x] 11.3 咨询区「停止」入口：思考中显示，点击调 abort → 回可输入态；先测试（busy 时显停止、点击调 abortCardConsult）
+- [x] 11.4 i18n（zh/en）+ 语义令牌、深浅双主题
+
 ## 9. 收尾与验收
 
 - [x] 9.1 `npm run typecheck`（node + web 两套）全绿

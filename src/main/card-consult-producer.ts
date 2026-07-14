@@ -25,6 +25,8 @@ export interface CardConsultProducerConfig {
   model?: string
   timeoutMs?: number
   sessions?: CardSessionBridge
+  /** 注册当前轮的中止句柄（供按卡打断）：拉起后回传 kill，结束时回传 null 清掉。 */
+  register?: (kill: (() => void) | null) => void
 }
 
 /** 构造真实 producer：一次咨询 = 一轮 agent 调用（有会话 sessionId 走原生续接，否则全新起）。 */
@@ -45,6 +47,7 @@ export function createCardConsultProducer(cfg: CardConsultProducerConfig): CardC
     // 续接阶梯：有 session 且支持 → resume（inject=本轮 prompt）；否则全新 start（prompt）。
     const launch = launchContinuation(cfg.runner, spec, { inject: prompt, rebuildPrompt: prompt })
     if (!launch) throw new Error(`无法拉起 agent「${cfg.toolId}」`)
+    cfg.register?.(launch.kill) // 注册中止句柄（供打断）
 
     const timeoutMs = cfg.timeoutMs ?? 180_000
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -58,6 +61,7 @@ export function createCardConsultProducer(cfg: CardConsultProducerConfig): CardC
       await Promise.race([launch.done, timeout])
     } finally {
       if (timer) clearTimeout(timer)
+      cfg.register?.(null) // 结束清掉
     }
     return parseCardTurn(out)
   }

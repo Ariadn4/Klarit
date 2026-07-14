@@ -147,6 +147,7 @@ const api: KlaritApi = {
   markCardInterventionApplied: (cardId, messageAt, index) =>
     ipcRenderer.invoke(IPC.cardConsultMarkApplied, cardId, messageAt, index),
   clearCardConversation: (cardId) => ipcRenderer.invoke(IPC.cardConsultClear, cardId),
+  abortCardConsult: (cardId) => ipcRenderer.invoke(IPC.cardConsultAbort, cardId),
   listCardTypes: () => ipcRenderer.invoke(IPC.listCardTypes),
   saveCardType: (def) => ipcRenderer.invoke(IPC.saveCardType, def),
   deleteCardType: (id) => ipcRenderer.invoke(IPC.deleteCardType, id),

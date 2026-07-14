@@ -44,4 +44,17 @@ describe('createCardConsultProducer', () => {
     const produce = createCardConsultProducer({ runner: stubRunner('x'), toolId: null, cwd: '/scratch' })
     await expect(produce('P', { cardId: 'c', intent: 'i', history: [] })).rejects.toThrow()
   })
+
+  it('register：拉起时注册 kill、结束时清（供中止）', async () => {
+    const calls: Array<(() => void) | null> = []
+    const produce = createCardConsultProducer({
+      runner: stubRunner('{ "reply": "ok" }'),
+      toolId: 'claude-code',
+      cwd: '/scratch',
+      register: (kill) => calls.push(kill)
+    })
+    await produce('P', { cardId: 'c', intent: 'i', history: [] })
+    expect(typeof calls[0]).toBe('function') // 先注册 kill
+    expect(calls[calls.length - 1]).toBeNull() // 结束清掉
+  })
 })

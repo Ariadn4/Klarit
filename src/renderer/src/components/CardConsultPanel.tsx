@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Loader2, Copy, Pencil, RotateCcw, Square } from 'lucide-react'
 import type {
   CardIntervention,
   CardOp,
@@ -16,8 +16,23 @@ import type {
   WorkflowNode
 } from '@shared/types'
 import { MarkdownView } from './NewRequirementFlow'
-import { ProposalReview } from './ProposalReview'
+import { ProposalReview, describeOp } from './ProposalReview'
 import { useCardsStore } from '../stores/cards'
+
+/** 消息底部一个操作图标按钮（对齐全局对话 MsgAction）。 */
+function MsgAction({ label, icon, onClick }: { label: string; icon: React.ReactNode; onClick: () => void }): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className="flex h-6 w-6 items-center justify-center rounded text-stone-600 hover:bg-stone-100 hover:text-ink"
+    >
+      {icon}
+    </button>
+  )
+}
 
 /** 干预可读文案（节点 id 映射为名）。 */
 function describeIntervention(
@@ -124,22 +139,44 @@ function InterventionGroup({
   )
 }
 
+/** 把一条卡消息整理成可复制纯文本：文字 + 提案 op 可读描述 + 干预可读描述。 */
+function cardMessageToText(
+  message: ConversationMessage,
+  nameOf: (id: string) => string,
+  t: (k: string, o?: Record<string, unknown>) => string
+): string {
+  const parts: string[] = []
+  if (message.text?.trim()) parts.push(message.text.trim())
+  for (const iv of message.interventions ?? []) parts.push(`• ${describeIntervention(iv, nameOf, t)}`)
+  if (message.proposal) for (const op of message.proposal.ops) parts.push(`• ${describeOp(op, t)}`)
+  return parts.join('\n')
+}
+
 function MessageRow({
   message,
   nameOf,
   applied,
   applying,
+  isLastUser,
   onExecuteInterventions,
-  onApplyProposal
+  onApplyProposal,
+  onEdit,
+  onRetry
 }: {
   message: ConversationMessage
   nameOf: (id: string) => string
   applied: boolean
   applying: boolean
+  /** 是否最新一条用户消息（只有它有编辑/重试）。 */
+  isLastUser: boolean
   onExecuteInterventions: (messageAt: number, interventions: CardIntervention[], indices: number[]) => Promise<void>
   onApplyProposal: (ops: CardOp[], messageAt: number) => Promise<void>
+  onEdit: () => void
+  onRetry: () => void
 }): React.JSX.Element {
+  const { t } = useTranslation()
   const isUser = message.role === 'user'
+  const copyText = cardMessageToText(message, nameOf, t)
   // 气泡位置：用户靠右、agent 靠左（同全局对话）；气泡**内**文字一律左对齐（text-left）。
   return (
     <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
@@ -171,6 +208,18 @@ function MessageRow({
           />
         </div>
       )}
+      {/* 底部操作：所有消息「复制」；最新用户消息另有「编辑」「重试」——顺序对齐全局对话（复制→编辑→重试）。 */}
+      <div className="flex items-center gap-0.5">
+        {copyText.trim() !== '' && (
+          <MsgAction label={t('board.copy')} icon={<Copy size={13} />} onClick={() => void window.klarit.copyText(copyText)} />
+        )}
+        {isUser && isLastUser && (
+          <>
+            <MsgAction label={t('globalChat.editMessage')} icon={<Pencil size={13} />} onClick={onEdit} />
+            <MsgAction label={t('globalChat.retry')} icon={<RotateCcw size={13} />} onClick={onRetry} />
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -286,7 +335,30 @@ export function CardConsultPanel({
     await reload()
   }
 
+  // 编辑最新用户消息：移除该轮、把文字回填输入框（供改后重发）。
+  const editLast = async (): Promise<void> => {
+    const r = await window.klarit.dropLastCardConsultTurn(cardId)
+    if (r) setInput(r.text)
+    await reload()
+  }
+  // 重试最新用户消息：丢弃该轮 agent 回复、按本会话选型重跑该条意图。
+  const retryLast = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await window.klarit.retryLastCardConsult(cardId)
+      await reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+  // 打断思考：杀掉本卡当前咨询 agent；busy 由进行中的 send/retry 收尾时清。
+  const stop = (): void => {
+    void window.klarit.abortCardConsult(cardId)
+  }
+
   const messages = conv?.messages ?? []
+  const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
 
   return (
     <div className="flex flex-col">
@@ -332,8 +404,11 @@ export function CardConsultPanel({
               nameOf={nameOf}
               applied={appliedAt.has(m.at)}
               applying={applying}
+              isLastUser={i === lastUserIndex}
               onExecuteInterventions={executeInterventions}
               onApplyProposal={applyProposal}
+              onEdit={() => void editLast()}
+              onRetry={() => void retryLast()}
             />
           ))
         )}
@@ -357,15 +432,28 @@ export function CardConsultPanel({
           placeholder={t('cardConsult.placeholder')}
           className="min-h-[2rem] flex-1 resize-none rounded-card border border-stone-300 bg-paper px-2 py-1 text-[12px] text-ink placeholder:text-stone-400 focus:border-cobalt-500 focus:outline-none"
         />
-        <button
-          type="button"
-          onClick={() => void send()}
-          disabled={busy || !input.trim()}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-card bg-cobalt-600 text-white hover:bg-cobalt-700 disabled:opacity-50"
-          aria-label={t('cardConsult.send')}
-        >
-          <Send className="h-3.5 w-3.5" />
-        </button>
+        {/* 思考中 → 「停止」打断；否则 → 「发送」。 */}
+        {busy ? (
+          <button
+            type="button"
+            onClick={stop}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-card border border-stone-300 text-stone-600 hover:border-cobalt-500 hover:text-ink"
+            aria-label={t('cardConsult.stop')}
+            title={t('cardConsult.stop')}
+          >
+            <Square className="h-3 w-3" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={!input.trim()}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-card bg-cobalt-600 text-white hover:bg-cobalt-700 disabled:opacity-50"
+            aria-label={t('cardConsult.send')}
+          >
+            <Send className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     </div>
   )

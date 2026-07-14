@@ -1147,15 +1147,22 @@ function registerIpc(): void {
   )
 
   // ── 单需求 agent：每卡只读咨询 + 本卡干预 + 门自由输入上抛 ──
+  // 进行中咨询轮的中止句柄（按 `<pid>/<cardId>`）：拉起时注册、结束时清；供「打断思考」杀进程。
+  const cardConsultKills = new Map<string, () => void>()
   // 构造某卡的咨询核：读上下文限本卡；upshift→转调全局编排核（同全局对话共用 orchestrate）；会话按 cardId。
   const cardConsultSeamFor = (pid: string, cardId: string) => {
     const conv = cardConversationStore.get(pid, cardId)
+    const killKey = `${pid}/${cardId}`
     const producer = createCardConsultProducer({
       runner: realAgentRunner,
       toolId: conv?.agentId ?? settings.defaultAgent ?? null,
       cwd: app.getPath('userData'),
       model: conv?.model ?? settings.defaultModel,
-      sessions: cardSessionBridge(cardConversationStore, pid)
+      sessions: cardSessionBridge(cardConversationStore, pid),
+      register: (kill) => {
+        if (kill) cardConsultKills.set(killKey, kill)
+        else cardConsultKills.delete(killKey)
+      }
     })
     return createCardConsultSeam(
       {
@@ -1256,6 +1263,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.cardConsultClear, (e, cardId: string): void => {
     const pid = currentProjectId(e)
     if (pid) cardConversationStore.clearMessages(pid, cardId)
+  })
+
+  ipcMain.handle(IPC.cardConsultAbort, (e, cardId: string): void => {
+    const pid = currentProjectId(e)
+    if (pid) cardConsultKills.get(`${pid}/${cardId}`)?.() // 无进行中轮 → undefined，no-op
   })
 
   // ── 全局覆盖分解 skill：手写/导入/读取（可选高级覆盖；优先于自动生成 skill）──

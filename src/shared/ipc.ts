@@ -143,6 +143,8 @@ export const IPC = {
   cardConsultMarkApplied: 'cardConsult:markApplied',
   /** 清空某卡会话：清消息 + 断续接，保留会话与 agent/模型；回到空态。 */
   cardConsultClear: 'cardConsult:clear',
+  /** 打断某卡进行中的咨询轮：杀掉当前咨询 agent 进程；无进行中轮为 no-op。 */
+  cardConsultAbort: 'cardConsult:abort',
   // ── 需求卡类型注册表：增删改查（全局类型库；archetype 内置 container/leaf）──
   listCardTypes: 'cardType:list',
   saveCardType: 'cardType:save',
