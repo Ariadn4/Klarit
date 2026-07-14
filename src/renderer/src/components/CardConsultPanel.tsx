@@ -1,6 +1,6 @@
 /**
- * 卡详情面板内的**单需求 agent 咨询区**：跟本卡常驻只读 agent 多轮对话——查进度作答、本卡干预提议
- * （暂停/恢复直接执行；倒回/注入/改资料破坏性二次确认后经引擎/store 执行）、上抛塑造需求的 ops 提案审阅。
+ * 卡详情面板内的**单需求 agent 咨询区**：跟本卡常驻只读 agent 多轮对话——查进度作答、本卡干预（一轮多项
+ * 干预统一框起、勾选后「执行选中」按序执行、执行后锁定；同构 ops 提案审阅）、上抛塑造需求的 ops 提案审阅。
  * 一卡一会话（id=cardId、无「新建」）。复用全局对话消息呈现 patterns；仅用语义令牌、深浅双主题。
  */
 
@@ -15,7 +15,6 @@ import type {
   RunBreakpoint,
   WorkflowNode
 } from '@shared/types'
-import { isDestructiveIntervention } from '@shared/card-agent'
 import { MarkdownView } from './NewRequirementFlow'
 import { ProposalReview } from './ProposalReview'
 import { useCardsStore } from '../stores/cards'
@@ -40,90 +39,82 @@ function describeIntervention(
   }
 }
 
-function InterventionRow({
-  iv,
-  nameOf,
+/**
+ * 一轮的本卡干预：**统一框起、逐项勾选（可单可多）、选完点「执行选中」一次执行**（保序，处理两步计划），
+ * 执行后已执行项锁定（勾选+禁用+「已执行」）。与 ops 提案审阅同构：选中→提交→锁定。
+ */
+function InterventionGroup({
+  interventions,
   applied,
-  onApply
+  nameOf,
+  onExecute
 }: {
-  iv: CardIntervention
+  interventions: CardIntervention[]
+  /** 已执行的干预下标（持久化）。 */
+  applied: number[]
   nameOf: (id: string) => string
-  /** 已执行（持久化，重开卡后仍为真）：显「已执行」、不可再触发。 */
-  applied: boolean
-  onApply: () => Promise<void>
+  onExecute: (indices: number[]) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
-  const [done, setDone] = useState(false)
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set())
   const [busy, setBusy] = useState(false)
-  const [confirming, setConfirming] = useState(false)
-  const destructive = isDestructiveIntervention(iv)
-  const isDone = applied || done
-  const run = async (): Promise<void> => {
+  const appliedSet = new Set(applied)
+  const allApplied = interventions.every((_, i) => appliedSet.has(i))
+  const toggle = (i: number): void =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.has(i) ? next.delete(i) : next.add(i)
+      return next
+    })
+  const runnable = interventions.map((_, i) => i).filter((i) => selected.has(i) && !appliedSet.has(i))
+  const execute = async (): Promise<void> => {
+    if (runnable.length === 0) return
     setBusy(true)
-    setConfirming(false)
     try {
-      await onApply()
-      setDone(true)
+      await onExecute(runnable)
+      setSelected(new Set())
     } finally {
       setBusy(false)
     }
   }
-  // 破坏性（倒回/注入/改资料）：先内联二次确认（不用原生 confirm——Electron 下不可靠）；无损（暂停/恢复）直接执行。
-  const onClick = (): void => {
-    if (destructive) setConfirming(true)
-    else void run()
-  }
-  const label = describeIntervention(iv, nameOf, t)
-  // 右侧状态提示：执行中（转圈）> 已执行（灰）> 执行（cobalt）。
-  const hint = busy ? (
-    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-stone-500">
-      <Loader2 className="h-3 w-3 animate-spin" />
-      {t('cardConsult.running')}
-    </span>
-  ) : (
-    <span className={`text-[10px] font-medium ${isDone ? 'text-stone-500' : 'text-cobalt-500'}`}>
-      {isDone ? t('cardConsult.done') : t('cardConsult.apply')}
-    </span>
-  )
-
-  // 确认态：整行保持 secondary 外观，右侧给「确认（primary cobalt）/ 取消（secondary 描边）」——对齐品牌按钮系统。
-  if (confirming) {
-    return (
-      <div className="flex items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5">
-        <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
-        <div className="flex shrink-0 items-center gap-1.5">
+  return (
+    <div className="mt-1 w-full rounded border border-stone-300 bg-canvas p-2">
+      <div className="mb-1.5 text-[11px] font-medium text-stone-600">{t('cardConsult.interventionsTitle')}</div>
+      <ul className="flex flex-col gap-1">
+        {interventions.map((iv, i) => {
+          const done = appliedSet.has(i)
+          return (
+            <li key={i} className="text-[11px] leading-snug">
+              <label className={`flex cursor-pointer items-start gap-1.5 ${done ? 'opacity-60' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="mt-[2px] accent-cobalt-500"
+                  disabled={done || busy}
+                  checked={done || selected.has(i)}
+                  onChange={() => toggle(i)}
+                  aria-label={describeIntervention(iv, nameOf, t)}
+                />
+                <span className="min-w-0 flex-1 text-ink">{describeIntervention(iv, nameOf, t)}</span>
+                {done && <span className="shrink-0 text-[10px] font-medium text-stone-500">{t('cardConsult.done')}</span>}
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+      {!allApplied && (
+        <div className="mt-2 flex justify-end">
           <button
             type="button"
-            disabled={busy}
-            onClick={() => void run()}
-            className="rounded bg-cobalt-500 px-2.5 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600 disabled:opacity-50"
+            disabled={busy || runnable.length === 0}
+            onClick={() => void execute()}
+            className="inline-flex items-center gap-1 rounded bg-cobalt-500 px-2.5 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600 disabled:opacity-50"
           >
-            {t('cardConsult.confirm')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-cobalt-500"
-          >
-            {t('cardConsult.cancel')}
+            {busy && <Loader2 className="h-3 w-3 animate-spin" />}
+            {busy ? t('cardConsult.running') : t('cardConsult.runSelected', { count: runnable.length })}
           </button>
         </div>
-      </div>
-    )
-  }
-
-  // 默认态：**整个选项方框可点击**（不只右侧）——secondary 按钮样式：中性描边、悬停边框转 cobalt，
-  // 右侧提示随状态切换（执行中转圈 / 已执行灰 / 执行 cobalt）；已执行或执行中禁用不可再触发。
-  return (
-    <button
-      type="button"
-      disabled={isDone || busy}
-      onClick={onClick}
-      className="flex w-full items-center justify-between gap-2 rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-left transition-colors hover:border-cobalt-500 disabled:opacity-60 disabled:hover:border-stone-300"
-    >
-      <span className="min-w-0 flex-1 text-[11px] text-ink">{label}</span>
-      <span className="shrink-0">{hint}</span>
-    </button>
+      )}
+    </div>
   )
 }
 
@@ -132,14 +123,14 @@ function MessageRow({
   nameOf,
   applied,
   applying,
-  onApplyIntervention,
+  onExecuteInterventions,
   onApplyProposal
 }: {
   message: ConversationMessage
   nameOf: (id: string) => string
   applied: boolean
   applying: boolean
-  onApplyIntervention: (iv: CardIntervention, messageAt: number, index: number) => Promise<void>
+  onExecuteInterventions: (messageAt: number, interventions: CardIntervention[], indices: number[]) => Promise<void>
   onApplyProposal: (ops: CardOp[], messageAt: number) => Promise<void>
 }): React.JSX.Element {
   const isUser = message.role === 'user'
@@ -155,16 +146,14 @@ function MessageRow({
           {isUser ? message.text : <MarkdownView content={message.text} />}
         </div>
       )}
-      {message.interventions?.map((iv, i) => (
-        <div key={i} className="w-full">
-          <InterventionRow
-            iv={iv}
-            nameOf={nameOf}
-            applied={message.appliedInterventions?.includes(i) ?? false}
-            onApply={() => onApplyIntervention(iv, message.at, i)}
-          />
-        </div>
-      ))}
+      {message.interventions && message.interventions.length > 0 && (
+        <InterventionGroup
+          interventions={message.interventions}
+          applied={message.appliedInterventions ?? []}
+          nameOf={nameOf}
+          onExecute={(indices) => onExecuteInterventions(message.at, message.interventions!, indices)}
+        />
+      )}
       {message.proposal && (
         <div className="w-full">
           <ProposalReview
@@ -231,14 +220,13 @@ export function CardConsultPanel({
     }
   }
 
-  // 执行一个本卡干预（经引擎/store 中转）；成功后持久化「已执行」标记并刷新会话（重开卡仍显已执行）。
-  const applyIntervention = async (iv: CardIntervention, messageAt: number, index: number): Promise<void> => {
+  // 执行单个干预动作（经引擎/store 中转），不含持久化/刷新——供批量执行按序调用。
+  const runInterventionAction = async (iv: CardIntervention): Promise<void> => {
     if (iv.kind === 'pause') {
       if (runId) onRunUpdate(await window.klarit.pauseRun(runId))
     } else if (iv.kind === 'resume') {
       if (runId) onRunUpdate(await window.klarit.resumeRun(runId))
     } else if (iv.kind === 'reenter') {
-      // 破坏性干预：二次确认已由 InterventionRow 内联把关，此处直接经引擎执行。
       if (runId) onRunUpdate(await window.klarit.reenterRun(runId, iv.nodeId, iv.instruction))
     } else if (iv.kind === 'inject') {
       if (runId) onRunUpdate(await window.klarit.injectRun(runId, iv.instruction))
@@ -246,13 +234,23 @@ export function CardConsultPanel({
       await window.klarit.updateCard(cardId, iv.patch)
       await reloadBoard()
     }
-    // 持久化「已执行」+ 刷会话——失败不应回滚本次已执行的展示（本地 done 仍标记成功）。
-    try {
-      await window.klarit.markCardInterventionApplied(cardId, messageAt, index)
-      await reload()
-    } catch {
-      /* 持久化失败（如旧 preload 尚未加载该通道）：忽略，本地仍显已执行 */
+  }
+
+  // 批量执行选中的干预：**保序**逐个执行（处理两步计划），逐个持久化「已执行」，最后刷一次会话。
+  const executeInterventions = async (
+    messageAt: number,
+    interventions: CardIntervention[],
+    indices: number[]
+  ): Promise<void> => {
+    for (const i of indices) {
+      await runInterventionAction(interventions[i])
+      try {
+        await window.klarit.markCardInterventionApplied(cardId, messageAt, i)
+      } catch {
+        /* 持久化失败（如旧 preload 尚未加载该通道）：忽略，重开可能不显已执行，但本次执行已生效 */
+      }
     }
+    await reload()
   }
 
   // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项，勾选+点应用即明确同意）：applyOps → 刷看板 → 标记已应用。
@@ -284,7 +282,7 @@ export function CardConsultPanel({
               nameOf={nameOf}
               applied={appliedAt.has(m.at)}
               applying={applying}
-              onApplyIntervention={applyIntervention}
+              onExecuteInterventions={executeInterventions}
               onApplyProposal={applyProposal}
             />
           ))

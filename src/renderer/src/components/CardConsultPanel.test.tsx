@@ -67,39 +67,46 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'done' })
   })
 
-  it('暂停干预：点整个选项方框（点标签即可）→ 直接调 pauseRun（无损、无确认）', async () => {
+  it('干预组：勾选 + 执行选中 → 调 pauseRun 并持久化已执行', async () => {
     const api = installKlarit(makeConv([{ role: 'agent', text: '好的', interventions: [{ kind: 'pause' }], at: 1 }]))
     const onRunUpdate = vi.fn()
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={onRunUpdate} />)
-    // 点标签文字（不是右侧 pill）也能触发——证明整框可点
-    await userEvent.click(await screen.findByText(/暂停本卡|Pause this card/))
+    // 未勾选前不执行
+    await userEvent.click(await screen.findByRole('checkbox'))
+    await userEvent.click(screen.getByText(/执行选中|Run selected/))
     await waitFor(() => expect(api.pauseRun).toHaveBeenCalledWith('r1'))
     expect(onRunUpdate).toHaveBeenCalled()
-    // 执行后持久化「已执行」标记（重开卡仍显已执行）
     await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledWith('login', 1, 0))
   })
 
-  it('已执行的干预（appliedInterventions 含该项）→ 显「已执行」且禁用', async () => {
+  it('两步计划：勾选两项 → 保序执行两个干预', async () => {
+    const api = installKlarit(
+      makeConv([{ role: 'agent', text: '两步', interventions: [{ kind: 'adjustCard', patch: { title: 'T' } }, { kind: 'reenter', nodeId: 'impl' }], at: 1 }])
+    )
+    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
+    const boxes = await screen.findAllByRole('checkbox')
+    await userEvent.click(boxes[0])
+    await userEvent.click(boxes[1])
+    await userEvent.click(screen.getByText(/执行选中|Run selected/))
+    await waitFor(() => expect(api.updateCard).toHaveBeenCalled())
+    await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', undefined))
+    // 两项都持久化
+    await waitFor(() => expect(api.markCardInterventionApplied).toHaveBeenCalledTimes(2))
+  })
+
+  it('已执行的干预 → 勾选框选中且禁用、显「已执行」、不再重复触发', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: 'ok', interventions: [{ kind: 'pause' }], appliedInterventions: [0], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    expect(await screen.findByText(/已执行|Done/)).toBeTruthy()
-    await userEvent.click(screen.getByText(/已执行|Done/))
+    const cb = (await screen.findByRole('checkbox')) as HTMLInputElement
+    expect(cb.checked).toBe(true)
+    expect(cb.disabled).toBe(true)
+    expect(screen.getByText(/已执行|Done/)).toBeTruthy()
+    // 全部已执行 → 无「执行选中」按钮
+    expect(screen.queryByText(/执行选中|Run selected/)).toBeNull()
     await new Promise((r) => setTimeout(r, 10))
-    expect(api.pauseRun).not.toHaveBeenCalled() // 已执行不可再触发
-  })
-
-  it('倒回干预 → 内联二次确认后调 reenterRun', async () => {
-    const api = installKlarit(
-      makeConv([{ role: 'agent', text: '建议倒回', interventions: [{ kind: 'reenter', nodeId: 'impl', instruction: '换方案' }], at: 1 }])
-    )
-    render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    // 破坏性：点整框（点标签）出内联确认，未确认前不执行
-    await userEvent.click(await screen.findByText(/倒回到/))
-    expect(api.reenterRun).not.toHaveBeenCalled()
-    await userEvent.click(await screen.findByText(/^确认$|^Confirm$/))
-    await waitFor(() => expect(api.reenterRun).toHaveBeenCalledWith('r1', 'impl', '换方案'))
+    expect(api.pauseRun).not.toHaveBeenCalled()
   })
 
   it('上抛提案：可勾选审阅 + 应用调 applyOps', async () => {
@@ -117,13 +124,14 @@ describe('CardConsultPanel', () => {
     expect(api.applyOps.mock.calls[0][0]).toHaveLength(1) // 勾选的 create op
   })
 
-  it('倒回干预取消内联确认 → 不执行', async () => {
+  it('未勾选任何项 → 执行按钮禁用、不执行', async () => {
     const api = installKlarit(
       makeConv([{ role: 'agent', text: 'x', interventions: [{ kind: 'reenter', nodeId: 'impl' }], at: 1 }])
     )
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    await userEvent.click(await screen.findByText(/倒回到/))
-    await userEvent.click(await screen.findByText(/^取消$|^Cancel$/))
+    const btn = (await screen.findByText(/执行选中|Run selected/)).closest('button') as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    await userEvent.click(btn)
     await new Promise((r) => setTimeout(r, 10))
     expect(api.reenterRun).not.toHaveBeenCalled()
   })
