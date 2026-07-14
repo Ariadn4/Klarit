@@ -344,6 +344,12 @@ export function CardConsultPanel({
   // 重试最新用户消息：丢弃该轮 agent 回复、按本会话选型重跑该条意图。
   const retryLast = async (): Promise<void> => {
     if (busy) return
+    // 乐观：立即截到最新用户消息（下方 agent 气泡即刻消失）+ 显示思考中；重跑完 reload 以新回复替换。
+    setConv((c) => {
+      if (!c) return c
+      const lastUser = c.messages.map((m) => m.role).lastIndexOf('user')
+      return lastUser < 0 ? c : { ...c, messages: c.messages.slice(0, lastUser + 1) }
+    })
     setBusy(true)
     try {
       await window.klarit.retryLastCardConsult(cardId)

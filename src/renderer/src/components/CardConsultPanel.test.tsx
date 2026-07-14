@@ -146,12 +146,20 @@ describe('CardConsultPanel', () => {
     expect((await screen.findByPlaceholderText(/问进度|Ask progress/)) as HTMLTextAreaElement).toHaveValue('上一条')
   })
 
-  it('重试最新用户消息 → 调 retryLastCardConsult', async () => {
-    const api = installKlarit(makeConv([{ role: 'user', text: '重来', at: 1 }, { role: 'agent', text: 'a', at: 2 }]))
+  it('重试最新用户消息 → 立即消除下方 agent 气泡 + 调 retryLastCardConsult', async () => {
+    let resolveRetry: (v: unknown) => void = () => {}
+    const pending = new Promise((r) => (resolveRetry = r))
+    const api = installKlarit(makeConv([{ role: 'user', text: '重来', at: 1 }, { role: 'agent', text: '旧回复A', at: 2 }]), {
+      retryLastCardConsult: vi.fn(() => pending)
+    })
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    await screen.findByText('重来')
+    await screen.findByText('旧回复A')
     await userEvent.click(screen.getByTitle(/重试|Retry/))
-    await waitFor(() => expect(api.retryLastCardConsult).toHaveBeenCalledWith('login'))
+    // retry 还没返回，agent 气泡已即刻消失（乐观截断）
+    expect(screen.queryByText('旧回复A')).toBeNull()
+    expect(screen.getByText('重来')).toBeTruthy() // 用户消息保留
+    expect(api.retryLastCardConsult).toHaveBeenCalledWith('login')
+    resolveRetry(makeConv([{ role: 'user', text: '重来', at: 1 }]))
   })
 
   it('思考中显示「停止」→ 点击调 abortCardConsult', async () => {
