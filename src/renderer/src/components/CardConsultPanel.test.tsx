@@ -108,6 +108,7 @@ describe('CardConsultPanel', () => {
     })
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
     await screen.findByText('历史')
+    await userEvent.click(await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })) // 先展开
     await userEvent.click(screen.getByText(/清空对话|Clear chat/))
     expect(api.clearCardConversation).not.toHaveBeenCalled() // 确认前不清
     await userEvent.click(screen.getByText(/^确认$|^Confirm$/))
@@ -177,13 +178,15 @@ describe('CardConsultPanel', () => {
     resolveSend({ reply: 'x' })
   })
 
-  it('底部抽屉：默认折叠，点把手展开/收起', async () => {
+  it('底部抽屉：默认折叠（不显标题/清空），点把手展开/收起', async () => {
     installKlarit(makeConv([{ role: 'agent', text: '历史', at: 1 }]))
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const handle = (await screen.findByText(/询问 Agent|Ask Agent/)).closest('button') as HTMLButtonElement
+    const handle = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ }) // aria-label 即使折叠也可寻
     expect(handle.getAttribute('aria-expanded')).toBe('false') // 默认折叠
+    expect(screen.queryByText(/清空对话|Clear chat/)).toBeNull() // 折叠不显清空
     await userEvent.click(handle)
     expect(handle.getAttribute('aria-expanded')).toBe('true') // 展开
+    expect(screen.getByText(/清空对话|Clear chat/)).toBeTruthy() // 展开显清空
     await userEvent.click(handle)
     expect(handle.getAttribute('aria-expanded')).toBe('false') // 收起
   })
@@ -191,7 +194,7 @@ describe('CardConsultPanel', () => {
   it('发送问题即展开底部抽屉', async () => {
     installKlarit(makeConv([]))
     render(<CardConsultPanel cardId="login" runId="r1" nodes={NODES} onRunUpdate={() => {}} />)
-    const handle = (await screen.findByText(/询问 Agent|Ask Agent/)).closest('button') as HTMLButtonElement
+    const handle = await screen.findByRole('button', { name: /询问 Agent|Ask Agent/ })
     expect(handle.getAttribute('aria-expanded')).toBe('false')
     await userEvent.type(screen.getByPlaceholderText(/问进度|Ask progress/), '在跑吗')
     await userEvent.keyboard('{Enter}')

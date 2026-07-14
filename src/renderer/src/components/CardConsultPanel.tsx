@@ -370,53 +370,13 @@ export function CardConsultPanel({
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user')
 
   return (
-    // 底部可开合抽屉：绝对定位贴 RequirementCardDetail 底部；折叠=把手+输入，展开=向上覆盖任务内容区。
+    // 底部可开合抽屉：绝对定位贴 RequirementCardDetail 底部；折叠=把手+输入，展开=向上覆盖任务内容区。始终带上阴影。
     <div
-      className={`absolute inset-x-0 bottom-0 z-10 flex flex-col border-t border-stone-300 bg-paper ${
-        expanded ? 'top-[32%] shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)]' : ''
+      className={`absolute inset-x-0 bottom-0 z-10 flex flex-col border-t border-stone-300 bg-paper shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.25)] ${
+        expanded ? 'top-[32%]' : ''
       }`}
     >
-      {/* 把手栏：展开/收起 + 「询问 Agent」+ 清空按钮 */}
-      <div className="flex items-center justify-between gap-2 border-b border-stone-100 px-3 py-1.5">
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-          className="flex min-w-0 items-center gap-1 text-[11px] font-medium text-stone-600 transition-colors hover:text-ink"
-        >
-          {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-          <span className="truncate">{t('cardConsult.title')}</span>
-        </button>
-        {messages.length > 0 &&
-          (clearing ? (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[10px] text-stone-500">{t('cardConsult.clearConfirm')}</span>
-              <button
-                type="button"
-                onClick={() => void clearChat()}
-                className="rounded bg-cobalt-500 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600"
-              >
-                {t('cardConsult.confirm')}
-              </button>
-              <button
-                type="button"
-                onClick={() => setClearing(false)}
-                className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-cobalt-500"
-              >
-                {t('cardConsult.cancel')}
-              </button>
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setClearing(true)}
-              className="flex shrink-0 items-center gap-1 rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-600 transition-colors hover:border-cobalt-500 hover:text-ink"
-            >
-              <Trash2 size={12} /> {t('cardConsult.clear')}
-            </button>
-          ))}
-      </div>
-      {/* 消息列表：折叠时高度收 0（内容仍在 DOM，供续接/滚动）；展开时占满剩余高度、覆盖任务内容 */}
+      {/* 消息列表（顶部）：折叠时高度收 0（内容仍在 DOM，供续接/滚动）；展开时占满剩余高度、覆盖任务内容 */}
       <div
         ref={listRef}
         className={
@@ -447,8 +407,52 @@ export function CardConsultPanel({
           </div>
         )}
       </div>
+      {/* 把手栏（在输入框上方）：折叠只露上拉箭头（无文字）；展开显示「询问 Agent」+ 清空对话 */}
+      <div className="flex items-center justify-between gap-2 border-t border-stone-100 px-3 py-1">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-label={t('cardConsult.title')}
+          onClick={() => setExpanded((v) => !v)}
+          className={`flex items-center gap-1 text-[11px] font-medium text-stone-600 transition-colors hover:text-ink ${
+            expanded ? '' : 'flex-1 justify-center'
+          }`}
+        >
+          {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+          {expanded && <span className="truncate">{t('cardConsult.title')}</span>}
+        </button>
+        {expanded &&
+          messages.length > 0 &&
+          (clearing ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-[10px] text-stone-500">{t('cardConsult.clearConfirm')}</span>
+              <button
+                type="button"
+                onClick={() => void clearChat()}
+                className="rounded bg-cobalt-500 px-2 py-0.5 text-[10px] font-medium text-white transition-colors hover:bg-cobalt-600"
+              >
+                {t('cardConsult.confirm')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setClearing(false)}
+                className="rounded border border-stone-300 px-2 py-0.5 text-[10px] text-ink transition-colors hover:border-cobalt-500"
+              >
+                {t('cardConsult.cancel')}
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setClearing(true)}
+              className="flex shrink-0 items-center gap-1 rounded border border-stone-300 px-1.5 py-0.5 text-[10px] text-stone-600 transition-colors hover:border-cobalt-500 hover:text-ink"
+            >
+              <Trash2 size={12} /> {t('cardConsult.clear')}
+            </button>
+          ))}
+      </div>
       {/* 输入行（常驻，折叠态也露出） */}
-      <div className="flex items-end gap-1.5 border-t border-stone-100 px-3 py-2">
+      <div className="flex items-end gap-1.5 px-3 pb-2 pt-1">
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}

@@ -300,14 +300,14 @@ export function App(): React.JSX.Element {
             />
             {/* 应用级文件查看器：由全局 store 驱动，供文件树及未来其它入口调用。 */}
             <FileViewer />
+            {/* 新建需求流程：描述想法→建卡中→审阅候选，无蒙层浮窗；限看板区、不跨详情抽屉。 */}
+            <NewRequirementFlow />
+            {/* 全局对话：常驻入口「项目Agent」+ 无蒙层面板；限看板区，不漂到详情抽屉上。 */}
+            <GlobalChatEntry />
+            <GlobalChatPanel />
           </div>
           {/* 需求卡详情：右侧推挤式侧抽屉（含底部询问 Agent 抽屉）；关闭时 null 不占宽。 */}
           <RequirementCardDetail />
-          {/* 新建需求流程：描述想法→建卡中→审阅候选，由全局 store 驱动、无蒙层浮窗；全程状态由「待办」列「+ 创建」按钮承载。 */}
-          <NewRequirementFlow />
-          {/* 全局对话：跟全局 agent 多轮聊需求编排（意图→卡操作提案→审阅→应用），常驻入口 + 无蒙层面板。 */}
-          <GlobalChatEntry />
-          <GlobalChatPanel />
         </main>
       </div>
       {onboarding && (
