@@ -235,12 +235,15 @@ export type ImportOutcome = { project: Project; reused: boolean }
 export type ExecutorKind = 'agent' | 'engine' | 'command' | 'subworkflow'
 
 /**
- * agent 执行者的驱动指令：内联 prompt 文本，或引用工作流包内的一份 skill 文件。
- * `file.path` 相对工作流包目录解析，被引用文件物理位于包内（见 workflow-definition spec）。
+ * agent 执行者的驱动指令，三种形态（见 workflow-definition spec）：
+ * - `inline`：内联 prompt 文本（自包含、可移植）。
+ * - `file`：引用工作流包内的一份 skill 文件（`path` 相对包目录，物理在包内）——用户设进包的外部技能文件。
+ * - `installed`：引用用户 CLI 里**已安装**的技能，按调用名 `name`（如 `opsx:explore`）——不嵌入内容、不指路径，运行时由 CLI 自己调。
  */
 export type AgentInstruction =
   | { kind: 'inline'; text: string }
   | { kind: 'file'; path: string }
+  | { kind: 'installed'; name: string }
 
 /**
  * agent 执行配置：声明本节点用哪个编程工具（adapter）、哪个模型、额外参数。各字段可空。
@@ -566,7 +569,7 @@ export type SplitEdgeInherit = 'all' | 'none'
 
 /**
  * 一个卡操作（判别联合）：全局 agent over 全盘视野把自由意图解读成的成套编排动作。
- * 结构性 op（adjust/split/merge/relate）只作用「待办」列的卡（见 requirement-orchestration 破坏性收边）。
+ * 结构性 op（adjust/split/merge/relate/delete）只作用「待办」列的卡（见 requirement-orchestration 破坏性收边）。
  */
 export type CardOp =
   | { kind: 'create'; card: CandidateCard }
@@ -574,12 +577,13 @@ export type CardOp =
   | { kind: 'split'; source: string; into: CandidateCard[]; edgeInherit?: SplitEdgeInherit }
   | { kind: 'merge'; sources: string[]; into: string | CandidateCard; mergedDescription?: string }
   | { kind: 'relate'; op: 'add' | 'remove'; from: string; edge: CardRelation }
+  | { kind: 'delete'; target: string }
 
 /** 卡操作类别标签（判别联合的 tag）。 */
 export type CardOpKind = CardOp['kind']
 
-/** 破坏性 op（应用前需二次确认）：merge、split、以及会删卡的操作。 */
-export const DESTRUCTIVE_OP_KINDS: ReadonlyArray<CardOpKind> = ['split', 'merge']
+/** 破坏性 op（应用前需二次确认）：merge、split、以及删卡（delete）。 */
+export const DESTRUCTIVE_OP_KINDS: ReadonlyArray<CardOpKind> = ['split', 'merge', 'delete']
 
 /** 一个 op 的校验/应用问题（供审阅界面定位与提示）；仿 CandidateIssue。 */
 export interface OpIssue {
@@ -596,13 +600,29 @@ export interface SuggestedProject {
   workflowId?: string
 }
 
-/** 编排核产物：成套卡操作 + 逐 op 校验问题 + 自然语言答复 + （可选）新项目提议。 */
+/**
+ * 工作流提案：agent 产出的**完整**工作流定义 + （改写时）被覆盖工作流 id + 校验问题。
+ * 校验失败**修好再报**（不驳回重问）：未过 `validateWorkflow`/`checkBranchPairing` 的可读原因收进 `issues`，
+ * 半成品的 `workflow` 仍带出，供人在只读预览里补齐后再存库。见 workflow-authoring。
+ */
+export interface WorkflowProposal {
+  /** agent 产出的完整工作流定义（可能带瑕疵——瑕疵在 issues 里列出，定义仍呈现）。 */
+  workflow: WorkflowDefinition
+  /** 改写现有工作流时 = 被覆盖工作流的 id（落库时以此为准覆盖对应包）；创建新工作流时省略。 */
+  baseId?: string
+  /** 未过校验的可读原因（空 = 合规可直接存库）。 */
+  issues: string[]
+}
+
+/** 编排核产物：成套卡操作 + 逐 op 校验问题 + 自然语言答复 + （可选）新项目提议 + （可选）工作流提案。 */
 export interface OrchestrationProposal {
   ops: CardOp[]
   issues: OpIssue[]
   reply?: string
   /** 意图属新项目时给出：审阅界面渲染「创建项目并加入这些需求」，ops 即该新项目的初始卡。 */
   suggestedProject?: SuggestedProject
+  /** 意图属写/改工作流时给出：审阅界面渲染工作流只读预览 + 存库；与 ops 互斥（工作流轮 ops 为空）。 */
+  workflow?: WorkflowProposal
 }
 
 /** 编排接缝产物：编排提案，或当前窗口未绑定项目的空态（无处归属需求）。 */
@@ -625,6 +645,7 @@ export type ConversationRole = 'user' | 'agent'
 export interface ConversationMessage {
   role: ConversationRole
   text: string
+  /** 编排提案（含卡操作，及工作流轮的 `proposal.workflow` 工作流提案）；供历史重放审阅/预览。 */
   proposal?: OrchestrationProposal
   /** 单需求 agent 的本卡干预提议（仅卡咨询会话用；供历史重放确认按钮）。 */
   interventions?: CardIntervention[]
@@ -840,6 +861,29 @@ export interface CardBranch {
   name: string
   /** 该成员仓在本运行的实际分支名（统一递增避撞后可能非预取名）。 */
   branch: string
+}
+
+/** 删卡前一条成员分支的回收信息（供确认框展示「已合并/未合并」）。 */
+export interface BranchCleanupItem {
+  memberId: string
+  /** 「成员仓名/分支名」里的仓名部分。 */
+  name: string
+  branch: string
+  worktreePath: string
+  /** 该分支本地是否仍存在。 */
+  branchExists: boolean
+  /** 该分支的 worktree 目录是否仍在盘上。 */
+  worktreeExists: boolean
+  /** 分支是否已合并进其基分支（未建出/查不到基分支时保守判 false）。 */
+  merged: boolean
+}
+
+/** 删卡选项：是否一并回收 worktree+分支，以及是否允许强删未合并分支。 */
+export interface RemoveCardOptions {
+  /** 勾选后：删卡时一并删 worktree + 删分支。缺省只删卡+停运行、不碰 git。 */
+  recycleBranches?: boolean
+  /** 配合 recycleBranches：允许强删未合并分支（`-D`）。false 时未合并分支保留。 */
+  allowUnmerged?: boolean
 }
 
 /** 一个成员仓在某运行里的派生上下文（分支/worktree/基分支）。 */
@@ -1064,8 +1108,10 @@ export interface KlaritApi {
   createCards: (candidates: CandidateCard[]) => Promise<{ created: StoredCard[]; issues: CandidateIssue[] }>
   /** 更新一张卡（状态/涉及仓等）。 */
   updateCard: (slug: string, patch: Partial<StoredCard>) => Promise<StoredCard | null>
-  /** 删除一张卡（清理其它卡指向它的悬挂边）。 */
-  removeCard: (slug: string) => Promise<void>
+  /** 删除一张卡（清理其它卡指向它的悬挂边）；有未完成运行则先级联中止。opts 可要求一并回收 worktree+分支。 */
+  removeCard: (slug: string, opts?: RemoveCardOptions) => Promise<void>
+  /** 删卡前算每条成员分支的合并状态与 worktree 存在（供确认框展示）；无运行/无分支给空数组。 */
+  cardBranchCleanupInfo: (slug: string) => Promise<BranchCleanupItem[]>
   /** 从卡派生运行请求并触发引擎、建立卡↔运行双向链；缺前置条件返回 { error }。 */
   runCard: (slug: string) => Promise<{ runId: string } | { error: string }>
   /** 列某卡各成员仓**已建出分支**的条目（成员仓名 + 实际分支）；无运行/无已建分支给空数组。 */

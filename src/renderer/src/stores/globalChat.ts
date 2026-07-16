@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CardOp, Conversation, OrchestrationProposal } from '@shared/types'
+import type { CardOp, Conversation, OrchestrationProposal, WorkflowProposal } from '@shared/types'
 import { DESTRUCTIVE_OP_KINDS } from '@shared/types'
 import { useCardsStore } from './cards'
 
@@ -26,6 +26,12 @@ interface GlobalChatState {
   applying: boolean
   /** 已应用过的提案消息时间戳（禁用其「应用」按钮，防重复应用）。 */
   appliedAt: number[]
+  /** 已入库过的工作流提案消息时间戳（提案入口显已存态、防重复）。 */
+  savedWorkflowAt: number[]
+  /** 正在预览/编辑的工作流提案（打开完整编辑器浮层）；null 即无。 */
+  workflowPreview: { wf: WorkflowProposal; messageAt: number } | null
+  /** 每次打开预览自增：作编辑器 key，保证每次打开都重挂（重新按草稿/库解析初值，不复用上次实例）。 */
+  previewSeq: number
   /** 破坏性提案待用户二次确认；null 即无。 */
   confirm: PendingConfirm | null
   /** 全局默认 agent/模型（会话未选时的回落显示）。选项本身由静态 SUPPORTED_AGENTS 驱动。 */
@@ -47,6 +53,12 @@ interface GlobalChatState {
   applyProposal: (ops: CardOp[], messageAt: number, confirmedDestructive: boolean) => Promise<void>
   /** 新项目提议落地：选目录建/导入项目并绑窗口、激活所选工作流，把 create ops 种入；取消则无操作。 */
   createProjectFromProposal: (ops: CardOp[], messageAt: number, workflowId?: string) => Promise<void>
+  /** 打开工作流提案的完整编辑器浮层（草稿态可编辑、顶部保存入库）。 */
+  openWorkflowPreview: (wf: WorkflowProposal, messageAt: number) => void
+  /** 关闭工作流预览浮层。 */
+  closeWorkflowPreview: () => void
+  /** 标记某工作流提案已入库（入口显已存态；保存按钮改「更新工作流」）；不关闭浮层，由「关闭」按钮关。 */
+  markWorkflowSaved: (messageAt: number) => void
   /** 加载可选 agent 清单 + 全局默认（供会话选型下拉）。 */
   loadAgentOptions: () => Promise<void>
   /** 设当前会话选用的 agent/模型（覆盖全局默认；持久化并更新本地）。 */
@@ -72,6 +84,9 @@ export const useGlobalChatStore = create<GlobalChatState>((set, get) => ({
   notice: null,
   applying: false,
   appliedAt: [],
+  savedWorkflowAt: [],
+  workflowPreview: null,
+  previewSeq: 0,
   confirm: null,
   defaultAgentId: null,
   defaultModel: null,
@@ -172,6 +187,15 @@ export const useGlobalChatStore = create<GlobalChatState>((set, get) => ({
       set({ applying: false })
     }
   },
+
+  openWorkflowPreview: (wf, messageAt) => set((st) => ({ workflowPreview: { wf, messageAt }, previewSeq: st.previewSeq + 1 })),
+
+  closeWorkflowPreview: () => set({ workflowPreview: null }),
+
+  markWorkflowSaved: (messageAt) =>
+    set((st) => ({
+      savedWorkflowAt: st.savedWorkflowAt.includes(messageAt) ? st.savedWorkflowAt : [...st.savedWorkflowAt, messageAt]
+    })),
 
   loadAgentOptions: async () => {
     const [defaultAgentId, defaultModel] = await Promise.all([

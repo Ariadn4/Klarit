@@ -10,11 +10,17 @@ import type {
   ConversationMessage,
   OrchestrationOutcome,
   StoredCard,
-  SuggestedProject
+  SuggestedProject,
+  WorkflowDefinition,
+  WorkflowProposal,
+  WorkflowSummary
 } from '../shared/types'
 import { validateOps } from '../shared/card-ops'
 import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { typeArchetypeMap, coerceToRegisteredType, DEFAULT_CARD_TYPES } from '../shared/card-type'
+import { buildAuthorWorkflowSkill, validateWorkflow, checkBranchPairing, repairWorkflow } from '../shared/workflow'
+import { resolveLocalized } from '../shared/localized'
+import { DEFAULT_LANGUAGE } from '../shared/language'
 
 /** 编排核依赖（注入以便测试，不绑 Electron）。全盘数据 provider 限本项目。 */
 export interface OrchestrateDeps {
@@ -24,16 +30,27 @@ export interface OrchestrateDeps {
   getConstitution: () => string[]
   /** 可选工作流（供新项目挑一个 + 其类型）；缺省空数组。 */
   getWorkflows?: () => WorkflowChoice[]
+  /** 可改写的工作流摘要（id + 名 + 是否无效），供 agent 认识可改哪些流、按 id 点名 baseId；缺省空。 */
+  getWorkflowSummaries?: () => WorkflowSummary[]
+  /** 当前项目的活动工作流完整定义（改写意图的默认基准起点）；无则 null。 */
+  getActiveWorkflow?: () => WorkflowDefinition | null
+  /** 当前项目成员仓（多仓上下文，供 agent 按仓组织 git 操作）；缺省/单仓空。 */
+  getProjectRepos?: () => AuthoringRepo[]
   /** 某会话的历史（供多轮续接的 producer 用）；缺省空。 */
   getHistory?: (conversationId?: string) => ConversationMessage[]
   budgetChars?: number
 }
 
-/** producer 输出：已（由真实现内部 normalizeOps）解析为结构化 ops + 可选自然语言答复 + 可选新项目提议。 */
+/** producer 输出：已（由真实现内部 normalizeOps）解析为结构化 ops + 可选自然语言答复 + 可选新项目提议 + 可选工作流。 */
 export interface ProducedOps {
   ops: CardOp[]
   reply?: string
   suggestedProject?: SuggestedProject
+  /**
+   * 写/改工作流意图时：agent 产出的**原始**完整定义（经 migrateWorkflowShape 归一形状）+ 可选 baseId。
+   * **不含 issues**——校验（validateWorkflow/checkBranchPairing）在编排核做，producer 只解析（与 ops 同样职责分工）。
+   */
+  workflow?: { workflow: WorkflowDefinition; baseId?: string }
 }
 
 /**
@@ -84,6 +101,9 @@ const OPS_CONTRACT = `# 你是 Klarit 的需求助手（自由对话）
 ### 技能·关系（relate）
 用户想建立/解除卡间关系 → \`{ "kind": "relate", "op": "add"|"remove", "from": "<预取名>", "edge": { "kind", "target" } }\`
 
+### 技能·删卡（delete）
+用户想删掉某张卡（作废/建错）→ \`{ "kind": "delete", "target": "<卡预取名>" }\`（破坏性，会删该卡并清其它卡指向它的关系边）。
+
 ### 技能·新建项目
 当意图是一个**新项目/新东西**（与当前项目无关的全新目标），或**当前未绑定项目**（全盘视野为空）→ 在输出对象里给
 \`"suggestedProject": { "name": "新项目名", "description": "一句话描述", "workflowId": "<从上面「可选工作流」里挑一个>" }\`，并把该项目的初始需求作为一批 \`create\` ops 一起给出（用户选定目录建好项目后种进去）。
@@ -93,8 +113,8 @@ const OPS_CONTRACT = `# 你是 Klarit 的需求助手（自由对话）
 
 ## 红线：破坏性收边
 
-结构性操作（adjust/split/merge/relate）**只能作用于「待办·可结构操作」的卡**。
-对「已流动·仅建议新建」的卡，**不要**产出针对它的跨卡结构操作，请改为用 create 建议一个新需求来承载。
+结构性操作（adjust/split/merge/relate/delete）**只能作用于「待办·可结构操作」的卡**。
+对「已流动·仅建议新建」的卡，**不要**产出针对它的跨卡结构操作或 delete，请改为用 create 建议一个新需求来承载。
 你**只看得到当前项目**，**不要**引用或操作任何别的已有项目。
 
 ## 输出格式
@@ -103,12 +123,85 @@ const OPS_CONTRACT = `# 你是 Klarit 的需求助手（自由对话）
 - 只是聊天 → \`{ "reply": "你的自然回复", "ops": [] }\`
 - 要动卡 → \`{ "reply": "你的自然回复", "ops": [ ...按技能格式... ], "suggestedProject"?: { "name", "description" } }\``
 
-/** 拼编排指令：全盘视野 + 自由对话/技能契约 + 用户这轮的话。unbound=当前未绑定项目。 */
-export function buildOrchestratePrompt(board: string, intent: string, _types: CardTypeDef[], unbound = false): string {
+/** 一个成员仓（多仓上下文）：名 + 可选标签 + 成员 id（供 agent 按 tag/仓收窄节点 target）。 */
+export interface AuthoringRepo {
+  name: string
+  tag?: string
+  memberId?: string
+}
+
+/** 写工作流上下文（供 agent 识别到写/改工作流意图时用）：可改写工作流摘要 + 活动工作流基准定义 + 成员仓。 */
+export interface AuthoringContext {
+  summaries: WorkflowSummary[]
+  activeWorkflow: WorkflowDefinition | null
+  /** 本项目成员仓（≥2 即多仓，供教 agent 按仓组织 git 操作）；缺省/单仓不输出该层。 */
+  repos?: AuthoringRepo[]
+}
+
+/**
+ * 拼「写工作流」段：内联写工作流 skill（自动生成、单一来源）+ 可改写工作流摘要（id/名/是否无效）+
+ * 活动工作流的完整定义作改写基准起点。无摘要且无活动工作流时返回空串（不给 agent 徒增噪音）。
+ */
+function buildAuthoringSection(ctx: AuthoringContext): string {
+  const { summaries, activeWorkflow } = ctx
+  if (summaries.length === 0 && !activeWorkflow) return ''
+  const parts: string[] = [
+    '',
+    '# 另一种产出：写/改工作流',
+    '除了聊天与卡操作，你还可以帮用户**写或改工作流**。只有识别到明确的写/改工作流意图时才这么做——',
+    '此时按下面的 skill 输出带 `workflow` 字段的对象（`ops` 留空）；否则照常聊天或产卡操作。',
+    '',
+    buildAuthorWorkflowSkill()
+  ]
+  if (summaries.length > 0) {
+    parts.push(
+      '',
+      '## 可改写的工作流（改写时把 baseId 填成其中某个 id）',
+      ...summaries.map((s) => {
+        const name = resolveLocalized(s.name, DEFAULT_LANGUAGE) || s.id
+        const invalid = s.invalidReason ? `（无效：${s.invalidReason}）` : ''
+        return `- \`${s.id}\`「${name}」${invalid}`
+      })
+    )
+  }
+  // 多仓（≥2 成员仓）：列出成员仓与标签，供 agent 知晓并按 tag/仓收窄节点 target。
+  const repos = (ctx.repos ?? []).filter((r) => r.name)
+  if (repos.length > 1) {
+    parts.push(
+      '',
+      '## 本项目成员仓（多仓：引擎 git 操作默认逐仓跑；可按 tag/仓给节点 target 收窄）',
+      ...repos.map((r) => {
+        const tag = r.tag ? `，标签「${r.tag}」` : ''
+        const mid = r.memberId ? `，memberId=\`${r.memberId}\`` : ''
+        return `- ${r.name}${tag}${mid}`
+      })
+    )
+  }
+  if (activeWorkflow) {
+    parts.push(
+      '',
+      '## 当前活动工作流（改写的默认基准；以它为起点改，baseId 用它的 id）',
+      '```json',
+      JSON.stringify(activeWorkflow),
+      '```'
+    )
+  }
+  return parts.join('\n')
+}
+
+/** 拼编排指令：全盘视野 + 自由对话/技能契约 + （可选）写工作流段 + 用户这轮的话。unbound=当前未绑定项目。 */
+export function buildOrchestratePrompt(
+  board: string,
+  intent: string,
+  _types: CardTypeDef[],
+  unbound = false,
+  authoring?: AuthoringContext
+): string {
   const head = unbound
     ? '# 当前未绑定任何项目\n用户尚未打开/绑定项目。可以自由聊；若意图是要做个新东西，走「新建项目」技能给出 suggestedProject + 初始 create ops。\n'
     : ''
-  return [head + board, '', OPS_CONTRACT, '', '# 用户这轮说', intent].join('\n')
+  const authoringSection = authoring ? buildAuthoringSection(authoring) : ''
+  return [head + board, '', OPS_CONTRACT, authoringSection, '', '# 用户这轮说', intent].join('\n')
 }
 
 export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProducer): OrchestrateSeam {
@@ -123,7 +216,13 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         workflows: deps.getWorkflows?.() ?? [],
         budgetChars: deps.budgetChars
       })
-      const prompt = buildOrchestratePrompt(board, intent, deps.getTypes(), !projectId)
+      // 写工作流上下文：可改写工作流摘要（恒带）+ 活动工作流完整定义（改写默认基准）。缺省 provider 时为空态。
+      const authoring: AuthoringContext = {
+        summaries: deps.getWorkflowSummaries?.() ?? [],
+        activeWorkflow: deps.getActiveWorkflow?.() ?? null,
+        repos: deps.getProjectRepos?.() ?? []
+      }
+      const prompt = buildOrchestratePrompt(board, intent, deps.getTypes(), !projectId, authoring)
       let produced: ProducedOps
       try {
         produced = await produce(prompt, {
@@ -160,7 +259,26 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         return op
       })
       const { issues } = validateOps(ops, { cards, registry: typeArchetypeMap(types) })
-      return { ops, issues, reply: produced?.reply, suggestedProject: produced?.suggestedProject }
+      // 工作流提案（若有）：过 validateWorkflow + checkBranchPairing，**修好再报**——两闸独立收集原因，
+      // 非法定义仍带出（不丢弃、不驳回重问），供人在只读预览里补齐后存库。
+      const workflow = buildWorkflowProposal(produced?.workflow)
+      return { ops, issues, reply: produced?.reply, suggestedProject: produced?.suggestedProject, workflow }
     }
   }
+}
+
+/**
+ * 组装 `WorkflowProposal`：先**确定性修复到合法**（`repairWorkflow`——补删分支节点、纠 stageId、丢坏节点、
+ * 过滤非法子结构；对齐卡操作「容错修复后再校验」的先例），**直接给用户合法工作流**；修复后再过两闸校验，
+ * `issues` 作最后兜底（正常修复能补的情况下为空，仅无骨架的极端输入才残留）。无产出返回 undefined。
+ */
+function buildWorkflowProposal(produced: ProducedOps['workflow']): WorkflowProposal | undefined {
+  if (!produced?.workflow) return undefined
+  const def = repairWorkflow(produced.workflow)
+  const issues: string[] = []
+  const v = validateWorkflow(def)
+  if (!v.ok) issues.push(v.reason)
+  const bp = checkBranchPairing(def)
+  if (!bp.ok) issues.push(bp.reason)
+  return { workflow: def, baseId: produced.baseId, issues }
 }

@@ -15,6 +15,7 @@ import type {
   RunBreakpoint,
   WorkflowNode
 } from '@shared/types'
+import { DESTRUCTIVE_OP_KINDS } from '@shared/types'
 import { MarkdownView } from './NewRequirementFlow'
 import { ProposalReview, describeOp } from './ProposalReview'
 import { useCardsStore } from '../stores/cards'
@@ -314,7 +315,7 @@ export function CardConsultPanel({
 
   // 应用选中的 ops（ProposalReview 已过滤为勾选的合法项，勾选+点应用即明确同意）：applyOps → 刷看板 → 标记已应用。
   const applyProposal = async (ops: CardOp[], messageAt: number): Promise<void> => {
-    const destructive = ops.some((op) => op.kind === 'split' || op.kind === 'merge')
+    const destructive = ops.some((op) => DESTRUCTIVE_OP_KINDS.includes(op.kind))
     setApplying(true)
     try {
       await window.klarit.applyOps(ops, destructive)

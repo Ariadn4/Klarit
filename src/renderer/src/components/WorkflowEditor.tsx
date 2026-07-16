@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -52,6 +52,29 @@ import { LocalizedTextInput } from './ui/LocalizedTextInput'
 
 interface WorkflowEditorProps {
   workflowId: string
+  /**
+   * 草稿态：给了就用它种子、**不按 id 从库读**（承载全局 agent 未落库的工作流提案，见 workflow-authoring）。
+   * 保存仍走 `saveWorkflow`（按 `def.id` 建/覆盖）；缺省 = 从库按 workflowId 读（设置里的编辑态）。
+   */
+  initialDef?: WorkflowDefinition
+  /**
+   * 无边框（浮层预览）模式：主视图**不显顶栏返回/保存**，改为底部固定横栏（关闭 + 保存/更新）。
+   * 缺省 = 设置里的常规态（顶栏返回+保存，渲染进设置头部插槽）。
+   */
+  chromeless?: boolean
+  /** chromeless 底部横栏的文案（关闭 / 首次保存 / 已存后更新 / 设为本项目工作流 / 二次确认体）；仅 chromeless 用。 */
+  footerLabels?: { close: string; save: string; update: string; setActive: string; setActiveConfirm: string }
+  /** chromeless：该工作流此前是否已入库（决定保存按钮显「保存」还是「更新」；再次打开时为真）。 */
+  alreadySaved?: boolean
+  /**
+   * 优先从库读：为真时先按 id 从库读（含上次编辑），读不到（如已被删）**回落到 `initialDef` 草稿**——
+   * 避免已删工作流再次预览时卡「加载中」。缺省 = 有 initialDef 就用它、否则从库读。
+   */
+  libraryFirst?: boolean
+  /** chromeless：「设置为本项目工作流」——二次确认后调用（先保存入库，再由此激活到当前项目）。缺省则不显该按钮。 */
+  onSetActive?: (workflowId: string) => Promise<void> | void
+  /** chromeless：这份工作流是否已是当前项目的激活工作流（是则**不显**「设置为本项目工作流」——已无意义）。 */
+  isActive?: boolean
   /** 库内其它工作流（subworkflow 选择用，不含自己）。 */
   others: WorkflowSummary[]
   /** 本机已检测到的 agent（工具/模型下拉的数据源）；缺省为空，下拉降级为只有「跟随全局」。 */
@@ -599,6 +622,15 @@ function ExecutorFields({
           >
             {t('workflowEditor.useFile')}
           </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={instr.kind === 'installed'}
+            onClick={() => setInstr({ kind: 'installed', name: instr.kind === 'installed' ? instr.name : '' })}
+            className={segBtn(instr.kind === 'installed')}
+          >
+            {t('workflowEditor.useInstalled')}
+          </button>
         </div>
 
         {instr.kind === 'inline' ? (
@@ -611,7 +643,7 @@ function ExecutorFields({
               onChange={(e) => setInstr({ kind: 'inline', text: e.target.value })}
             />
           </label>
-        ) : (
+        ) : instr.kind === 'file' ? (
           <div className="space-y-1.5">
             <span className={labelCls}>{t('workflowEditor.skillFile')}</span>
             <PackageFileField
@@ -621,6 +653,18 @@ function ExecutorFields({
               onChange={(path) => setInstr({ kind: 'file', path })}
             />
           </div>
+        ) : (
+          <label className="block">
+            <span className={labelCls}>{t('workflowEditor.installedSkill')}</span>
+            <input
+              className={inputCls}
+              value={instr.name}
+              aria-label={t('workflowEditor.installedSkill')}
+              placeholder={t('workflowEditor.installedSkillPlaceholder')}
+              onChange={(e) => setInstr({ kind: 'installed', name: e.target.value })}
+            />
+            <span className="mt-1 block text-[12px] text-stone-500">{t('workflowEditor.installedSkillHint')}</span>
+          </label>
         )}
       </div>
 
@@ -1596,6 +1640,13 @@ const NO_RULE_PACKS: RulePack[] = []
 
 export function WorkflowEditor({
   workflowId,
+  initialDef,
+  chromeless = false,
+  footerLabels,
+  alreadySaved = false,
+  libraryFirst = false,
+  onSetActive,
+  isActive = false,
   others,
   detectedAgents = NO_AGENTS,
   rulePacks = NO_RULE_PACKS,
@@ -1607,6 +1658,8 @@ export function WorkflowEditor({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [branchDialog, setBranchDialog] = useState<string | null>(null)
+  // 「设置为本项目工作流」二次确认中（浮层预览态）。
+  const [confirmingSetActive, setConfirmingSetActive] = useState(false)
   // 当前编辑语言（默认＝界面语言）；顶栏下拉切换，各可翻字段单栏编辑该语言。
   const [editLang, setEditLang] = useState<string>(() => coerceLanguage(i18n.language))
   // 正在编辑的节点 id / 建议类型下标（非空时显示对应详情视图，替换工作流表单）。列表行只读、行尾「编辑」进入。
@@ -1624,15 +1677,27 @@ export function WorkflowEditor({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
+  // 只种一次 def：有 initialDef（草稿态）→ 用它种、不从库读；否则从库按 id 读。种过就不再重置——
+  // 避免草稿保存后 initialDef 变化触发重载而丢掉编辑（浮层预览态）。工作流切换在设置里靠整组件重挂。
+  const seeded = useRef(false)
   useEffect(() => {
+    if (seeded.current) return
+    seeded.current = true
+    // 有草稿且不优先读库 → 直接用草稿种子。
+    if (initialDef && !libraryFirst) {
+      setDef(initialDef)
+      return
+    }
+    // 否则从库按 id 读；读不到（已被删/不存在）回落到草稿（若有），避免卡「加载中」。
     let alive = true
     window.klarit.getWorkflow(workflowId).then((d) => {
-      if (alive) setDef(d)
+      if (alive) setDef(d ?? initialDef ?? null)
     })
     return () => {
       alive = false
     }
-  }, [workflowId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const update = useCallback((fn: (d: WorkflowDefinition) => WorkflowDefinition) => {
     setDef((d) => (d ? fn(d) : d))
@@ -1674,27 +1739,34 @@ export function WorkflowEditor({
   // 可选语言 = 受支持语言 ∪ 定义里已带的语言（去重）。
   const langs = [...new Set<string>([...SUPPORTED_LANGUAGES, ...presentWfLangs(def)])]
 
-  const save = async (): Promise<void> => {
+  const save = async (): Promise<boolean> => {
     const cleaned = cleanForSave(def)
     const v = validateWorkflow(cleaned)
     if (!v.ok) {
       setError(v.reason)
-      return
+      return false
     }
     // 分支配对语义校验：建分支无删分支 → 弹模态拦截、不写盘。
     const pairing = checkBranchPairing(cleaned)
     if (!pairing.ok) {
       setBranchDialog(pairing.reason)
-      return
+      return false
     }
     const result = await window.klarit.saveWorkflow(cleaned)
     if (result.ok) {
       setError(null)
       setSaved(true)
       onSaved()
-    } else {
-      setError(result.reason)
+      return true
     }
+    setError(result.reason)
+    return false
+  }
+
+  // 「设置为本项目工作流」：二次确认 → 先保存（确保入库）→ 激活为本项目工作流。仅浮层预览态（onSetActive 提供）用。
+  const confirmSetActive = async (): Promise<void> => {
+    setConfirmingSetActive(false)
+    if (await save()) await onSetActive?.(def.id)
   }
 
   // 进入节点详情：替换整个编辑器视图（顶栏 返回 + 保存）。节点不存在（被删）则回落到列表。
@@ -1747,7 +1819,14 @@ export function WorkflowEditor({
   return (
     <div className="flex h-full flex-col">
       {branchDialog && <BranchPairingDialog reason={branchDialog} onClose={() => setBranchDialog(null)} />}
-      <DetailHeader backLabel={t('workflowEditor.backToList')} onBack={onClose} onSave={save} saved={saved} saveLabel={t('common.save')} savedLabel={t('workflowEditor.saved')} extraActions={<WfLangSelect langs={langs} value={editLang} onChange={setEditLang} />} />
+      {chromeless ? (
+        // 浮层预览态：顶栏只留「编辑语言」，返回/保存移到底部固定横栏（见下）。
+        <div className="flex items-center justify-end border-b border-stone-100 px-3 py-1.5">
+          <WfLangSelect langs={langs} value={editLang} onChange={setEditLang} />
+        </div>
+      ) : (
+        <DetailHeader backLabel={t('workflowEditor.backToList')} onBack={onClose} onSave={save} saved={saved} saveLabel={t('common.save')} savedLabel={t('workflowEditor.saved')} extraActions={<WfLangSelect langs={langs} value={editLang} onChange={setEditLang} />} />
+      )}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
         {error && (
@@ -1887,6 +1966,60 @@ export function WorkflowEditor({
           </DndContext>
         </FieldGroup>
       </div>
+
+      {chromeless && footerLabels && (
+        // 固定底部横栏（不随内容滚动）：关闭 + 保存/更新 +（可选）设为本项目工作流。已存过显「更新工作流」。
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-stone-200 bg-paper px-4 py-2.5">
+          {error && <span className="mr-auto truncate text-[12px] text-danger">{error}</span>}
+          {confirmingSetActive ? (
+            // 二次确认（内联，替换按钮行）：说明影响 + 确认/取消。
+            <>
+              <span className="mr-auto text-[12px] text-stone-600">{footerLabels.setActiveConfirm}</span>
+              <button
+                type="button"
+                onClick={() => setConfirmingSetActive(false)}
+                className="rounded border border-stone-300 px-3.5 py-1.5 text-[13px] text-ink hover:border-cobalt-500"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmSetActive()}
+                className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
+              >
+                {t('common.confirm')}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded border border-stone-300 px-3.5 py-1.5 text-[13px] text-ink hover:border-cobalt-500"
+              >
+                {footerLabels.close}
+              </button>
+              <button
+                type="button"
+                onClick={() => void save()}
+                className="rounded border border-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-cobalt-600 hover:bg-cobalt-50"
+              >
+                {saved || alreadySaved ? footerLabels.update : footerLabels.save}
+              </button>
+              {/* 「设置为本项目工作流」仅在已保存为正式（本次保存 or 已入库）后出现；已是激活工作流则不显。 */}
+              {onSetActive && (saved || alreadySaved) && !isActive && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingSetActive(true)}
+                  className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
+                >
+                  {footerLabels.setActive}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

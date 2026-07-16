@@ -1,7 +1,7 @@
 /**
  * apply-ops 派发器（card-ops-review-apply）：用户审阅确认后，把编排提案的**合法** op 逐条派发到
  * `card-store` 落库应用。应用前**再校验**（board 可能已变）——非法 op 带原因回报、不应用；破坏性 op
- * （split/merge）须已获二次确认，否则跳过并回报。agent 不旁路人确认落盘——本派发器是唯一落库口，
+ * （split/merge/delete）须已获二次确认，否则跳过并回报。agent 不旁路人确认落盘——本派发器是唯一落库口，
  * decompose「描述想法」的纯 create 落库也收敛为其特例（全 create ops）。
  */
 
@@ -75,6 +75,11 @@ export function applyOps(store: CardStore, input: ApplyOpsInput): ApplyOpsResult
         } else {
           store.removeRelation(projectId, op.from, op.edge)
         }
+        break
+      }
+      case 'delete': {
+        store.remove(projectId, op.target)
+        removed.push(op.target)
         break
       }
       case 'split': {

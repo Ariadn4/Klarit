@@ -52,6 +52,89 @@ function renderEditor() {
   )
 }
 
+describe('WorkflowEditor 草稿态（initialDef）', () => {
+  it('给了 initialDef → 用它种子、不按 id 从库读', async () => {
+    const getWorkflow = vi.fn(async () => fixture())
+    installKlarit({ getWorkflow })
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(<WorkflowEditor workflowId="draft-x" initialDef={draft} others={[]} onClose={() => {}} onSaved={() => {}} />)
+    // 渲染的是传入的草稿定义
+    expect(await screen.findByDisplayValue('草稿流')).toBeInTheDocument()
+    // 未走 getWorkflow（草稿不落库、不从库读）
+    expect(getWorkflow).not.toHaveBeenCalled()
+  })
+
+  const footerLabels = { close: '关闭', save: '保存为正式工作流', update: '更新工作流', setActive: '设置为本项目工作流', setActiveConfirm: '确认？' }
+
+  it('chromeless「设置为本项目工作流」只在保存为正式后出现；确认 → 保存后激活', async () => {
+    const saveWorkflow = vi.fn(async (_def: WorkflowDefinition) => ({ ok: true }) as WorkflowValidation)
+    const onSetActive = vi.fn(async (_id: string) => {})
+    installKlarit({ saveWorkflow })
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
+    )
+    await screen.findByDisplayValue('草稿流')
+    // 未保存前：不显「设置为本项目工作流」
+    expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
+    // 保存为正式后出现
+    await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
+    await userEvent.click(await screen.findByRole('button', { name: '设置为本项目工作流' }))
+    // 二次确认 → 确定 → 激活（保存已发生）
+    await userEvent.click(screen.getByRole('button', { name: '确定' }))
+    await waitFor(() => expect(onSetActive).toHaveBeenCalledWith('draft-x'))
+  })
+
+  it('chromeless「设置为本项目工作流」取消 → 不激活', async () => {
+    const onSetActive = vi.fn(async (_id: string) => {})
+    installKlarit()
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless alreadySaved footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
+    )
+    await screen.findByDisplayValue('草稿流')
+    // alreadySaved → 直接显该按钮
+    await userEvent.click(screen.getByRole('button', { name: '设置为本项目工作流' }))
+    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(onSetActive).not.toHaveBeenCalled()
+  })
+
+  it('chromeless isActive：已是激活工作流 → 不显「设置为本项目工作流」（即便已保存）', async () => {
+    installKlarit()
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless alreadySaved isActive footerLabels={footerLabels} onSetActive={() => {}} others={[]} onClose={() => {}} onSaved={() => {}} />
+    )
+    await screen.findByDisplayValue('草稿流')
+    expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
+  })
+
+  it('chromeless libraryFirst：库里读不到（已删）→ 回落草稿，不卡加载中', async () => {
+    const getWorkflow = vi.fn(async () => null) // 模拟已删
+    installKlarit({ getWorkflow })
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} libraryFirst chromeless footerLabels={footerLabels} others={[]} onClose={() => {}} onSaved={() => {}} />
+    )
+    // 读库返回 null → 回落到草稿定义（显草稿名），而非一直「加载中」
+    expect(await screen.findByDisplayValue('草稿流')).toBeInTheDocument()
+    expect(getWorkflow).toHaveBeenCalledWith('draft-x')
+  })
+
+  it('草稿态保存 → 调 saveWorkflow 落库、回调 onSaved', async () => {
+    const saveWorkflow = vi.fn(async (_def: WorkflowDefinition) => ({ ok: true }) as WorkflowValidation)
+    const onSaved = vi.fn()
+    installKlarit({ saveWorkflow })
+    const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
+    render(<WorkflowEditor workflowId="draft-x" initialDef={draft} others={[]} onClose={() => {}} onSaved={onSaved} />)
+    await screen.findByDisplayValue('草稿流')
+    await userEvent.click(screen.getByRole('button', { name: /保存/ }))
+    await waitFor(() => expect(saveWorkflow).toHaveBeenCalled())
+    expect(saveWorkflow.mock.calls[0][0].id).toBe('draft-x')
+    expect(onSaved).toHaveBeenCalled()
+  })
+})
+
 /** 节点改为「点击进入详情视图」编辑：先点节点行进入详情，才能看到/编辑节点字段。 */
 async function enterNode(name = '写代码'): Promise<void> {
   await userEvent.click(await screen.findByRole('button', { name: `编辑节点 ${name}` }))

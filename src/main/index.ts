@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  AgentInstruction,
   AppSettings,
   ApplyOpsResult,
   CandidateCard,
@@ -17,6 +18,7 @@ import type {
   DecisionResponse,
   DecomposeInput,
   CardBranch,
+  RemoveCardOptions,
   DecomposeOutcome,
   DecomposePromptOutcome,
   DetectedAgent,
@@ -83,7 +85,7 @@ import { createOutputBuffer } from './engine/output-buffer'
 import { createDecomposeSeam } from './global-agent'
 import type { CandidateProducer, ResolveDeps } from './decompose-service'
 import { buildDecomposeMessage, headlessInvocation, parseCandidateCards, runAgentHeadless } from './agent-runner'
-import { createOrchestrateSeam, type OrchestrateDeps } from './orchestrate-service'
+import { createOrchestrateSeam, type OrchestrateDeps, type OpsProducer } from './orchestrate-service'
 import type { WorkflowChoice } from '../shared/board-context'
 import { resolveLocalized } from '../shared/localized'
 import { createOpsProducer, type SessionBridge } from './orchestrate-producer'
@@ -113,6 +115,8 @@ import {
   type ProjectServiceDeps
 } from './project-service'
 import { listBranches, listWorktrees, makeGitRunner, probeGit } from './git'
+import { makeAsyncGitRunner } from './git-write'
+import { branchCleanupInfo, recycleCardBranches, type CleanupMember } from './card-cleanup'
 import { ensureProjectId, readProjectId } from './identity'
 import { listDir } from './filetree'
 import { readFileForPreview } from './readfile'
@@ -215,10 +219,9 @@ function prepareAgentForRun(node: WorkflowNode, bp: RunBreakpoint, ctx: AgentPre
   const constitution = project
     ? deriveEffectiveConstitution(rulePacks.all(), getConstitutionGovernance(registry, project.id), language)
     : []
-  const promptText =
-    node.executor.instruction.kind === 'inline'
-      ? node.executor.instruction.text
-      : workflows.readSkillFile(bp.request.workflowId, node.executor.instruction.path)
+  const promptText = instructionPromptText(node.executor.instruction, (rel) =>
+    workflows.readSkillFile(bp.request.workflowId, rel)
+  )
   // 多仓布局：把本节点目标仓解析成「名/标签/路径/主-额外」交给拼装器注入（不写死在节点 prompt）
   const repos = ctx.targetRepos.map((t) => {
     const m = project?.members.find((mm) => mm.id === t.memberId)
@@ -335,6 +338,19 @@ const UNBOUND_SCOPE = '__unbound__'
 /** 某窗口的会话作用域：当前项目 id，未绑定回落 `__unbound__`。 */
 const convScope = (e: Electron.IpcMainInvokeEvent): string => currentProjectId(e) ?? UNBOUND_SCOPE
 
+/**
+ * 把 agent 驱动指令解析成拼装用 prompt 文本：inline 直接用、file 读包内 skill、
+ * installed 回落为「用你已安装的 <name> 技能」提示（运行期按各 CLI 真调用为后续切片；此为通用回落）。
+ */
+const instructionPromptText = (
+  instruction: AgentInstruction,
+  readSkill: (rel: string) => string | null
+): string | null => {
+  if (instruction.kind === 'inline') return instruction.text
+  if (instruction.kind === 'file') return readSkill(instruction.path)
+  return `请使用你已安装的「${instruction.name}」技能来完成本节点。`
+}
+
 // 可选工作流清单（供新项目挑一个）：每个工作流的类型集 = 默认类型 + 其建议类型（同 seedProjectCardTypes 语义）。
 const workflowChoices = (): WorkflowChoice[] =>
   workflows.list().map((s) => ({
@@ -357,10 +373,48 @@ const orchestrateDepsFor = (projectId: string | null): OrchestrateDeps => ({
         ).map((r) => `${r.name}：${r.text}`)
       : [],
   getWorkflows: workflowChoices,
+  // 可改写工作流摘要（恒带，供 agent 认识/点名 baseId）；活动工作流完整定义（改写默认基准起点）。
+  getWorkflowSummaries: () => workflows.list(),
+  getActiveWorkflow: () => {
+    const id = projectId ? getActiveWorkflowCore(registry, projectId) : null
+    return id ? workflows.get(id) : null
+  },
+  // 成员仓（多仓上下文）：名=派生名、可选标签、memberId=成员 id，供 agent 按 tag/仓组织 git 操作。
+  getProjectRepos: () =>
+    (projectId ? (findProjectById(registry, projectId)?.members ?? []) : []).map((m) => ({
+      name: m.derivedName,
+      tag: m.tag,
+      memberId: m.id
+    })),
   // 历史从本项目作用域取（scope = projectId ?? __unbound__）。
   getHistory: (conversationId) =>
     conversationId ? (conversationStore.get(projectId ?? UNBOUND_SCOPE, conversationId)?.messages ?? []) : []
 })
+
+// e2e 钩子：置 KLARIT_E2E_WORKFLOW=1 时，用一个不触真 CLI 的假 producer 返回一个**故意缺 delete-branch** 的
+// PR 工作流产出——供 e2e 验通「意图→工作流提案→只读预览→存库」全链路，且验证 repairWorkflow 自动补上删分支。
+const E2E_WORKFLOW_PRODUCER: OpsProducer | null =
+  process.env.KLARIT_E2E_WORKFLOW === '1'
+    ? async () => ({
+        ops: [],
+        reply: '给你搭了个 PR 流（E2E）',
+        workflow: {
+          workflow: {
+            id: 'e2e-pr-flow',
+            name: { zh: 'PR 流（E2E）', en: 'PR flow (E2E)' },
+            stages: [
+              { id: 'prepare', name: { zh: '准备', en: 'Prepare' } },
+              { id: 'deliver', name: { zh: '交付', en: 'Deliver' } }
+            ],
+            // 故意只给建分支 + 推送（缺删分支）→ repairWorkflow 应补一个 delete-branch 节点。
+            nodes: [
+              { id: 'create-branch', name: { zh: '建分支', en: 'Create branch' }, stageId: 'prepare', executor: { kind: 'engine', operation: 'create-branch' }, outputs: [] },
+              { id: 'push', name: { zh: '推送主干', en: 'Push main' }, stageId: 'deliver', executor: { kind: 'engine', operation: 'push-branch' }, outputs: [] }
+            ]
+          }
+        }
+      })
+    : null
 
 // 真实 ops producer：只读姿态、脱 worktree（cwd 用 userData scratch，agent 写代码我们也不消费）。
 // 会话 sessionId 桥接到**本作用域**会话库，供多轮原生续接。agent/模型按会话选型覆盖全局默认（未选回落默认）。
@@ -850,9 +904,44 @@ function registerIpc(): void {
     const pid = currentProjectId(e)
     return pid ? cardStore.update(pid, slug, { ...patch, updatedAt: Date.now() }) : null
   })
-  ipcMain.handle(IPC.cardsRemove, (e, slug: string): void => {
+  // 卡的运行成员仓 → 回收上下文（分支/worktree/base + 显示名）；无运行给空。
+  const cleanupMembersOf = (pid: string, slug: string): CleanupMember[] => {
+    const card = cardStore.get(pid, slug)
+    if (!card?.activeRunId) return []
+    const members = engine.getRunState(card.activeRunId)?.members
+    if (!members) return []
+    const project = findProjectById(registry, pid)
+    const nameOf = (memberId: string): string =>
+      project?.members.find((m) => m.id === memberId)?.derivedName ?? memberId
+    return Object.values(members).map((m) => ({
+      memberId: m.memberId,
+      name: nameOf(m.memberId),
+      repoPath: m.repoPath,
+      branch: m.branch,
+      worktreePath: m.worktreePath,
+      baseBranch: m.baseBranch
+    }))
+  }
+  const cleanupDeps = { runner: (dir: string) => makeAsyncGitRunner(dir), exists: existsSync }
+
+  ipcMain.handle(IPC.cardsBranchCleanupInfo, (e, slug: string) => {
     const pid = currentProjectId(e)
-    if (pid) cardStore.remove(pid, slug)
+    if (!pid) return []
+    return branchCleanupInfo(cleanupMembersOf(pid, slug), cleanupDeps)
+  })
+  ipcMain.handle(IPC.cardsRemove, async (e, slug: string, opts?: RemoveCardOptions): Promise<void> => {
+    const pid = currentProjectId(e)
+    if (!pid) return
+    const card = cardStore.get(pid, slug)
+    // 回收上下文须在中止前取（中止后运行仍可读，但一次取好更稳）。
+    const members = opts?.recycleBranches ? cleanupMembersOf(pid, slug) : []
+    // 删卡级联中止:卡有未完成运行时,先把该运行杀到 aborted 终局(杀前台+后台),释放对 worktree 的占用。
+    if (card?.activeRunId) await engine.abort(card.activeRunId)
+    // 勾选「一并回收」:删 worktree(force) + 删分支(未合并按 allowUnmerged 强删或保留)。
+    if (opts?.recycleBranches && members.length > 0) {
+      await recycleCardBranches(members, cleanupDeps, { allowUnmerged: opts.allowUnmerged ?? false })
+    }
+    cardStore.remove(pid, slug)
   })
   ipcMain.handle(IPC.cardsRun, (e, slug: string): { runId: string } | { error: string } => {
     const pid = currentProjectId(e)
@@ -967,9 +1056,7 @@ function registerIpc(): void {
     // 非 agent 节点没有可拼的 prompt 指令；promptText 留空（任务节给「未填写」提示）。
     const promptText =
       exec.kind === 'agent'
-        ? exec.instruction.kind === 'inline'
-          ? exec.instruction.text
-          : workflows.readSkillFile(workflowId, exec.instruction.path)
+        ? instructionPromptText(exec.instruction, (rel) => workflows.readSkillFile(workflowId, rel))
         : ''
     return assembleAgentPrompt({
       language,
@@ -1032,7 +1119,10 @@ function registerIpc(): void {
       conversationStore.appendMessage(scope, conversationId, { role: 'user', text: intent, at: Date.now() })
     }
     const conv = conversationId ? conversationStore.get(scope, conversationId) : null
-    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), orchestrateProducer(scope, conv?.agentId, conv?.model))
+    // e2e 钩子（同 KLARIT_E2E_IMPORT_DIRS 先例）：跳过真实 agent CLI，注入一个**故意缺 delete-branch** 的
+    // 工作流产出——既走通「意图→工作流提案→预览→存库」全链路，又验证编排核的 repairWorkflow 会补上删分支使之合法。
+    const produce = E2E_WORKFLOW_PRODUCER ?? orchestrateProducer(scope, conv?.agentId, conv?.model)
+    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), produce)
     const outcome = await seam.orchestrate({ intent, conversationId }, pid)
     if (conversationId && !('unbound' in outcome)) {
       // 空回复不塞占位（历史里没输出的轮次不留占位；用户可重试）。

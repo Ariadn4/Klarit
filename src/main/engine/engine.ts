@@ -161,6 +161,11 @@ export interface Engine {
   decide: (runId: string, response: DecisionResponse) => Launched
   pause: (runId: string) => Promise<RunBreakpoint>
   /**
+   * 用户中止运行（删卡级联）：杀前台 + 杀后台并清记录、落 `aborted` 终局。已终局则原样返回；未知运行返回 null。
+   * 与 `pause` 的差别：不为重启保留后台记录、落终态（`aborted`）而非 `paused`。
+   */
+  abort: (runId: string) => Promise<RunBreakpoint | null>
+  /**
    * 用户可发起的本卡干预——**重入**目标节点前向修复（复用内容驱动回退「重入不重置」）：拨回 K、重锚 K..N 基线、
    * 把 `instruction` 作「修复前向」注入 K 的执行者、前向重流。目标非本运行真实节点则拒绝、不改动。活跑运行先安全挂起。
    */
@@ -1773,6 +1778,26 @@ export function createEngine(deps: EngineDeps): Engine {
       }
       bp.state = 'paused'
       return persist(bp)
+    },
+
+    async abort(runId) {
+      const bp = deps.store.load(runId)
+      if (!bp) return null
+      if (bp.state === 'done' || bp.state === 'aborted') return bp
+      const a = active.get(runId)
+      if (a && a.driving) {
+        // 驱动中:杀前台并让 drive 在边界落停(借 paused 标志),随后改写为 aborted。
+        a.paused = true
+        a.abort.abort()
+        await a.settled.catch(() => {})
+      }
+      const cur = deps.store.load(runId)!
+      const a2 = ensureActive(runId)
+      killBackgroundOf(runId, cur, a2) // 杀后台活进程 + 清记录 + 持久化
+      a2.driving = false
+      cur.state = 'aborted'
+      cur.pendingDecision = null
+      return persist(cur)
     },
 
     reenter(runId, targetNodeId, instruction) {

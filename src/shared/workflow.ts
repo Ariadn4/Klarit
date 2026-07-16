@@ -81,6 +81,113 @@ export function engineOpCapabilities(op: string): EngineOpCapabilities {
   return ENGINE_OPERATION_SPECS[op] ?? NO_ENGINE_CAP
 }
 
+/** 执行者类型的一句话说明（写工作流 skill 用）；与 EXECUTOR_KINDS 一一对应。 */
+const EXECUTOR_KIND_DOC: Record<NodeExecutor['kind'], string> = {
+  agent: 'agent —— 让运行时编程 agent 干活。指令三选一：`inline`（临时提示词）/ `file`（包内相对路径的 skill 文件）/ `installed`（引用运行时 CLI 已装的技能，给调用名，见下）',
+  engine: 'engine —— 确定性 git/worktree/fs 动作（operation 取自下面的引擎操作集）',
+  command: 'command —— 跑一条或多条命令行（各自可带前置 check 与 timeoutSec）',
+  subworkflow: 'subworkflow —— 内嵌另一个工作流（workflowId 指向库内工作流）'
+}
+
+/** 引擎操作能力的可读标注（写工作流 skill 用）。 */
+function engineOpDoc(op: string): string {
+  const c = engineOpCapabilities(op)
+  const flags: string[] = []
+  if (c.supportsGate) flags.push('可挂门（人工评审点）')
+  return flags.length > 0 ? `\`${op}\`（${flags.join('、')}）` : `\`${op}\``
+}
+
+/**
+ * 由工作流数据模型的**单一来源**自动合成「写工作流 skill」文本：执行者联合、封闭引擎操作集及其能力、
+ * 门语义、分支配对规则、输出契约。与 `buildDecomposeSkill(types)` 同一先例——引擎操作集/执行者类型一变，
+ * 本文本随之变，永不与 `validateWorkflow`/`checkBranchPairing` 接受的形状漂移。纯函数，main 与 renderer 共享。
+ */
+export function buildAuthorWorkflowSkill(): string {
+  const executors = EXECUTOR_KINDS.map((k) => `- ${EXECUTOR_KIND_DOC[k]}`).join('\n')
+  const engineOps = ENGINE_OPERATIONS.map((op) => `- ${engineOpDoc(op)}`).join('\n')
+  return `# 写工作流 skill
+
+你是 Klarit 的全局 agent。用户想让你**创建或改写一套工作流**（把需求从「准备 → 实现 → 交付」推下去的流水线）。
+你的任务：产出一份**完整的**工作流定义（\`WorkflowDefinition\`）。**永远输出整份定义**，不要只给增量或 diff。
+
+## 工作流的结构
+
+- **stages（阶段）**：有序的若干阶段，每个含 \`id\` 与双语 \`name\`（如 \`{ "zh": "准备", "en": "Prepare" }\`）。看板按阶段分列。
+- **nodes（节点）**：有序的若干节点，每个含 \`id\`、双语 \`name\`、\`stageId\`（须指向某个阶段）、\`executor\`（执行者，见下），可选 \`outputs\`（产出的 .md 文件）、\`gate\`（检查/门）、\`writableScope\`（可写范围）、\`target\`（多仓扇出目标）。
+
+## 执行者类型（executor.kind 四选一）
+
+${executors}
+
+## 引擎操作集（executor.kind = engine 时，operation 只能取这些）
+
+${engineOps}
+
+## 分支配对（硬约束，务必遵守）
+
+若工作流里有 \`create-branch\` 节点，就**必须**至少有一个 \`delete-branch\` 节点收尾——否则分支/worktree 会泄漏，工作流被判无效（\`checkBranchPairing\` 会拦）。建了分支就配一个删分支。
+
+## 门（gate）
+
+节点可挂检查项：\`auto\`（自动跑校验命令，可指向本节点某个产出路径）或 \`manual\`（人工评审，带若干动作按钮，每个按钮是 \`{ label, command }\`）。\`push-branch\` 是天然的人工评审点。
+
+auto 门是「命令**退出码 0 才放行**」，**没有「反着判」**。所以：
+
+- **别做「必须失败」的红门**（如「npm test 必须失败才放行」）：它得靠把命令取反来实现，且只要测试套件里有任何**已知失败 / xfail / 无关坏掉**的测试，后面的「绿门」就会被**永久卡死**——这类工作流不靠谱，不要搭。
+- 「测试先行（先写测试、先看它红）」是**过程纪律**，写进 agent 节点的**指令文本**里（让 agent 先写测试、自己确认它失败、再实现），**不要**做成硬 auto 门。
+- 要用 auto 门验测试，就只用**绿门**（测试**通过**才放行）。
+
+## agent 节点：用「已装技能」而不是臆造
+
+运行时执行 agent 节点的是**用户自己的编程 CLI**（Claude Code / Codex / Cursor 等），它**自带自己已安装的技能与工具**（比如 Claude Code 的 \`opsx:explore\`、\`opsx:propose\` 等）。所以：
+
+- 想让某节点用运行时 agent **已经具备**的能力，就用 \`installed\` 形态**只给调用名**：\`{ "kind": "installed", "name": "opsx:explore" }\`。
+- **绝不**为这类技能臆造本地相对路径（写死路径会跑挂），**绝不**臆测某个技能「只产出某个 .md」或其行为——运行时 agent 自己知道怎么用它。
+- \`inline\` 只写你自己临时编的任务提示词；\`file\` 只用于**确实随工作流包携带**的 skill 文件。凡是 CLI 里现成的技能，一律走 \`installed\` 给名字。
+- 下方若给出「用户已装技能」清单，从中挑名字；没给也可按常识给名（仍走 installed）。
+
+## 多仓项目：谁逐仓、谁不逐仓（务必分清，别搭错）
+
+本项目可能是**多仓**（下方给出成员仓与标签）。哪些「逐仓」、哪些不，关系到工作流可不可靠：
+
+- **引擎 git 操作**（create-branch / open-worktree / merge-branch …）：默认对本需求涉及的**每个成员仓各跑一遍**（\`target\` 缺省 = 涉及仓全集，你不必特意声明）。要收窄给该节点加 \`target\`：\`{ "kind": "all" }\`（缺省）/ \`{ "kind": "tag", "tag": "后端" }\` / \`{ "kind": "repo", "memberId": "<成员仓 id>" }\`。
+- **agent 节点**：能同时看到本需求涉及的**所有仓**（主仓是当前目录、其余仓以 \`--add-dir\` 注入），agent 可在各仓里干活。
+- **command 节点 与 auto 门的校验命令**：**只在主仓 worktree 里跑一次，不逐仓、不吃 \`target\`**。因此：
+  - **别假设一条 \`npm test\` 能覆盖多个仓**——它只测主仓。
+  - **别写死跨仓相对路径**（如 \`npm --prefix ../api--wt--<需求名> test\`）：这种路径随目录命名/需求名变，极脆、必翻车。
+  - 要在**多个仓**做测试/检查，改用 **agent 节点**（它能看到所有仓）让它在各仓里跑，**不要**用 command 节点硬编跨仓路径。
+
+## 创建 vs 改写
+
+- **创建新工作流**：从零产出，不要带 \`baseId\`。
+- **改写现有工作流**：以下方注入的「当前工作流定义」为**起点**改，产出整份新定义，并带上 \`baseId\`（= 被改工作流的 id），落库时会覆盖它。默认改的是当前活动工作流；用户点名别的就用那个的 id。
+
+## 输出什么结构
+
+只输出一个 JSON 对象，形如：
+
+\`\`\`json
+{
+  "reply": "给用户看的一句话：为他的需求搭/改了什么、做了什么取舍（面向需求）",
+  "workflow": {
+    "id": "pr-with-review",
+    "name": { "zh": "PR 模式（带评审门）", "en": "PR mode (with review gate)" },
+    "stages": [ { "id": "prepare", "name": { "zh": "准备", "en": "Prepare" } } ],
+    "nodes": [ { "id": "create-branch", "name": { "zh": "建分支", "en": "Create branch" }, "stageId": "prepare", "executor": { "kind": "engine", "operation": "create-branch" }, "outputs": [] } ]
+  },
+  "baseId": "（改写时填被改工作流的 id；创建新工作流时省略）"
+}
+\`\`\`
+
+字段约束：
+
+- \`workflow\`：完整的 \`WorkflowDefinition\`；\`id\` 为 git 友好 slug，\`name\` 至少一种语言非空，至少一个阶段，每个节点恰一个合法执行者、\`stageId\` 指向已声明阶段。
+- \`baseId\`：仅改写时填（被覆盖工作流的 id）；创建新工作流时**省略**。
+- \`reply\` 与工作流 \`description\` 都**面向需求、简短**：说这条流干什么用、为需求做了什么取舍。**不要**复述引擎的既定机制（多仓逐仓、门/分支配对怎么工作）——那些用户已知，复述是噪音。
+- 只输出这个 JSON 对象，不要解释、不要 markdown 代码围栏包整段。
+`
+}
+
 /**
  * 是否为「相对分支/包目录」的合规路径：非空、非绝对（POSIX 根 / Windows 盘符 / UNC）、不含 `..` 段。
  * 产出路径、可写范围、agent file 形态的 skill 路径共用此约束。
@@ -113,7 +220,10 @@ function validateInstruction(instr: AgentInstruction, where: string): string | n
       ? null
       : `${where}：skill 文件路径必须是包内相对路径（禁绝对路径与 ..）：${String(instr.path)}`
   }
-  return `${where}：agent 驱动指令形态非法（应为 inline 或 file）`
+  if (instr?.kind === 'installed') {
+    return nonEmpty(instr.name) ? null : `${where}：已装技能的调用名不能为空`
+  }
+  return `${where}：agent 驱动指令形态非法（应为 inline / file / installed）`
 }
 
 function validateExecutor(executor: NodeExecutor, where: string): string | null {
@@ -563,6 +673,132 @@ export function createRollbackSampleWorkflow(id: string): WorkflowDefinition {
       engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
     ]
   }
+}
+
+// ── 自动修复到合法（repair-to-valid） ───────────────────────────────────────
+
+/** 执行者是否合法（同 validateExecutor 的判定，返回布尔供修复时决定「保留还是丢弃节点」）。 */
+function isExecutorValid(ex: unknown): boolean {
+  if (!ex || typeof ex !== 'object') return false
+  const e = ex as { kind?: string } & Record<string, unknown>
+  if (!EXECUTOR_KINDS.includes(e.kind as NodeExecutor['kind'])) return false
+  switch (e.kind) {
+    case 'agent': {
+      const instr = e.instruction as AgentInstruction | undefined
+      if (instr?.kind === 'inline') return typeof instr.text === 'string'
+      if (instr?.kind === 'file') return isSafeRelativePath(instr.path)
+      if (instr?.kind === 'installed') return nonEmpty(instr.name)
+      return false
+    }
+    case 'engine':
+      return nonEmpty(e.operation)
+    case 'command':
+      return (
+        Array.isArray(e.commands) &&
+        e.commands.length > 0 &&
+        e.commands.every((c) => c && nonEmpty((c as { command?: unknown }).command))
+      )
+    case 'subworkflow':
+      return nonEmpty(e.workflowId)
+    default:
+      return false
+  }
+}
+
+/** 过滤节点产出为合法子集：目的地 file、路径相对且以 .md 结尾；不合的丢弃（不臆造路径）。 */
+function repairOutputs(outputs: unknown): WorkflowOutput[] {
+  if (!Array.isArray(outputs)) return []
+  return outputs.filter((o): o is WorkflowOutput => {
+    const dest = (o as WorkflowOutput)?.destination
+    return !!dest && dest.kind === 'file' && isSafeRelativePath(dest.path) && /\.md$/i.test(dest.path.trim())
+  })
+}
+
+/** 过滤门检查项为合法子集：auto 须有 check 且 targets 收窄到本节点产出路径；manual 保留有 label+command 的动作。 */
+function repairGate(gate: unknown, outputPaths: Set<string>): WorkflowGateItem[] {
+  if (!Array.isArray(gate)) return []
+  const out: WorkflowGateItem[] = []
+  for (const g of gate) {
+    if (g?.kind === 'auto') {
+      const check = g.check
+      const ok = check?.kind === 'inline' ? nonEmpty(check.command) : check?.kind === 'ref' ? nonEmpty(check.ref?.packId) && nonEmpty(check.ref?.itemId) : false
+      if (!ok) continue
+      const item: WorkflowGateItem = { kind: 'auto', check }
+      const targets = Array.isArray(g.targets) ? g.targets.filter((t: unknown): t is string => typeof t === 'string' && outputPaths.has(t)) : undefined
+      if (targets && targets.length) item.targets = targets
+      if (typeof g.timeoutSec === 'number' && g.timeoutSec > 0) item.timeoutSec = g.timeoutSec
+      out.push(item)
+    } else if (g?.kind === 'manual') {
+      const actions = Array.isArray(g.actions)
+        ? g.actions.filter((a: unknown) => a && nonEmpty((a as { label?: unknown }).label) && nonEmpty((a as { command?: unknown }).command))
+        : []
+      out.push({ kind: 'manual', actions })
+    }
+  }
+  return out
+}
+
+/**
+ * 把 agent 产出的工作流**确定性修复到合法**（对齐编排「意图→卡操作」那条「容错修复后再校验」的先例，
+ * 见 requirement-orchestration）：填 id/显示名、保证至少一个阶段、纠节点 stageId、丢执行者非法的节点、
+ * 过滤产出/门/可写范围/目标为合法子集、并按分支配对补删分支节点。目标是让 `validateWorkflow` +
+ * `checkBranchPairing` 通过——**直接给用户合法工作流**，而非报错让用户回话调整。纯函数、幂等。
+ *
+ * 只做「可确定性补救」的修复；真正无骨架的输入（如无任何合法节点）不臆造内容，仅保证结构校验层面合法。
+ */
+export function repairWorkflow(def: WorkflowDefinition): WorkflowDefinition {
+  const src = isRec(def) ? def : ({} as WorkflowDefinition)
+  // 1) id / 显示名兜底
+  const id = nonEmpty(src.id) ? src.id : 'workflow'
+  const name = hasAnyLanguage(src.name) ? src.name : { [DEFAULT_LANGUAGE]: '新工作流' }
+  // 2) 阶段：至少一个
+  const stages: WorkflowStage[] = Array.isArray(src.stages) && src.stages.length > 0
+    ? src.stages.map((s) => ({ ...s, name: hasAnyLanguage(s?.name) ? s.name : { [DEFAULT_LANGUAGE]: s?.id || '阶段' } }))
+    : [{ id: 'stage-1', name: { [DEFAULT_LANGUAGE]: '阶段' } }]
+  const stageIds = new Set(stages.map((s) => s.id))
+  const fallbackStage = stages[0].id
+  // 3) 节点：丢执行者非法者；纠 stageId、名；过滤产出/门/可写范围/目标
+  const rawNodes = Array.isArray(src.nodes) ? src.nodes : []
+  const nodes: WorkflowNode[] = []
+  for (const n of rawNodes) {
+    if (!isRec(n) || !isExecutorValid(n.executor)) continue
+    const stageId = nonEmpty(n.stageId) && stageIds.has(n.stageId) ? n.stageId : fallbackStage
+    const outputs = repairOutputs(n.outputs)
+    const outputPaths = new Set(outputs.map((o) => o.destination.path))
+    const gate = repairGate(n.gate, outputPaths)
+    const writableScope = Array.isArray(n.writableScope) ? n.writableScope.filter(isSafeRelativePath) : undefined
+    const node: WorkflowNode = {
+      ...(n as WorkflowNode),
+      name: hasAnyLanguage(n.name) ? (n.name as Localized) : { [DEFAULT_LANGUAGE]: (n.id as string) || '节点' },
+      stageId,
+      executor: n.executor as NodeExecutor,
+      outputs
+    }
+    if (gate.length) node.gate = gate
+    else delete node.gate
+    if (writableScope && writableScope.length) node.writableScope = writableScope
+    else delete node.writableScope
+    // target 非法则移除（undefined = 全集 = 合法）
+    if (validateTarget(node, '', nodes, nodes.length) !== null) delete node.target
+    nodes.push(node)
+  }
+  // 4) 分支配对：建了分支却没删 → 补一个 delete-branch 节点（归入末阶段）
+  const hasCreate = nodes.some((n) => n.executor.kind === 'engine' && n.executor.operation === 'create-branch')
+  const hasDelete = nodes.some(
+    (n) => n.executor.kind === 'engine' && (n.executor.operation === 'delete-branch' || n.executor.operation === LEGACY_DELETE_BRANCH_WORKTREE)
+  )
+  if (hasCreate && !hasDelete) {
+    nodes.push(engineNode('delete-branch', L('删本地分支', 'Delete local branch'), stages[stages.length - 1].id, 'delete-branch'))
+  }
+  const out: WorkflowDefinition = { ...src, id, name, stages, nodes }
+  // 5) 可选字段：非法则移除（声明才校验）
+  if (out.newRequirementInstruction !== undefined && validateInstruction(out.newRequirementInstruction, '') !== null) {
+    delete out.newRequirementInstruction
+  }
+  if (out.suggestedTypes !== undefined && !validateSuggestedTypes(out.suggestedTypes).ok) {
+    delete out.suggestedTypes
+  }
+  return out
 }
 
 // ── 旧包形状迁移 ─────────────────────────────────────────────────────────────

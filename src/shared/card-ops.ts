@@ -1,7 +1,7 @@
 /**
  * 卡操作（CardOp）的纯逻辑：把全局 agent 产出的原始对象**逐条容错收敛**为合规 CardOp（normalizeOps），
  * 并在应用前**逐 op 校验**（validateOps）——目标存在、typeId 在册、预取名不撞、parent 无环、
- * **破坏性收边**（结构性 op 只作用「待办」列的卡）。无 fs / 无 IPC，main 与 renderer 共享。
+ * **破坏性收边**（结构性 op 及 delete 只作用「待办」列的卡）。无 fs / 无 IPC，main 与 renderer 共享。
  */
 
 import type {
@@ -73,6 +73,10 @@ function coerceOp(raw: unknown): CardOp | null {
       const op = o.op === 'remove' ? 'remove' : 'add'
       const edge = coerceRelations([o.edge])[0]
       return from && edge ? { kind: 'relate', op, from, edge } : null
+    }
+    case 'delete': {
+      const target = str(o.target)
+      return target ? { kind: 'delete', target } : null
     }
     default:
       return null
@@ -157,6 +161,11 @@ export function validateOps(ops: CardOp[], ctx: ValidateOpsContext): OpsValidati
         } else {
           validateNewCard(index, 'merge', op.into)
         }
+        break
+      }
+      case 'delete': {
+        if (!byName.has(op.target)) return push(index, 'delete', `目标卡「${op.target}」不存在`)
+        if (!isTodo(op.target)) return push(index, 'delete', `卡「${op.target}」已离开待办列，不可删除（改为建议新建需求）`)
         break
       }
       case 'relate': {

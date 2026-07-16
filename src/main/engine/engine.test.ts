@@ -329,6 +329,45 @@ describe('暂停与恢复', () => {
     const done = await engine.decide(a.runId, { optionId: 'pass' }).settled
     expect(done.state).toBe('done')
   })
+
+  it('abort：把停在门上的运行落到 aborted 终局', async () => {
+    const repo = trash.track(initRepo())
+    const def = wf([
+      engineNode('create-branch', [{ kind: 'manual', actions: [] }]),
+      engineNode('delete-branch')
+    ])
+    const engine = createEngine(deps(def))
+    const a = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(a.state).toBe('waiting-decision')
+    const aborted = await engine.abort(a.runId)
+    expect(aborted?.state).toBe('aborted')
+    expect(engine.getRunState(a.runId)?.state).toBe('aborted')
+  })
+
+  it('abort：暂停中的运行也能落到 aborted', async () => {
+    const repo = trash.track(initRepo())
+    const def = wf([
+      engineNode('create-branch', [{ kind: 'manual', actions: [] }]),
+      engineNode('delete-branch')
+    ])
+    const engine = createEngine(deps(def))
+    const a = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    const paused = await engine.pause(a.runId)
+    expect(paused.state).toBe('paused')
+    const aborted = await engine.abort(a.runId)
+    expect(aborted?.state).toBe('aborted')
+  })
+
+  it('abort：已终局(done)幂等返回、未知运行返回 null', async () => {
+    const repo = trash.track(initRepo())
+    const def = wf([engineNode('create-branch'), engineNode('delete-branch')])
+    const engine = createEngine(deps(def))
+    const a = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(a.state).toBe('done')
+    const again = await engine.abort(a.runId)
+    expect(again?.state).toBe('done')
+    expect(await engine.abort('no-such-run')).toBeNull()
+  })
 })
 
 describe('建分支统一递增避撞(avoidBranchConflict)', () => {

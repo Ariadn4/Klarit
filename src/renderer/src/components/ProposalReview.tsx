@@ -33,12 +33,14 @@ export function describeOp(op: CardOp, t: (k: string, o?: Record<string, unknown
         kind: op.edge.kind,
         target: op.edge.target
       })
+    case 'delete':
+      return t('globalChat.opDelete', { target: op.target })
   }
 }
 
-/** op 标题色：破坏性(merge/split)红以示醒目，其余黑(text-ink)便于阅读。 */
+/** op 标题色：破坏性(merge/split/delete)红以示醒目，其余黑(text-ink)便于阅读。 */
 function opTone(op: CardOp): string {
-  return op.kind === 'merge' || op.kind === 'split' ? 'text-tag-red' : 'text-ink'
+  return op.kind === 'merge' || op.kind === 'split' || op.kind === 'delete' ? 'text-tag-red' : 'text-ink'
 }
 
 /** 卡描述的 markdown 样式：正文灰、标题(#)加粗深色显特殊、列表/代码基础排版。 */

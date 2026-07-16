@@ -4,7 +4,7 @@
  */
 
 import { create } from 'zustand'
-import type { CardTypeDef, RunBreakpoint, StoredCard } from '@shared/types'
+import type { CardTypeDef, RemoveCardOptions, RunBreakpoint, StoredCard } from '@shared/types'
 
 /** 命令输出渲染缓冲上限：只留末段（长命令/测试不爆内存）。 */
 const OUTPUT_CAP = 20000
@@ -49,6 +49,8 @@ interface CardsState {
   openDetail: (slug: string, focus?: 'decision' | 'output' | null) => void
   closeDetail: () => void
   runCard: (slug: string) => Promise<{ error?: string }>
+  /** 删卡：经 IPC 删该卡（清悬挂边、级联中止运行，opts 可要求回收 worktree+分支），刷新看板；删的是当前详情卡则关面板。 */
+  removeCard: (slug: string, opts?: RemoveCardOptions) => Promise<void>
 }
 
 export const useCardsStore = create<CardsState>((set, get) => ({
@@ -139,5 +141,12 @@ export const useCardsStore = create<CardsState>((set, get) => ({
     const bp = await window.klarit.getRunState(res.runId)
     if (bp) get().setRun(bp)
     return {}
+  },
+
+  removeCard: async (slug, opts) => {
+    await window.klarit.removeCard(slug, opts)
+    // 若删的是当前打开详情的卡，先关面板（避免刷新后详情指向已删卡）。
+    if (get().detailSlug === slug) get().closeDetail()
+    await get().load()
   }
 }))

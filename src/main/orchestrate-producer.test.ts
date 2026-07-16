@@ -69,6 +69,58 @@ describe('parseOpsReply', () => {
     expect(out.reply).toBe('好的')
     expect(out.ops).toHaveLength(1)
   })
+
+  it('解析 workflow 提案（改写：带 baseId）', () => {
+    const raw = JSON.stringify({
+      reply: '给你的流加了个评审门',
+      baseId: 'my-flow',
+      workflow: {
+        id: 'my-flow',
+        name: { zh: '我的流', en: 'My flow' },
+        stages: [{ id: 's1', name: { zh: '交付' } }],
+        nodes: [{ id: 'push', name: { zh: '推送' }, stageId: 's1', executor: { kind: 'engine', operation: 'push-branch' }, outputs: [] }]
+      }
+    })
+    const out = parseOpsReply(raw)
+    expect(out.reply).toBe('给你的流加了个评审门')
+    expect(out.workflow?.workflow.id).toBe('my-flow')
+    expect(out.workflow?.baseId).toBe('my-flow')
+    expect(out.ops).toEqual([]) // 工作流轮 ops 为空
+  })
+
+  it('解析 workflow 提案（创建：无 baseId → baseId undefined）', () => {
+    const raw = JSON.stringify({
+      workflow: {
+        id: 'new-flow',
+        name: { zh: '新流' },
+        stages: [{ id: 's1', name: { zh: '开发' } }],
+        nodes: [{ id: 'impl', name: { zh: '实现' }, stageId: 's1', executor: { kind: 'agent', instruction: { kind: 'inline', text: '做' } }, outputs: [] }]
+      }
+    })
+    const out = parseOpsReply(raw)
+    expect(out.workflow?.workflow.id).toBe('new-flow')
+    expect(out.workflow?.baseId).toBeUndefined()
+  })
+
+  it('workflow 经 migrateWorkflowShape 归一（裸字符串名 → 语言表）', () => {
+    const raw = JSON.stringify({
+      workflow: { id: 'wf', name: '裸名', stages: [{ id: 's1', name: '阶段' }], nodes: [] }
+    })
+    const out = parseOpsReply(raw)
+    expect(out.workflow?.workflow.name).toEqual({ zh: '裸名' })
+  })
+
+  it('无 workflow 字段 → out.workflow 为 undefined（卡编排路径不回归）', () => {
+    const out = parseOpsReply('{ "reply": "好的", "ops": [ { "kind": "create", "card": { "title": "卡", "typeId": "feat" } } ] }')
+    expect(out.workflow).toBeUndefined()
+    expect(out.ops).toHaveLength(1)
+  })
+
+  it('纯聊天轮不产 workflow', () => {
+    const out = parseOpsReply('就是随便聊聊，没有要改工作流。')
+    expect(out.workflow).toBeUndefined()
+    expect(out.ops).toEqual([])
+  })
 })
 
 describe('createOpsProducer（桩 runner）', () => {

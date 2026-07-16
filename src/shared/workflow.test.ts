@@ -11,7 +11,9 @@ import {
   workflowSummary,
   migrateWorkflowShape,
   ENGINE_OPERATIONS,
-  engineOpCapabilities
+  engineOpCapabilities,
+  buildAuthorWorkflowSkill,
+  repairWorkflow
 } from './workflow'
 
 function node(over: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -93,6 +95,166 @@ describe('engineOpCapabilities', () => {
     const none = { producesOutputs: false, supportsGate: false, supportsWritableScope: false }
     expect(engineOpCapabilities('')).toEqual(none)
     expect(engineOpCapabilities('totally-unknown-op')).toEqual(none)
+  })
+})
+
+describe('buildAuthorWorkflowSkill', () => {
+  const skill = buildAuthorWorkflowSkill()
+
+  it('覆盖全部引擎操作（单一来源，无遗漏）', () => {
+    for (const op of ENGINE_OPERATIONS) {
+      expect(skill).toContain(op)
+    }
+  })
+
+  it('列出全部执行者类型', () => {
+    for (const kind of ['agent', 'engine', 'command', 'subworkflow']) {
+      expect(skill).toContain(kind)
+    }
+  })
+
+  it('写明分支配对约束（建了分支必须删）', () => {
+    expect(skill).toContain('create-branch')
+    expect(skill).toContain('delete-branch')
+    // 明确点出配对语义，避免 agent 建了不删导致 checkBranchPairing 判无效。
+    expect(skill).toMatch(/配对|必须.*删|删.*分支/)
+  })
+
+  it('教 agent 只输出结构化工作流对象（收尾约定）', () => {
+    expect(skill).toMatch(/workflow/)
+    expect(skill).toMatch(/baseId/)
+    expect(skill).toMatch(/JSON|结构化|只输出/)
+  })
+
+  it('讲清 agent 节点由运行时编程 agent 执行、其自带技能，别写死本地 skill 路径', () => {
+    // 运行时 agent（Claude Code/Codex/Cursor 等）自带其已装技能；作者只写自然语言任务、别臆测技能产物或路径。
+    expect(skill).toMatch(/运行时|执行时/)
+    expect(skill).toMatch(/自带|已装|已安装/)
+    expect(skill).toMatch(/inline/)
+    // 明确 file 只用于包内 skill 文件，别为外部技能臆造路径
+    expect(skill).toMatch(/包内/)
+  })
+
+  it('教多仓目标（target）：引擎 git 操作默认逐涉及仓、可按 tag/仓收窄', () => {
+    expect(skill).toMatch(/多仓|成员仓/)
+    expect(skill).toMatch(/target/)
+    expect(skill).toMatch(/tag/)
+  })
+
+  it('讲清 command/门命令只在主仓跑、不逐仓，别硬编跨仓路径', () => {
+    expect(skill).toMatch(/主仓/)
+    expect(skill).toMatch(/不逐仓|只.*跑一次|只测主仓/)
+    expect(skill).toMatch(/别写死|硬编|--prefix/)
+  })
+
+  it('劝阻脆弱的「必须失败」红门，改用绿门 + 指令里做测试先行', () => {
+    expect(skill).toMatch(/反着判|必须失败/)
+    expect(skill).toMatch(/绿门|通过才/)
+    expect(skill).toMatch(/测试先行|先写测试/)
+  })
+
+  it('reply/description 面向需求、不复述引擎既定机制', () => {
+    expect(skill).toMatch(/面向需求/)
+    expect(skill).toMatch(/不要复述|别复述|复述是噪音/)
+  })
+
+  it('随引擎操作集自动生成——每个操作名都出现（改操作集即改文本）', () => {
+    // 逐一断言即「文本由 ENGINE_OPERATIONS 派生」的可验证代理：任一操作从集合移除，此断言即变。
+    const missing = ENGINE_OPERATIONS.filter((op) => !skill.includes(op))
+    expect(missing).toEqual([])
+  })
+
+  it('不含非法/越界引擎操作（如已废的复合别名不进 skill）', () => {
+    expect(skill).not.toContain('delete-branch-worktree')
+  })
+})
+
+describe('repairWorkflow', () => {
+  /** 修复后必须同时过结构校验与分支配对校验（「直接给合法工作流」的契约）。 */
+  const expectValid = (def: WorkflowDefinition): void => {
+    expect(validateWorkflow(def).ok).toBe(true)
+    expect(checkBranchPairing(def).ok).toBe(true)
+  }
+
+  it('合法工作流原样有效（幂等，不破坏已合法定义）', () => {
+    const def = createDefaultWorkflow('good')
+    const repaired = repairWorkflow(def)
+    expectValid(repaired)
+    expect(repaired.nodes.length).toBe(def.nodes.length)
+  })
+
+  it('建了分支却没删分支 → 自动补一个 delete-branch 节点', () => {
+    const leaky: WorkflowDefinition = {
+      id: 'leaky',
+      name: { zh: '漏分支流' },
+      stages: [{ id: 's1', name: { zh: '准备' } }],
+      nodes: [node({ id: 'cb', stageId: 's1', executor: { kind: 'engine', operation: 'create-branch' } })]
+    }
+    const repaired = repairWorkflow(leaky)
+    expect(repaired.nodes.some((n) => n.executor.kind === 'engine' && n.executor.operation === 'delete-branch')).toBe(true)
+    expectValid(repaired)
+  })
+
+  it('节点 stageId 缺失/越界 → 纠到某个有效阶段', () => {
+    const def: WorkflowDefinition = {
+      id: 'bad-stage',
+      name: { zh: '流' },
+      stages: [{ id: 's1', name: { zh: '开发' } }],
+      nodes: [node({ id: 'n1', stageId: 'nonexistent' })]
+    }
+    const repaired = repairWorkflow(def)
+    expect(repaired.nodes[0].stageId).toBe('s1')
+    expectValid(repaired)
+  })
+
+  it('显示名为空 → 填充后合法', () => {
+    const def = { id: 'no-name', name: {}, stages: [{ id: 's1', name: { zh: '开发' } }], nodes: [] } as unknown as WorkflowDefinition
+    expectValid(repairWorkflow(def))
+  })
+
+  it('无阶段 → 补一个默认阶段并把节点归入它', () => {
+    const def = { id: 'no-stage', name: { zh: '流' }, stages: [], nodes: [node({ id: 'n1', stageId: 'x' })] } as unknown as WorkflowDefinition
+    const repaired = repairWorkflow(def)
+    expect(repaired.stages.length).toBeGreaterThanOrEqual(1)
+    expectValid(repaired)
+  })
+
+  it('执行者非法的节点 → 丢弃（不臆造），其余保留且合法', () => {
+    const def = {
+      id: 'bad-exec',
+      name: { zh: '流' },
+      stages: [{ id: 's1', name: { zh: '开发' } }],
+      nodes: [
+        node({ id: 'ok', stageId: 's1' }),
+        { id: 'broken', name: { zh: '坏' }, stageId: 's1', executor: { kind: 'engine', operation: '' }, outputs: [] }
+      ]
+    } as unknown as WorkflowDefinition
+    const repaired = repairWorkflow(def)
+    expect(repaired.nodes.some((n) => n.id === 'ok')).toBe(true)
+    expect(repaired.nodes.some((n) => n.id === 'broken')).toBe(false)
+    expectValid(repaired)
+  })
+
+  it('非法产出/门/可写范围 → 过滤为合法子集，节点仍在且合法', () => {
+    const def = {
+      id: 'dirty',
+      name: { zh: '流' },
+      stages: [{ id: 's1', name: { zh: '开发' } }],
+      nodes: [
+        {
+          id: 'n1',
+          name: { zh: '实现' },
+          stageId: 's1',
+          executor: { kind: 'agent', instruction: { kind: 'inline', text: '做' } },
+          outputs: [{ destination: { kind: 'file', path: '../escape.md' }, template: { kind: 'none' }, required: true }],
+          writableScope: ['C:\\abs\\path', 'ok/dir'],
+          gate: [{ kind: 'manual', actions: [{ label: '', command: '' }] }]
+        }
+      ]
+    } as unknown as WorkflowDefinition
+    const repaired = repairWorkflow(def)
+    expect(repaired.nodes[0].id).toBe('n1')
+    expectValid(repaired)
   })
 })
 
@@ -205,6 +367,13 @@ describe('validateWorkflow', () => {
   it('agent file 形态：包内相对路径通过', () => {
     const ok = workflow({ nodes: [node({ executor: { kind: 'agent', instruction: { kind: 'file', path: 'skills/review.md' } } })] })
     expect(validateWorkflow(ok)).toEqual({ ok: true })
+  })
+
+  it('agent installed 形态：非空调用名通过、空名判非法', () => {
+    const ok = workflow({ nodes: [node({ executor: { kind: 'agent', instruction: { kind: 'installed', name: 'opsx:explore' } } })] })
+    expect(validateWorkflow(ok)).toEqual({ ok: true })
+    const bad = workflow({ nodes: [node({ executor: { kind: 'agent', instruction: { kind: 'installed', name: '  ' } } })] })
+    expect(validateWorkflow(bad).ok).toBe(false)
   })
 
   it('产出 file 路径非法（绝对/..）判非法', () => {

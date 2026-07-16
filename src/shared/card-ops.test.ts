@@ -63,6 +63,16 @@ describe('normalizeOps（逐条容错收敛）', () => {
     expect((ops[0] as Extract<CardOp, { kind: 'merge' }>).into).toBe('card-a')
     expect(typeof (ops[1] as Extract<CardOp, { kind: 'merge' }>).into).toBe('object')
   })
+
+  it('delete：收敛带 target 者，丢弃缺 target 者', () => {
+    const ops = normalizeOps([
+      { kind: 'delete', target: 'card-a' },
+      { kind: 'delete', target: '  ' }, // 空 target → 丢
+      { kind: 'delete' } // 无 target → 丢
+    ])
+    expect(ops).toHaveLength(1)
+    expect(ops[0]).toEqual({ kind: 'delete', target: 'card-a' })
+  })
 })
 
 describe('validateOps（逐 op 校验 + 破坏性收边）', () => {
@@ -151,5 +161,26 @@ describe('validateOps（逐 op 校验 + 破坏性收边）', () => {
       { kind: 'relate', op: 'add', from: 'card-a', edge: { kind: 'blocked_by', target: 'card-a' } }
     ]
     expect(validateOps(ops, ctx).issues).toHaveLength(1)
+  })
+
+  it('delete 目标为待办卡 → 合法无 issue', () => {
+    const ops: CardOp[] = [{ kind: 'delete', target: 'card-a' }]
+    expect(validateOps(ops, ctx).issues).toEqual([])
+  })
+
+  it('delete 目标不存在 → issue', () => {
+    const ops: CardOp[] = [{ kind: 'delete', target: 'nope' }]
+    const issues = validateOps(ops, ctx).issues
+    expect(issues).toHaveLength(1)
+    expect(issues[0].kind).toBe('delete')
+    expect(issues[0].reason).toMatch(/不存在/)
+  })
+
+  it('delete 目标已离开待办（已跑卡）→ issue', () => {
+    const ops: CardOp[] = [{ kind: 'delete', target: 'running' }]
+    const issues = validateOps(ops, ctx).issues
+    expect(issues).toHaveLength(1)
+    expect(issues[0].kind).toBe('delete')
+    expect(issues[0].reason).toMatch(/待办|已离开|运行/)
   })
 })

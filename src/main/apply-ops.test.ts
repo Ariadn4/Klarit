@@ -77,6 +77,35 @@ describe('applyOps 派发', () => {
     expect(store.get('p1', 'a')?.title).toBe('a') // 未改
   })
 
+  it('delete 已确认 → 删卡、removed 记该卡、清悬挂边', () => {
+    seed(store, ['a', 'b'])
+    store.addRelation({ projectId: 'p1', from: 'a', edge: { kind: 'blocked_by', target: 'b' }, registry: REGISTRY })
+    const ops: CardOp[] = [{ kind: 'delete', target: 'b' }]
+    const res = applyOps(store, { projectId: 'p1', ops, now: NOW, registry: REGISTRY, confirmedDestructive: true })
+    expect(res.issues).toEqual([])
+    expect(res.removed).toContain('b')
+    expect(store.get('p1', 'b')).toBeNull()
+    // a 上指向 b 的悬挂边被清
+    expect(store.get('p1', 'a')?.relations.some((r) => r.target === 'b')).toBe(false)
+  })
+
+  it('delete 未确认 → 跳过并回 issue（不删）', () => {
+    seed(store, ['a'])
+    const ops: CardOp[] = [{ kind: 'delete', target: 'a' }]
+    const res = applyOps(store, { projectId: 'p1', ops, now: NOW, registry: REGISTRY })
+    expect(res.issues[0].reason).toMatch(/二次确认/)
+    expect(store.get('p1', 'a')).not.toBeNull()
+  })
+
+  it('delete 目标已离开待办（已跑卡）→ 记 issue、不删', () => {
+    seed(store, ['a'])
+    store.update('p1', 'a', { status: '进行中', activeRunId: 'r1' })
+    const ops: CardOp[] = [{ kind: 'delete', target: 'a' }]
+    const res = applyOps(store, { projectId: 'p1', ops, now: NOW, registry: REGISTRY, confirmedDestructive: true })
+    expect(res.issues.length).toBeGreaterThan(0)
+    expect(store.get('p1', 'a')).not.toBeNull()
+  })
+
   it('回归：批内 parent/child 互引经 applyOps 仍双向互链（不因逐条落库丢链）', () => {
     // decompose 常产出「容器 + 子卡」批，子卡 parent 指向同批容器、容器 child 指向子卡。
     const ops = createOpsFromCandidates([

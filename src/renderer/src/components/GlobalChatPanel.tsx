@@ -2,25 +2,129 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { BotMessageSquare, Copy, Loader2, Pencil, Plus, RotateCcw, Send, Trash2 } from 'lucide-react'
-import type { CardOp, ConversationMessage, OrchestrationProposal } from '@shared/types'
+import type { CardOp, ConversationMessage, DetectedAgent, OrchestrationProposal, WorkflowProposal, WorkflowSummary } from '@shared/types'
+import type { RulePack } from '@shared/rule-pack'
 import { listSupportedAgents } from '@shared/agents'
 import { useGlobalChatStore } from '../stores/globalChat'
 import { FloatingWindow, MarkdownView } from './NewRequirementFlow'
 import { ProposalReview, describeOp } from './ProposalReview'
+import { WorkflowEditor } from './WorkflowEditor'
 
 const ghostBtn = 'px-2 text-[13px] text-stone-600 hover:text-ink'
 const primaryBtn =
   'inline-flex items-center gap-1 rounded bg-cobalt-500 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600 disabled:opacity-50'
 
-/** 把一条消息整理成可复制的纯文本：用户=文字；agent=回复 + 新项目提议 + 各 op 可读描述。 */
+/** 单语言选一个可读值（复制文本用，无 i18n 上下文）：zh → en → 任意 → 兜底。 */
+function pickText(loc: Record<string, string> | undefined, fallback: string): string {
+  if (!loc) return fallback
+  return loc.zh || loc.en || Object.values(loc)[0] || fallback
+}
+
+/** 把一条消息整理成可复制的纯文本：用户=文字；agent=回复 + 新项目提议 + 工作流提案 + 各 op 可读描述。 */
 export function messageToText(message: ConversationMessage, describe: (op: CardOp) => string): string {
   const parts: string[] = []
   if (message.text?.trim()) parts.push(message.text.trim())
   if (message.proposal) {
     if (message.proposal.suggestedProject) parts.push(`新项目：${message.proposal.suggestedProject.name}`)
+    const wf = message.proposal.workflow
+    if (wf) parts.push(`工作流：${pickText(wf.workflow.name, wf.workflow.id)}`)
     for (const op of message.proposal.ops) parts.push(`• ${describe(op)}`)
   }
   return parts.join('\n')
+}
+
+/**
+ * 工作流提案只读预览 + 存库：按阶段列节点（各带执行者短标签、门标记），有校验问题则列出、禁用存库
+ * （半成品仍显示、不丢弃——供改需求后让 agent 重出）。仅用语义令牌、深浅双主题。
+ */
+function WorkflowProposalReview({
+  wf,
+  messageAt
+}: {
+  wf: WorkflowProposal
+  messageAt: number
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const openPreview = useGlobalChatStore((s) => s.openWorkflowPreview)
+  const saved = useGlobalChatStore((s) => s.savedWorkflowAt.includes(messageAt))
+  return (
+    <div className="w-full rounded border border-stone-300 bg-canvas p-2 text-[13px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-ink">{t('globalChat.workflowProposalTitle')}</span>
+        <div className="flex items-center gap-2">
+          {saved && <span className="text-[12px] text-stone-500">{t('globalChat.workflowSaved')}</span>}
+          <button type="button" onClick={() => openPreview(wf, messageAt)} className={primaryBtn}>
+            {t('globalChat.workflowPreview')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 工作流提案的完整编辑器浮层（草稿态可编辑、顶部保存入库）；复用设置里的 `WorkflowEditor`。 */
+function WorkflowPreviewModal(): React.JSX.Element | null {
+  const { t } = useTranslation()
+  const preview = useGlobalChatStore((s) => s.workflowPreview)
+  const close = useGlobalChatStore((s) => s.closeWorkflowPreview)
+  const markSaved = useGlobalChatStore((s) => s.markWorkflowSaved)
+  const alreadySaved = useGlobalChatStore((s) => (preview ? s.savedWorkflowAt.includes(preview.messageAt) : false))
+  const previewSeq = useGlobalChatStore((s) => s.previewSeq)
+  const [others, setOthers] = useState<WorkflowSummary[]>([])
+  const [detectedAgents, setDetectedAgents] = useState<DetectedAgent[]>([])
+  const [rulePacks, setRulePacks] = useState<RulePack[]>([])
+  // 当前项目激活工作流 id（用于判断这份是否已是激活工作流 → 隐藏「设置为本项目工作流」）。
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!preview) return
+    void window.klarit.listWorkflows().then(setOthers)
+    void window.klarit.scanAgents?.().then((a) => setDetectedAgents(a ?? []))
+    void window.klarit.allRulePacks?.().then((p) => setRulePacks(p ?? []))
+    void window.klarit.getActiveWorkflow?.().then((id) => setActiveWorkflowId(id ?? null))
+  }, [preview])
+  if (!preview) return null
+  // 改写：草稿的 def.id 强制为 baseId（覆盖那个包）；创建：按 def.id 新建。
+  const def = preview.wf.baseId ? { ...preview.wf.workflow, id: preview.wf.baseId } : preview.wf.workflow
+  // 已入库过 → 再次打开读**库里的版本**（含上次编辑），而非重放原始提案草稿（否则编辑会"丢失"）；
+  // 未入库 → 用提案草稿 initialDef 种子。
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-6">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('globalChat.workflowPreview')}
+        className="flex h-full w-full max-w-[900px] flex-col overflow-hidden rounded-card border border-stone-100 bg-paper"
+      >
+        <WorkflowEditor
+          key={previewSeq}
+          workflowId={def.id}
+          initialDef={def}
+          libraryFirst={alreadySaved}
+          chromeless
+          alreadySaved={alreadySaved}
+          footerLabels={{
+            close: t('globalChat.workflowClose'),
+            save: t('globalChat.workflowSaveFormal'),
+            update: t('globalChat.workflowUpdate'),
+            setActive: t('globalChat.workflowSetActive'),
+            setActiveConfirm: t('globalChat.workflowSetActiveConfirm')
+          }}
+          isActive={def.id === activeWorkflowId}
+          onSetActive={async (id) => {
+            await window.klarit.setActiveWorkflow?.(id)
+            markSaved(preview.messageAt)
+            setActiveWorkflowId(id) // 现在它就是激活工作流 → 按钮自动消失（不关浮层，可继续看/改）
+          }}
+          others={others.filter((w) => w.id !== def.id)}
+          detectedAgents={detectedAgents}
+          rulePacks={rulePacks}
+          onClose={close}
+          onSaved={() => markSaved(preview.messageAt)}
+        />
+      </div>
+    </div>,
+    document.body
+  )
 }
 
 /** 全局对话里的提案审阅：把共用呈现组件 `ProposalReview` 接到会话 store（应用/建项目/已应用态）。 */
@@ -97,24 +201,29 @@ function MessageRow({
   }
   const ring = highlighted ? 'ring-2 ring-cobalt-500' : ''
 
+  // agent 提案板（卡操作 / 工作流）与回复文字同置一个气泡内；有提案的气泡放宽些留位。
+  const hasBoard = !isUser && (hasProposalBody || !!proposal?.workflow)
+  const agentBubbleW = hasBoard ? 'max-w-[95%]' : 'max-w-[85%]'
   return (
     <div className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`} onContextMenu={onContextMenu}>
-      {message.text &&
-        (isUser ? (
-          <div className={`max-w-[85%] select-text whitespace-pre-wrap rounded bg-cobalt-100 px-2.5 py-1.5 text-[13px] text-ink ${ring}`}>
-            {message.text}
-          </div>
-        ) : (
-          // agent 回复按 markdown 渲染（标题/列表/代码等），不再给源码。
-          <div className={`max-w-[85%] select-text rounded bg-canvas px-2.5 py-1.5 ${ring}`}>
-            <MarkdownView content={message.text} />
-          </div>
-        ))}
-      {!isUser && hasProposalBody && (
-        <div className={`w-full select-text rounded ${ring}`}>
-          <ConnectedProposalReview proposal={proposal!} messageAt={message.at} />
-        </div>
-      )}
+      {isUser
+        ? message.text && (
+            <div className={`max-w-[85%] select-text whitespace-pre-wrap rounded bg-cobalt-100 px-2.5 py-1.5 text-[13px] text-ink ${ring}`}>
+              {message.text}
+            </div>
+          )
+        : (message.text || hasBoard) && (
+            // agent 回复按 markdown 渲染；提案板（复审/工作流）都放进同一气泡框内。
+            <div className={`${agentBubbleW} select-text rounded bg-canvas px-2.5 py-1.5 ${ring}`}>
+              {message.text && <MarkdownView content={message.text} />}
+              {hasProposalBody && <ConnectedProposalReview proposal={proposal!} messageAt={message.at} />}
+              {proposal?.workflow && (
+                <div className={hasProposalBody ? 'mt-2' : message.text ? 'mt-2' : ''}>
+                  <WorkflowProposalReview wf={proposal.workflow} messageAt={message.at} />
+                </div>
+              )}
+            </div>
+          )}
       {/* 底部操作行：所有消息「复制」；最新用户消息另有「编辑」+「重试」；agent 只有复制。 */}
       <div className="mt-0.5 flex items-center gap-0.5">
         {copyText.trim() !== '' && (
@@ -193,8 +302,14 @@ function ConfirmDialog(): React.JSX.Element | null {
   const applyProposal = useGlobalChatStore((s) => s.applyProposal)
   if (!confirm) return null
   const targets = confirm.ops
-    .filter((o) => o.kind === 'merge' || o.kind === 'split')
-    .map((o) => (o.kind === 'merge' ? o.sources.join('、') : (o as { source: string }).source))
+    .filter((o) => o.kind === 'merge' || o.kind === 'split' || o.kind === 'delete')
+    .map((o) =>
+      o.kind === 'merge'
+        ? o.sources.join('、')
+        : o.kind === 'split'
+          ? o.source
+          : o.target
+    )
     .join('；')
   const content = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
@@ -396,6 +511,7 @@ export default function GlobalChatPanel(): React.JSX.Element | null {
         </div>
       </FloatingWindow>
       <ConfirmDialog />
+      <WorkflowPreviewModal />
       {menu &&
         createPortal(
           <>

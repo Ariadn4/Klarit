@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import type { RunBreakpoint } from '@shared/types'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import type { RunBreakpoint, StoredCard } from '@shared/types'
 import { useCardsStore } from './cards'
 
 function bp(over: Partial<RunBreakpoint>): RunBreakpoint {
@@ -91,5 +91,72 @@ describe('cards store · 后台命令生命周期', () => {
     expect(useCardsStore.getState().backgrounds['r1']).toEqual([
       { bgId: 'b1', nodeId: 'n5', label: 'A', status: 'stopped' }
     ])
+  })
+})
+
+function storedCard(over: Partial<StoredCard> = {}): StoredCard {
+  return {
+    proposedName: 'card-x',
+    title: '卡 X',
+    description: '',
+    typeId: 'feat',
+    relations: [],
+    status: '未开始',
+    createdAt: 0,
+    updatedAt: 0,
+    projectId: 'p1',
+    repos: [],
+    ...over
+  }
+}
+
+describe('cards store · removeCard', () => {
+  beforeEach(() => {
+    useCardsStore.setState({ cards: [], cardTypes: [], runs: {}, detailSlug: null, detailFocus: null })
+  })
+
+  it('调 removeCard(slug) → 走 IPC 删卡、随后 load 刷新', async () => {
+    const removeCard = vi.fn(async () => {})
+    const remaining = storedCard({ proposedName: 'card-y' })
+    const api = {
+      removeCard,
+      listCards: vi.fn(async () => [remaining]),
+      listCardTypes: vi.fn(async () => [])
+    }
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = api
+
+    useCardsStore.setState({ cards: [storedCard({ proposedName: 'card-x' }), remaining] })
+    await useCardsStore.getState().removeCard('card-x')
+
+    expect(removeCard).toHaveBeenCalledWith('card-x', undefined)
+    expect(useCardsStore.getState().cards.map((c) => c.proposedName)).toEqual(['card-y'])
+  })
+
+  it('删的是当前打开详情的卡 → 关闭详情面板', async () => {
+    const api = {
+      removeCard: vi.fn(async () => {}),
+      listCards: vi.fn(async () => []),
+      listCardTypes: vi.fn(async () => [])
+    }
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = api
+
+    useCardsStore.setState({ cards: [storedCard({ proposedName: 'card-x' })], detailSlug: 'card-x' })
+    await useCardsStore.getState().removeCard('card-x')
+
+    expect(useCardsStore.getState().detailSlug).toBeNull()
+  })
+
+  it('删的不是当前详情卡 → 不关闭详情', async () => {
+    const api = {
+      removeCard: vi.fn(async () => {}),
+      listCards: vi.fn(async () => [storedCard({ proposedName: 'other' })]),
+      listCardTypes: vi.fn(async () => [])
+    }
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = api
+
+    useCardsStore.setState({ cards: [storedCard({ proposedName: 'card-x' }), storedCard({ proposedName: 'other' })], detailSlug: 'other' })
+    await useCardsStore.getState().removeCard('card-x')
+
+    expect(useCardsStore.getState().detailSlug).toBe('other')
   })
 })

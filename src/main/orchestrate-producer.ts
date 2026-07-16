@@ -6,6 +6,7 @@
  */
 
 import { normalizeOps } from '../shared/card-ops'
+import { migrateWorkflowShape } from '../shared/workflow'
 import type { OpsProducer, ProducedOps } from './orchestrate-service'
 import type { AgentRunner, AgentRunSpec } from './agent/runner'
 import { launchContinuation } from './agent/continuation'
@@ -29,6 +30,17 @@ export interface OpsProducerConfig {
 
 function stripFences(text: string): string {
   return text.replace(/```[a-zA-Z]*\n?/g, '').replace(/```/g, '')
+}
+
+/**
+ * 收敛 agent 产出的工作流：`workflow` 是对象才成立，经 `migrateWorkflowShape` 归一宽松/旧形状（不在此校验——
+ * 校验由编排核做，非法定义仍带出供「修好再报」）；`baseId` 非空字符串才带上（= 改写覆盖目标）。
+ */
+function coerceProducedWorkflow(wf: unknown, baseId: unknown): ProducedOps['workflow'] {
+  if (!wf || typeof wf !== 'object' || Array.isArray(wf)) return undefined
+  const def = migrateWorkflowShape(wf)
+  const bid = typeof baseId === 'string' && baseId.trim() !== '' ? baseId.trim() : undefined
+  return { workflow: def, baseId: bid }
 }
 
 /** 收敛 suggestedProject：name 非空才成立；描述、工作流 id 可选。 */
@@ -83,11 +95,12 @@ export function parseOpsReply(stdout: string): ProducedOps {
   const obj = parseSlice(body, '{', '}')
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
     const o = obj as Record<string, unknown>
-    if ('reply' in o || 'ops' in o || 'suggestedProject' in o) {
+    if ('reply' in o || 'ops' in o || 'suggestedProject' in o || 'workflow' in o) {
       return {
         ops: normalizeOps(o.ops),
         reply: typeof o.reply === 'string' ? o.reply : undefined,
-        suggestedProject: coerceSuggestedProject(o.suggestedProject)
+        suggestedProject: coerceSuggestedProject(o.suggestedProject),
+        workflow: coerceProducedWorkflow(o.workflow, o.baseId)
       }
     }
   }

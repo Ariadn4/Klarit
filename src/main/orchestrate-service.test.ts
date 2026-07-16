@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import type { CardOp, CardTypeDef, StoredCard } from '../shared/types'
+import type { CardOp, CardTypeDef, StoredCard, WorkflowDefinition } from '../shared/types'
+import { createDefaultWorkflow, workflowSummary } from '../shared/workflow'
 import { createOrchestrateSeam, buildOrchestratePrompt, type OpsProducer, type OrchestrateDeps } from './orchestrate-service'
 
 const TYPES: CardTypeDef[] = [
@@ -154,5 +155,92 @@ describe('createOrchestrateSeam', () => {
     expect(prompt).toContain('新建项目')
     expect(prompt).toContain('"kind": "merge"')
     expect(prompt).toContain('破坏性收边')
+  })
+
+  it('buildOrchestratePrompt：带 authoring → 内联写工作流 skill + 可改写工作流摘要 + 活动工作流基准定义', () => {
+    const active = createDefaultWorkflow('active-flow')
+    const prompt = buildOrchestratePrompt('【BOARD】', '在我的流里加个门', TYPES, false, {
+      summaries: [workflowSummary(active), { id: 'other', name: { zh: '另一个流' } }],
+      activeWorkflow: active
+    })
+    // 写工作流 skill 内联（含引擎操作与 baseId 契约）
+    expect(prompt).toContain('写工作流')
+    expect(prompt).toContain('create-branch')
+    expect(prompt).toContain('baseId')
+    // 可改写工作流摘要（id + 名）
+    expect(prompt).toContain('active-flow')
+    expect(prompt).toContain('另一个流')
+    // 活动工作流的完整定义作基准（注入其 id 供 agent 以此为起点覆盖）
+    expect(prompt).toMatch(/基准|当前工作流|活动工作流/)
+  })
+
+  it('buildOrchestratePrompt：无 authoring / 无活动工作流 → 不崩、正常返回', () => {
+    expect(() => buildOrchestratePrompt('【BOARD】', 'x', TYPES, false)).not.toThrow()
+    const prompt = buildOrchestratePrompt('【BOARD】', 'x', TYPES, false, { summaries: [], activeWorkflow: null })
+    expect(prompt).toContain('【BOARD】')
+  })
+
+  it('buildOrchestratePrompt：多仓项目 → 列出成员仓与标签供按仓组织', () => {
+    const active = createDefaultWorkflow('active-flow')
+    const prompt = buildOrchestratePrompt('【BOARD】', 'x', TYPES, false, {
+      summaries: [workflowSummary(active)],
+      activeWorkflow: active,
+      repos: [
+        { name: 'web', tag: '前端', memberId: 'm-web' },
+        { name: 'api', tag: '后端', memberId: 'm-api' }
+      ]
+    })
+    expect(prompt).toMatch(/多仓|成员仓/)
+    expect(prompt).toContain('web')
+    expect(prompt).toContain('api')
+    expect(prompt).toContain('前端')
+    expect(prompt).toContain('后端')
+  })
+
+  it('工作流提案（合法）→ out.workflow 带定义与 baseId、issues 空', async () => {
+    const def = createDefaultWorkflow('my-flow')
+    const produce: OpsProducer = async () => ({ ops: [], reply: '给你加了个门', workflow: { workflow: def, baseId: 'my-flow' } })
+    const seam = createOrchestrateSeam(deps([card({ proposedName: 'a' })]), produce)
+    const out = await seam.orchestrate({ intent: '改我的流' }, 'p1')
+    if ('unbound' in out) throw new Error('unexpected unbound')
+    expect(out.workflow?.workflow.id).toBe('my-flow')
+    expect(out.workflow?.baseId).toBe('my-flow')
+    expect(out.workflow?.issues).toEqual([])
+  })
+
+  it('工作流提案（分支配对不过）→ 自动修复到合法：补删分支节点、issues 空（直接给合法工作流）', async () => {
+    // 有 create-branch 却无 delete-branch → repairWorkflow 应补一个 delete-branch，使之合法。
+    const leaky: WorkflowDefinition = {
+      id: 'leaky',
+      name: { zh: '漏分支流' },
+      stages: [{ id: 's1', name: { zh: '准备' } }],
+      nodes: [{ id: 'cb', name: { zh: '建分支' }, stageId: 's1', executor: { kind: 'engine', operation: 'create-branch' }, outputs: [] }]
+    }
+    const produce: OpsProducer = async () => ({ ops: [], workflow: { workflow: leaky } })
+    const seam = createOrchestrateSeam(deps([]), produce)
+    const out = await seam.orchestrate({ intent: '做个流' }, 'p1')
+    if ('unbound' in out) throw new Error('unexpected unbound')
+    expect(out.workflow?.issues).toEqual([]) // 修复后合法，无需用户回话调整
+    expect(
+      out.workflow?.workflow.nodes.some((n) => n.executor.kind === 'engine' && n.executor.operation === 'delete-branch')
+    ).toBe(true)
+  })
+
+  it('工作流提案（结构非法：无显示名）→ 自动修复填名、issues 空', async () => {
+    const bad = { id: 'bad', name: {}, stages: [{ id: 's1', name: { zh: '准备' } }], nodes: [] } as unknown as WorkflowDefinition
+    const produce: OpsProducer = async () => ({ ops: [], workflow: { workflow: bad } })
+    const seam = createOrchestrateSeam(deps([]), produce)
+    const out = await seam.orchestrate({ intent: 'x' }, 'p1')
+    if ('unbound' in out) throw new Error('unexpected unbound')
+    expect(out.workflow?.workflow.id).toBe('bad')
+    expect(out.workflow?.issues).toEqual([])
+  })
+
+  it('无工作流意图 → out.workflow 为 undefined（卡编排路径不回归）', async () => {
+    const seam = createOrchestrateSeam(deps([card({ proposedName: 'a' })]), fakeProducer([{ kind: 'adjust', target: 'a', patch: { title: 'x' } }]))
+    const out = await seam.orchestrate({ intent: '改 a' }, 'p1')
+    if ('unbound' in out) throw new Error('unexpected unbound')
+    expect(out.workflow).toBeUndefined()
+    expect(out.ops).toHaveLength(1)
   })
 })

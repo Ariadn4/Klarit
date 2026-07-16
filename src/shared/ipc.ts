@@ -196,6 +196,8 @@ export const IPC = {
   cardsUpdate: 'cards:update',
   /** 删除一张卡（清理其它卡指向它的悬挂边）。 */
   cardsRemove: 'cards:remove',
+  /** 删卡前算每条成员分支的合并状态与 worktree 存在（供确认框展示）。 */
+  cardsBranchCleanupInfo: 'cards:branchCleanupInfo',
   /** 从卡派生运行请求并触发引擎；建立卡↔运行双向链。回 { runId } 或 { error }。 */
   cardsRun: 'cards:run',
   /** 列某卡各成员仓已建出分支的条目（成员仓名 + 实际分支）。 */
