@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { WorkflowDefinition, WorkflowNode } from './types'
+import type { WorkflowDefinition, WorkflowGateItem, WorkflowNode } from './types'
 import {
   isSafeRelativePath,
   validateWorkflow,
@@ -8,6 +8,7 @@ import {
   createRollbackSampleWorkflow,
   createDefaultWorkflow,
   createDefaultWorkflowPr,
+  createRealPrWorkflow,
   workflowSummary,
   migrateWorkflowShape,
   ENGINE_OPERATIONS,
@@ -59,7 +60,7 @@ describe('isSafeRelativePath', () => {
 })
 
 describe('engineOpCapabilities', () => {
-  it('封闭操作集为 8 个 git/worktree/fs 操作', () => {
+  it('封闭操作集为 9 个操作（含平台预制的 open-pr；核查已合并不是操作、是外部门）', () => {
     expect([...ENGINE_OPERATIONS]).toEqual([
       'create-branch',
       'open-worktree',
@@ -68,15 +69,17 @@ describe('engineOpCapabilities', () => {
       'push-branch',
       'remove-worktree',
       'delete-branch',
-      'delete-remote-branch'
+      'delete-remote-branch',
+      'open-pr'
     ])
+    expect([...ENGINE_OPERATIONS]).not.toContain('verify-pr-merged')
   })
 
-  it('除 push-branch 外三项能力皆为否；push-branch 仅 supportsGate 为真', () => {
+  it('产出/可写范围皆否；supportsGate 仅 push-branch 与 open-pr 为真', () => {
     for (const op of ENGINE_OPERATIONS) {
       expect(engineOpCapabilities(op)).toEqual({
         producesOutputs: false,
-        supportsGate: op === 'push-branch',
+        supportsGate: op === 'push-branch' || op === 'open-pr',
         supportsWritableScope: false
       })
     }
@@ -166,6 +169,61 @@ describe('buildAuthorWorkflowSkill', () => {
 
   it('不含非法/越界引擎操作（如已废的复合别名不进 skill）', () => {
     expect(skill).not.toContain('delete-branch-worktree')
+  })
+
+  it('讲清引擎操作是平台预制节点、内部实现可由 agent 支撑', () => {
+    expect(skill).toMatch(/预制|封装/)
+    // open-pr 内部委派 agent 应对各平台差异——作者无需关心内部
+    expect(skill).toMatch(/内部.*agent|agent.*支撑|委派/)
+  })
+
+  it('讲清 open-pr 逐仓、平台无关的面向需求语义', () => {
+    expect(skill).toContain('open-pr')
+    expect(skill).toMatch(/PR|MR/)
+    // 平台无关：不臆造具体平台 CLI（gh/glab）
+    expect(skill).toMatch(/平台无关|各平台|平台/)
+  })
+
+  it('讲清外部门 external：等平台合并、pr-merged、打回即回退', () => {
+    expect(skill).toContain('external')
+    expect(skill).toContain('pr-merged')
+    expect(skill).toMatch(/外部门/)
+    expect(skill).toMatch(/合并/)
+    // 门把三类都出现
+    for (const k of ['auto', 'manual', 'external']) expect(skill).toContain(k)
+  })
+})
+
+describe('external 外部门（门把第三类）', () => {
+  const nodeWithGate = (gate: WorkflowGateItem[]): WorkflowDefinition =>
+    workflow({ nodes: [node({ gate })] })
+
+  it('validateWorkflow 接受合法外部门 { external, pr-merged }', () => {
+    expect(validateWorkflow(nodeWithGate([{ kind: 'external', verify: 'pr-merged' }]))).toEqual({ ok: true })
+  })
+
+  it('validateWorkflow 拒绝空/不支持的 verify', () => {
+    const bad = nodeWithGate([{ kind: 'external', verify: 'bogus' } as unknown as WorkflowGateItem])
+    expect(validateWorkflow(bad).ok).toBe(false)
+  })
+
+  it('repairWorkflow 保留合法外部门、丢非法', () => {
+    const def = repairWorkflow(
+      nodeWithGate([
+        { kind: 'external', verify: 'pr-merged' },
+        { kind: 'external', verify: 'bogus' } as unknown as WorkflowGateItem
+      ])
+    )
+    expect(def.nodes[0].gate).toEqual([{ kind: 'external', verify: 'pr-merged' }])
+  })
+
+  it('migrateWorkflowShape 对合法外部门幂等、丢未知 verify', () => {
+    const migrated = migrateWorkflowShape(nodeWithGate([{ kind: 'external', verify: 'pr-merged' }]))
+    expect(migrated.nodes[0].gate).toEqual([{ kind: 'external', verify: 'pr-merged' }])
+    const dropped = migrateWorkflowShape(
+      nodeWithGate([{ kind: 'external', verify: 'future-kind' } as unknown as WorkflowGateItem])
+    )
+    expect(dropped.nodes[0].gate ?? []).toEqual([])
   })
 })
 
@@ -620,6 +678,36 @@ describe('createDefaultWorkflowPr', () => {
     // push 需求分支节点挂了人工评审门
     const pushFeature = def.nodes.find((n) => n.id === 'push-feature')
     expect(pushFeature?.gate?.[0]?.kind).toBe('manual')
+  })
+
+  describe('createRealPrWorkflow（真 PR：合并在平台上发生）', () => {
+    it('合法、过分支配对，open-pr 挂 external(pr-merged) 门，不含 merge-branch/verify 节点', () => {
+      const def = createRealPrWorkflow('real-pr-1')
+      expect(def.id).toBe('real-pr-1')
+      expect(validateWorkflow(def)).toEqual({ ok: true })
+      expect(checkBranchPairing(def)).toEqual({ ok: true })
+      const ops = def.nodes
+        .filter((n) => n.executor.kind === 'engine')
+        .map((n) => (n.executor as { operation: string }).operation)
+      expect(ops).toContain('open-pr')
+      // 「核查已合并」不再是操作/节点，而是外部门
+      expect(ops).not.toContain('verify-pr-merged')
+      // 真 PR 的本质：合并在平台上发生，Klarit 不本地合并
+      expect(ops).not.toContain('merge-branch')
+      expect(ops).toContain('create-branch')
+      expect(ops).toContain('delete-branch')
+      // open-pr 节点挂了一道 external(pr-merged) 门
+      const openPr = def.nodes.find((n) => n.id === 'open-pr')
+      expect(openPr?.gate?.[0]).toEqual({ kind: 'external', verify: 'pr-merged' })
+    })
+
+    it('节点名双语（zh + en）', () => {
+      const def = createRealPrWorkflow('real-pr-2')
+      for (const n of def.nodes) {
+        expect(n.name.zh?.length ?? 0).toBeGreaterThan(0)
+        expect(n.name.en?.length ?? 0).toBeGreaterThan(0)
+      }
+    })
   })
 
   it('两个默认工作流都通过分支配对校验', () => {

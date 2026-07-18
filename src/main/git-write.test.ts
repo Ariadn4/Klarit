@@ -11,7 +11,8 @@ import {
   deleteBranch,
   mergeBranch,
   pushBranch,
-  deleteRemoteBranch
+  deleteRemoteBranch,
+  checkBranchMerged
 } from './git-write'
 import { listBranches, listWorktrees, makeGitRunner } from './git'
 
@@ -248,5 +249,72 @@ describe('pushBranch / deleteRemoteBranch（本地裸仓当 origin）', () => {
     expect(r.ok).toBe(true)
     const again = await deleteRemoteBranch(run, 'origin', 'feature')
     expect(again.outcome).toBe('noop')
+  })
+})
+
+describe('checkBranchMerged（平台无关的只读合并核查）', () => {
+  it('已并入基分支 → merged，signal=merged-into-base', async () => {
+    const repo = track(initRepo())
+    const bare = track(initBare())
+    git(repo, 'remote', 'add', 'origin', bare)
+    const run = makeAsyncGitRunner(repo)
+    await pushBranch(run, 'origin', 'main')
+    // feature 有新提交，随后并入 main 并推送 main（普通合并）
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    writeFileSync(join(repo, 'f.txt'), 'feature\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'feature commit')
+    git(repo, 'checkout', '-q', 'main')
+    await mergeBranch(run, 'feature')
+    await pushBranch(run, 'origin', 'main')
+    const r = await checkBranchMerged(run, 'origin', 'feature', 'main')
+    expect(r.merged).toBe(true)
+    expect(r.signal).toBe('merged-into-base')
+  })
+
+  it('上游 gone（曾推、远端已删）→ merged，signal=upstream-gone（覆盖 squash）', async () => {
+    const repo = track(initRepo())
+    const bare = track(initBare())
+    git(repo, 'remote', 'add', 'origin', bare)
+    const run = makeAsyncGitRunner(repo)
+    await pushBranch(run, 'origin', 'main')
+    // feature 有新提交、推上远端，但**未**并入 main（模拟 squash 合并：main 不含其提交）
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    writeFileSync(join(repo, 'f.txt'), 'feature\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'feature commit')
+    await pushBranch(run, 'origin', 'feature')
+    git(repo, 'checkout', '-q', 'main')
+    await run(['fetch', 'origin']) // 确保 origin/feature 远程跟踪引用存在
+    // 平台「合并后自动删分支」：远端删掉 feature
+    await deleteRemoteBranch(run, 'origin', 'feature')
+    const r = await checkBranchMerged(run, 'origin', 'feature', 'main')
+    expect(r.merged).toBe(true)
+    expect(r.signal).toBe('upstream-gone')
+  })
+
+  it('既未并入基分支、上游仍在 → not-merged', async () => {
+    const repo = track(initRepo())
+    const bare = track(initBare())
+    git(repo, 'remote', 'add', 'origin', bare)
+    const run = makeAsyncGitRunner(repo)
+    await pushBranch(run, 'origin', 'main')
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    writeFileSync(join(repo, 'f.txt'), 'feature\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'feature commit')
+    await pushBranch(run, 'origin', 'feature')
+    git(repo, 'checkout', '-q', 'main')
+    const r = await checkBranchMerged(run, 'origin', 'feature', 'main')
+    expect(r.merged).toBe(false)
+    expect(r.signal).toBe('not-merged')
+  })
+
+  it('fetch 失败（无远端）以结构化结果表达而非抛错', async () => {
+    const repo = track(initRepo())
+    const run = makeAsyncGitRunner(repo)
+    const r = await checkBranchMerged(run, 'origin', 'feature', 'main')
+    expect(r.merged).toBe(false)
+    expect(r.signal).toBe('no-remote')
   })
 })

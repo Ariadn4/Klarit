@@ -183,6 +183,58 @@ export async function pushBranch(
   ])
 }
 
+/** verify-pr-merged 的只读合并核查结构化结果。 */
+export interface MergeCheckResult {
+  merged: boolean
+  /** 判定依据:已并入基分支 / 上游 gone / 尚未合并 / fetch 失败 / 无远端。 */
+  signal: 'merged-into-base' | 'upstream-gone' | 'not-merged' | 'fetch-failed' | 'no-remote'
+  detail: string
+}
+
+/**
+ * 平台无关地核查 branch 是否已在其托管平台合并——**只用 git,不调任何平台 CLI**。
+ * 先 `fetch --prune`(同步远端最新态、清掉已删远端分支),再据两信号判定「已合并」:
+ *  - **merged-into-base**:branch 的提交已是 `remote/base` 的祖先(普通/快进合并);
+ *  - **upstream-gone**:branch 曾推上远端、其远程跟踪引用现已不存在(对应平台「合并后自动删分支」;
+ *    squash/rebase 合并下唯一稳的信号——此时提交不作祖先出现,靠远端分支被删来判定)。
+ * **只观察**:除 fetch 同步远端引用外,不改动本地分支/工作区/提交。fetch 失败以结构化结果表达(不抛)。
+ * 注:upstream-gone 假定 branch 曾被推送(真 PR 工作流中 verify 前必有 push-branch);
+ * 未推送过的分支不会有远程跟踪引用,判定沿 not-merged 兜底(见下:仅在能确认远端引用「曾在」时才判 gone)。
+ */
+export async function checkBranchMerged(
+  run: AsyncGitRunner,
+  remote: string,
+  branch: string,
+  base: string
+): Promise<MergeCheckResult> {
+  const fetched = await run(['fetch', '--prune', remote])
+  if (fetched.code !== 0) {
+    const hay = `${fetched.stdout}\n${fetched.stderr}`.toLowerCase()
+    const noRemote = [
+      'does not appear to be a git repository',
+      'could not read from remote',
+      'no such remote',
+      'no configured push destination'
+    ].some((n) => hay.includes(n))
+    return {
+      merged: false,
+      signal: noRemote ? 'no-remote' : 'fetch-failed',
+      detail: fetched.stderr || fetched.stdout
+    }
+  }
+  // 信号一:已并入 remote/base(普通/快进合并)。
+  const ancestor = await run(['merge-base', '--is-ancestor', branch, `${remote}/${base}`])
+  if (ancestor.code === 0) {
+    return { merged: true, signal: 'merged-into-base', detail: '' }
+  }
+  // 信号二:远程跟踪引用 gone(曾推、现被平台删——覆盖 squash/rebase)。
+  const remoteRef = await run(['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`])
+  if (remoteRef.code !== 0 || remoteRef.stdout.trim() === '') {
+    return { merged: true, signal: 'upstream-gone', detail: '' }
+  }
+  return { merged: false, signal: 'not-merged', detail: '' }
+}
+
 /** 推送删除远端分支。远端已无该分支 → noop。 */
 export async function deleteRemoteBranch(
   run: AsyncGitRunner,

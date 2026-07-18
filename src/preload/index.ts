@@ -16,6 +16,7 @@ const api: KlaritApi = {
   openProjectFromManage: (projectId) => ipcRenderer.invoke(IPC.openProjectFromManage, projectId),
   importProjectFromManage: () => ipcRenderer.invoke(IPC.manageImportProject),
   showItemInFolder: (path) => ipcRenderer.invoke(IPC.showItemInFolder, path),
+  openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   getAppVersion: () => ipcRenderer.invoke(IPC.getAppVersion),
   relocateMember: (projectId, memberId) =>
     ipcRenderer.invoke(IPC.relocateMember, projectId, memberId),

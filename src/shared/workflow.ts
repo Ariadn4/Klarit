@@ -2,6 +2,7 @@
 
 import type {
   AgentInstruction,
+  ExternalVerify,
   GateCheck,
   NodeExecutor,
   WorkflowDefinition,
@@ -46,8 +47,8 @@ const NO_ENGINE_CAP: EngineOpCapabilities = {
   supportsWritableScope: false
 }
 
-/** push-branch 是天然的人工评审点：唯一支持门把的引擎操作。 */
-const PUSH_ENGINE_CAP: EngineOpCapabilities = {
+/** 支持挂门的引擎操作：push-branch（推送后人工评审点）与 open-pr（其上挂「等平台合并」外部门）。 */
+const GATE_ENGINE_CAP: EngineOpCapabilities = {
   producesOutputs: false,
   supportsGate: true,
   supportsWritableScope: false
@@ -55,7 +56,10 @@ const PUSH_ENGINE_CAP: EngineOpCapabilities = {
 
 /**
  * 引擎内置操作集（封闭操作集）——UI 下拉、校验与引擎执行的单一来源。
- * 8 个均为确定性 git/worktree/fs 动作：产出/可写范围皆否；门把仅 push-branch 为是（推送后可挂人工评审）。
+ * 「引擎操作」是**平台预制的现成节点**：对外统一是 engine 操作，**内部实现可由确定性 git/fs 动作、
+ * 或委派 agent、或跑命令支撑**（封装细节，见 engine 分派）。9 个操作的能力声明：产出/可写范围皆否；
+ * 门把 `push-branch`（推送后人工评审）与 `open-pr`（其上挂「等平台合并」外部门）为是，其余否。
+ * 其中 `open-pr` 内部委派 agent 应对各家平台差异。（「核查已合并」不是操作，而是外部门 `pr-merged` 的过门条件。）
  * 旧 `delete-branch-worktree` 作为**复合别名**仍被识别（执行期 = remove-worktree + delete-branch），
  * 不列入下拉（既有种子包靠 engineOpCapabilities 的回落与 checkBranchPairing 的别名识别保持兼容）。
  */
@@ -64,10 +68,13 @@ const ENGINE_OPERATION_SPECS: Readonly<Record<string, EngineOpCapabilities>> = {
   'open-worktree': NO_ENGINE_CAP,
   'link-env': NO_ENGINE_CAP,
   'merge-branch': NO_ENGINE_CAP,
-  'push-branch': PUSH_ENGINE_CAP,
+  'push-branch': GATE_ENGINE_CAP,
   'remove-worktree': NO_ENGINE_CAP,
   'delete-branch': NO_ENGINE_CAP,
-  'delete-remote-branch': NO_ENGINE_CAP
+  'delete-remote-branch': NO_ENGINE_CAP,
+  // 平台预制节点（内部委派 agent 应对各家平台差异，见 engine 分派）。open-pr 是「等平台合并」外部门的
+  // 天然 host，故 supportsGate 为真。（「核查已合并」不是操作，而是外部门的过门条件，见 workflow-definition。）
+  'open-pr': GATE_ENGINE_CAP
 }
 
 /** 旧复合别名（删 worktree + 删本地分支）；仍被校验与引擎识别，但不进下拉。 */
@@ -75,6 +82,12 @@ export const LEGACY_DELETE_BRANCH_WORKTREE = 'delete-branch-worktree'
 
 /** 操作名数组（下拉与既有引用用），顺序即声明顺序。 */
 export const ENGINE_OPERATIONS = Object.keys(ENGINE_OPERATION_SPECS) as ReadonlyArray<string>
+
+/** 外部门支持的**外部核查种类**（封闭集，UI/校验/skill 单一来源）。v1 仅「PR 已在平台合并」。 */
+export const EXTERNAL_VERIFY_KINDS = ['pr-merged'] as const
+
+/** 门把类型集（写工作流 skill 用，与 WorkflowGateItem 判别支一一对应）。 */
+export const GATE_KINDS = ['auto', 'manual', 'external'] as const
 
 /** 查询某引擎操作的能力声明；未知/空操作回落为三项皆否（保证 UI 显隐逻辑无须特判）。 */
 export function engineOpCapabilities(op: string): EngineOpCapabilities {
@@ -89,12 +102,20 @@ const EXECUTOR_KIND_DOC: Record<NodeExecutor['kind'], string> = {
   subworkflow: 'subworkflow —— 内嵌另一个工作流（workflowId 指向库内工作流）'
 }
 
+/** 少数操作的面向需求语义注解（写工作流 skill 用）——平台预制节点里内部实现特殊者点明其用途，别臆造平台细节。 */
+const ENGINE_OP_NOTES: Readonly<Record<string, string>> = {
+  'open-pr':
+    '在各成员仓所在的托管平台上开 PR/MR——**逐涉及仓、平台无关**（内部委派 agent 认平台并用对的工具，你无需臆造 `gh`/`glab` 等具体平台 CLI）。想「等平台把 PR 合并、合了才收尾」就在它上面挂一道**外部门**（见下），**别配 `merge-branch`**（合并在平台上发生）'
+}
+
 /** 引擎操作能力的可读标注（写工作流 skill 用）。 */
 function engineOpDoc(op: string): string {
   const c = engineOpCapabilities(op)
   const flags: string[] = []
   if (c.supportsGate) flags.push('可挂门（人工评审点）')
-  return flags.length > 0 ? `\`${op}\`（${flags.join('、')}）` : `\`${op}\``
+  const head = flags.length > 0 ? `\`${op}\`（${flags.join('、')}）` : `\`${op}\``
+  const note = ENGINE_OP_NOTES[op]
+  return note ? `${head}：${note}` : head
 }
 
 /**
@@ -121,6 +142,8 @@ ${executors}
 
 ## 引擎操作集（executor.kind = engine 时，operation 只能取这些）
 
+「引擎操作」是**平台预制的现成节点**——你只在下拉里择一、按需调参，**不必关心它内部怎么实现**（是跑 git、还是内部委派 agent、还是跑命令，都是封装细节）。个别操作内部即由 agent 支撑（如 \`open-pr\`），你照常把它当一个引擎节点用即可。
+
 ${engineOps}
 
 ## 分支配对（硬约束，务必遵守）
@@ -129,7 +152,10 @@ ${engineOps}
 
 ## 门（gate）
 
-节点可挂检查项：\`auto\`（自动跑校验命令，可指向本节点某个产出路径）或 \`manual\`（人工评审，带若干动作按钮，每个按钮是 \`{ label, command }\`）。\`push-branch\` 是天然的人工评审点。
+节点可挂检查项，门把三类：
+- \`auto\`（自动校验）：自动跑校验命令、退出码 0 才放行，可指向本节点某个产出路径。
+- \`manual\`（人工评审）：带若干动作按钮（每个 \`{ label, command }\`）；**驳回**——在自由输入写不满意的点——触发内容驱动回退（退回之前节点改）。\`push-branch\` 是天然的人工评审点。
+- \`external\`（外部门）：\`{ "kind": "external", "verify": "pr-merged" }\`。等一个**平台侧的外部状态**达成才过门（v1 只 \`pr-merged\`＝PR 已在平台合并；纯 git 核查、平台无关）。**典型挂在 \`open-pr\` 上**构成真 PR 收尾关口：合了才过门收尾，没合就挂起等人点「开始收尾」再核查；不满意在自由输入写反馈即**打回**（同人工评审门那套回退，改完前向重流自动更新 PR）。别配 \`merge-branch\`。
 
 auto 门是「命令**退出码 0 才放行**」，**没有「反着判」**。所以：
 
@@ -306,8 +332,12 @@ function validateGate(
         const tt = badTimeout(a.timeoutSec)
         if (tt) return `${at}：动作「${a.label}」${tt}`
       }
+    } else if (g?.kind === 'external') {
+      if (!EXTERNAL_VERIFY_KINDS.includes(g.verify as (typeof EXTERNAL_VERIFY_KINDS)[number])) {
+        return `${at}：外部门的核查种类非法（应为 ${EXTERNAL_VERIFY_KINDS.join(' / ')}）：${String(g.verify)}`
+      }
     } else {
-      return `${at}：检查项类型非法（应为 auto 或 manual）`
+      return `${at}：检查项类型非法（应为 auto / manual / external）`
     }
   }
   return null
@@ -531,6 +561,33 @@ export function createDefaultWorkflowPr(id: string): WorkflowDefinition {
 }
 
 /**
+ * 内置默认工作流（真 PR）：前半段同上，交付段为 push 需求分支→在平台开 PR/MR（其上挂一道「等平台合并」外部门）→删 worktree→删本地分支。
+ * **不含 `merge-branch`**——合并在托管平台上发生（评审/CI 也在平台），Klarit 不本地合并；云端分支由平台「合并后自动删分支」清掉。
+ * `open-pr` 内部委派 agent 应对各家平台差异（GitHub/GitLab/…）；外部门 `pr-merged` 用纯 git 信号核查合并、平台无关，未合并挂起等「开始收尾」，打回走内容驱动回退。
+ * 分支配对约束满足（含 `create-branch` 与 `delete-branch`）。
+ */
+export function createRealPrWorkflow(id: string): WorkflowDefinition {
+  return {
+    id,
+    name: L('默认工作流（真 PR）', 'Default workflow (real PR)'),
+    description: L(
+      '需求→交付的真 PR 脊柱：push 需求分支→在平台开 PR/MR→评审与合并在平台上完成→外部门核查已合并→清理。合并不由本地施加。',
+      'Real-PR spine from requirement to delivery: push feature branch → open PR/MR on the platform → review & merge happen on the platform → external gate verifies merged → cleanup. Merge is not applied locally.'
+    ),
+    suggestedTypes: DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
+    stages: DEFAULT_STAGES.map((s) => ({ ...s })),
+    nodes: [
+      ...defaultPrelude(),
+      engineNode('push-feature', L('push 需求分支', 'Push feature branch'), 'deliver', 'push-branch'),
+      // open-pr 上挂「等平台合并」外部门：合了才过门收尾，不满意在自由输入里写反馈即打回改。
+      engineNode('open-pr', L('开 PR/MR', 'Open PR/MR'), 'deliver', 'open-pr', [{ kind: 'external', verify: 'pr-merged' }]),
+      engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
+      engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
+    ]
+  }
+}
+
+/**
  * 内置「验收样例」工作流:专为验证「同节点多命令输出各自分开、各自可中止」而设,含三个节点——
  * ①一个节点两条前台命令(各流几行后退出) ②一个节点两条长驻命令(手动转后台) ③一个人工评审节点带两个动作按钮。
  * 命令用 `node -e` 跨平台最小脚本,不依赖用户装什么(node 随本 app 环境即有)。
@@ -733,6 +790,11 @@ function repairGate(gate: unknown, outputPaths: Set<string>): WorkflowGateItem[]
         ? g.actions.filter((a: unknown) => a && nonEmpty((a as { label?: unknown }).label) && nonEmpty((a as { command?: unknown }).command))
         : []
       out.push({ kind: 'manual', actions })
+    } else if (g?.kind === 'external') {
+      // 外部门：核查种类合法才保留，否则丢弃（不臆造种类）。
+      if (EXTERNAL_VERIFY_KINDS.includes(g.verify as (typeof EXTERNAL_VERIFY_KINDS)[number])) {
+        out.push({ kind: 'external', verify: g.verify as ExternalVerify })
+      }
     }
   }
   return out
@@ -877,6 +939,12 @@ function migrateGateItem(g: unknown): WorkflowGateItem | null {
       }))
     }
     return item
+  }
+  if (g.kind === 'external') {
+    // 外部门：核查种类合法才认，否则丢弃（读到未来才有的种类不崩）。
+    return EXTERNAL_VERIFY_KINDS.includes(g.verify as (typeof EXTERNAL_VERIFY_KINDS)[number])
+      ? { kind: 'external', verify: g.verify as ExternalVerify }
+      : null
   }
   return null
 }

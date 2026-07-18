@@ -87,6 +87,10 @@ export function buildFailureDecision(
       { id: 'skip', labelKey: `${K}.optSkipKeepWorktree` }
     ])
   }
+  if (operation === 'open-pr') {
+    // agent 开 PR 不可用(无默认 agent)——终局失败,给重试/跳过(前进式)。
+    return make(`${K}.openPrNoAgent`, [RETRY, SKIP_NODE], { titleParams: { node: nodeName }, reason: detail || undefined })
+  }
   if (operation === 'merge-branch' && outcome === 'conflict') {
     // heal 超限/不可用才回落到此;`reason`=冲突详情(哪些文件冲突),让用户看到具体是什么冲突。
     return make(`${K}.mergeConflict`, [{ id: 'skip', labelKey: `${K}.optSkipMerge` }], { reason: detail || undefined })
@@ -156,6 +160,33 @@ export function buildManualGateDecision(
     input: { labelKey: `${K}.rejectReason`, placeholderKey: `${K}.rejectReasonPlaceholder` },
     ...(actions && actions.length ? { actions } : {}),
     ...(outputs && outputs.length ? { outputs } : {})
+  }
+}
+
+/**
+ * 外部门（`external`）挂起决策——等平台把 PR 合并。唯一前进选项「开始收尾」＝**再核查一次**（真合了才过门、
+ * 没合就再挂回来，点击不放行）；自由输入框即**打回入口**：写下不满意的点即触发内容驱动回退（同人工评审门那套）。
+ * 不带 reason（状态框）——标题「PR 确认已合并后，点击以进行收尾工作」已足够，`source` 标 `:external-gate` 供 decide 路由。
+ */
+export function buildExternalGateDecision(
+  nodeId: string,
+  _nodeName: string,
+  prLinks?: Array<{ repo?: string; url: string }>,
+  rechecked?: boolean
+): EngineDecision {
+  // open-pr 回报的 PR 链接 → 可点击链接（label=仓名，缺仓名时用「查看 PR」）。
+  const links = (prLinks ?? [])
+    .filter((p) => p && typeof p.url === 'string' && p.url.trim() !== '')
+    .map((p) => ({ label: p.repo || '查看 PR', url: p.url }))
+  return {
+    source: `${nodeId}:external-gate`,
+    sourceKind: 'engine',
+    // 初次挂起给引导语；用户点了「开始收尾」但核查仍未合并 → 换成「检测到尚未合并」的反馈。
+    titleKey: rechecked ? `${K}.prStillNotMerged` : `${K}.prNotMerged`,
+    options: [{ id: 'recheck', labelKey: `${K}.optRecheckMerged`, recommended: true }],
+    // 自由输入框即打回入口（写反馈 → 内容驱动回退，退回之前节点改）。
+    input: { labelKey: `${K}.rejectReason`, placeholderKey: `${K}.rejectReasonPlaceholder` },
+    ...(links.length ? { links } : {})
   }
 }
 

@@ -31,10 +31,11 @@ import type { RulePackItemRef } from '../../shared/rule-pack'
 import { resolveLocalized } from '../../shared/localized'
 import { DEFAULT_LANGUAGE } from '../../shared/language'
 import { listBranches, makeGitRunner } from '../git'
-import { makeAsyncGitRunner, mergeBranch } from '../git-write'
+import { makeAsyncGitRunner, mergeBranch, checkBranchMerged } from '../git-write'
 import { runCommand as realRunCommand, type CommandResult } from '../command-run'
 import { createMemoryOutputBuffer, type OutputBuffer } from './output-buffer'
 import { chunkBucket } from '../../shared/output-bucket'
+import { collectPrLinks } from '../../shared/pr-links'
 import {
   ensureBranch,
   ensureJunction,
@@ -51,6 +52,7 @@ import {
   buildAgentDecision,
   buildCommandFailedDecision,
   buildCommandTimeoutDecision,
+  buildExternalGateDecision,
   buildFailureDecision,
   buildGateDecision,
   buildManualGateDecision,
@@ -331,7 +333,7 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   // 每运行的瞬时(非持久)选项:决策选「强制/先拉再推」后,下一次 executing 透传给 ensure。
-  const transient = new Map<string, { force?: boolean; pullFirst?: boolean }>()
+  const transient = new Map<string, { force?: boolean; pullFirst?: boolean; recheckedGate?: boolean }>()
   const retries = new Map<string, number>() // runId:nodeId → 已重试次数(瞬时失败有限次)
   const MAX_RETRY = 2
   // 「放宽可写范围」一次性豁免：键 `runId:nodeId`；命中时该节点本次越界检测按整条分支可写（不还原、全提交）。
@@ -771,7 +773,8 @@ export function createEngine(deps: EngineDeps): Engine {
   async function runAgentNode(
     bp: RunBreakpoint,
     node: WorkflowNode,
-    a: Active
+    a: Active,
+    opts: { commitChanges?: boolean } = {}
   ): Promise<'done' | 'decided' | 'paused' | 'heal'> {
     if (node.executor.kind !== 'agent' || !prepareAgent) return 'done'
     const derivedAll = bp.members ?? deriveMembers(bp.request)
@@ -876,6 +879,10 @@ export function createEngine(deps: EngineDeps): Engine {
       const all = membersOf(bp.request).map((m) => m.memberId)
       ;(bp.upstreamOutputs ??= {})[node.id] = { repos: hs.repos.filter((r) => all.includes(r)) }
     }
+    // open-pr 回报的 PR/MR 链接：优先结构化 `prs`，再从散文（note/detail）里兜底捞（agent 常把链接塞进 note）。
+    // 持久化到断点，供本节点外部门决策呈现可点击链接（见 buildExternalGateDecision）。
+    const prLinks = collectPrLinks(hs.prs, hs.note, hs.detail)
+    if (prLinks.length) (bp.prLinks ??= {})[node.id] = prLinks
 
     if (hs.status === 'need-decision') {
       raiseDecision(bp, buildAgentDecision(node.id, nodeLabel(node), hs))
@@ -900,6 +907,21 @@ export function createEngine(deps: EngineDeps): Engine {
     }
     // done：越界后置检测 + 每节点提交（按每个目标仓各自成立；无 git 基线则跳过检测）
     const waivedKey = `${bp.runId}:${node.id}`
+    // 外部动作节点（如 open-pr）：**不产生代码提交**。把 worktree 回到节点起始 SHA（丢弃 agent 留下的任何改动），
+    // 保分支尖 = 开 PR 前（已 push/PR）的状态——否则会多出一个没进 PR 的本地提交，让「已合并」核查误判。
+    if (opts.commitChanges === false) {
+      for (const id of memberIds) {
+        const startSha = nodeRun.startSha?.[id]
+        const mwt = derived[id] && existsSync(derived[id].worktreePath) ? derived[id].worktreePath : bp.request.repoPath
+        const wrun = makeAsyncGitRunner(mwt)
+        if (startSha) await wrun(['reset', '--hard', startSha])
+        else await wrun(['checkout', '--', '.'])
+      }
+      scopeWaived.delete(waivedKey)
+      nodeRun.attempts = 0
+      nodeRun.lastFailure = undefined
+      return 'done'
+    }
     const waived = scopeWaived.has(waivedKey)
     const outputPaths = (node.outputs ?? []).map((o) => o.destination.path).filter((p) => !!p)
     const overreach: string[] = []
@@ -1235,11 +1257,54 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /** 重新抛出某节点的人工评审门决策（回退取消 / 判定无果时退回评审门，不丢门）。 */
-  function raiseManualGate(bp: RunBreakpoint, node: WorkflowNode): void {
+  /**
+   * 按当前门把 `kind` 重抛该门的决策(origin-aware)——人工评审门抛「通过/驳回」,外部门抛「开始收尾」。
+   * 供内容驱动回退在「无判定/判无候选/用户取消」时重抛发起它的那道门,不固定回评审门。
+   */
+  function raiseGate(bp: RunBreakpoint, node: WorkflowNode): void {
     const gate = (node.gate ?? [])[bp.phase.kind === 'gate' ? bp.phase.index : 0]
-    const actions = (gate?.kind === 'manual' ? gate.actions ?? [] : []).map((act, i) => ({ label: act.label, index: i }))
-    raiseDecision(bp, buildManualGateDecision(node.id, nodeLabel(node), actions, resolveNodeOutputs(bp, node)))
+    if (gate?.kind === 'external') {
+      raiseDecision(bp, buildExternalGateDecision(node.id, nodeLabel(node), bp.prLinks?.[node.id]))
+    } else {
+      const actions = (gate?.kind === 'manual' ? gate.actions ?? [] : []).map((act, i) => ({ label: act.label, index: i }))
+      raiseDecision(bp, buildManualGateDecision(node.id, nodeLabel(node), actions, resolveNodeOutputs(bp, node)))
+    }
     deps.store.save(bp)
+  }
+
+  /**
+   * 外部门(external)的过门核查:对本节点 target 命中的每个涉及仓核查外部状态达成(v1 `pr-merged` → 只读合并核查,
+   * 平台无关、免平台 CLI)。**全部达成→过门(true)**;任一未达→抛「开始收尾」决策并返回 false(parked)。只观察、不改动本地。
+   */
+  async function runExternalGate(bp: RunBreakpoint, node: WorkflowNode, _verify: string): Promise<boolean> {
+    const d = bp.request
+    const derivedMembers = bp.members ?? deriveMembers(bp.request)
+    const memberIds = resolveTargetMembers(bp, node)
+    for (const id of memberIds) {
+      const md = derivedMembers[id]
+      if (!md) continue
+      const r = await checkBranchMerged(makeAsyncGitRunner(md.repoPath), d.remote ?? 'origin', md.branch, md.baseBranch)
+      emit({
+        kind: 'op-output',
+        runId: bp.runId,
+        nodeId: node.id,
+        outcome: r.merged ? 'noop' : 'pr-not-merged',
+        detail: memberIds.length > 1 ? `[${id}] ${r.signal}` : r.signal
+      })
+      if (!r.merged) {
+        // 若本次是用户点「开始收尾」触发的再核查（一次性标记），标题给出「检测到尚未合并」反馈，而非初次的引导语。
+        const tr = transient.get(bp.runId)
+        const rechecked = !!tr?.recheckedGate
+        if (tr?.recheckedGate) transient.set(bp.runId, { ...tr, recheckedGate: false })
+        raiseDecision(bp, buildExternalGateDecision(node.id, nodeLabel(node), bp.prLinks?.[node.id], rechecked))
+        deps.store.save(bp)
+        return false
+      }
+    }
+    // 达成过门：清掉可能残留的再核查标记。
+    const tr = transient.get(bp.runId)
+    if (tr?.recheckedGate) transient.set(bp.runId, { ...tr, recheckedGate: false })
+    return true
   }
 
   /** 某成员仓两 SHA 间改动文件名（供 deriveLineage）。 */
@@ -1257,7 +1322,7 @@ export function createEngine(deps: EngineDeps): Engine {
    */
   async function runRollbackJudge(bp: RunBreakpoint, node: WorkflowNode, feedback: string, a: Active): Promise<'parked'> {
     if (!prepareHealAgent) {
-      raiseManualGate(bp, node)
+      raiseGate(bp, node)
       return 'parked'
     }
     const key = `${node.id}:rollback-judge`
@@ -1288,7 +1353,7 @@ export function createEngine(deps: EngineDeps): Engine {
       nodeName: nodeLabel(node)
     })
     if (!prep) {
-      raiseManualGate(bp, node)
+      raiseGate(bp, node)
       return 'parked'
     }
     const res = await spawnHealAgent(bp, node.id, hr, prep, wt, hsDir, hsFile, a)
@@ -1302,7 +1367,7 @@ export function createEngine(deps: EngineDeps): Engine {
       .map((o) => ({ nodeId: o.id, nodeName: o.label, reason: o.detail, recommended: o.recommended }))
     if (!candidates.length) {
       // 判定无果（未给候选/给的都不是真实节点）→ 退回评审门让用户再拿捏。
-      raiseManualGate(bp, node)
+      raiseGate(bp, node)
       return 'parked'
     }
     raiseDecision(bp, buildRollbackConfirmDecision(node.id, res.hs?.decision?.title, candidates, feedback))
@@ -1319,7 +1384,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const nodes = nodesOf(bp)
     const kIdx = nodes.findIndex((n) => n.id === targetId)
     if (kIdx < 0) {
-      raiseManualGate(bp, gateNode)
+      raiseGate(bp, gateNode)
       return Promise.resolve(persist(bp))
     }
     // 为 K..N 重置越界/提交基线（保留 session 以续接、保留 prompt 观测），清各自门重试日志。
@@ -1433,6 +1498,23 @@ export function createEngine(deps: EngineDeps): Engine {
             const gates = node.gate ?? []
             setPhase(bp, node, gates.length ? { kind: 'gate', index: 0 } : { kind: 'done' })
           }
+        } else if (node.executor.kind === 'engine' && opOf(node) === 'open-pr') {
+          // 平台预制节点,内部委派 agent:开 PR/MR 依赖异构托管平台(GitHub/GitLab/…),交给 agent
+          // 认平台、用对的 CLI/API、逐涉及仓各开自己的 PR、回报链接。无可用 agent = 终局失败(非静默跳过)。
+          if (!prepareAgent) {
+            raiseDecision(bp, buildFailureDecision(node.id, nodeLabel(node), 'open-pr', 'no-agent', '未配置可用的默认 agent,无法开 PR'))
+            break
+          }
+          // open-pr 是「开 PR」外部动作,不该产生代码提交(commitChanges:false → 跑完丢弃 worktree 改动、不提交)。
+          const r = await runAgentNode(bp, openPrAgentNode(node), a, { commitChanges: false })
+          if (r === 'paused') {
+            bp.state = 'paused'
+            break
+          }
+          if (r === 'decided') break
+          if (r === 'heal') continue
+          const gates = node.gate ?? []
+          setPhase(bp, node, gates.length ? { kind: 'gate', index: 0 } : { kind: 'done' })
         } else if (node.executor.kind === 'engine') {
           const res = await runEngineOp(bp, node, a)
           if (res.outcome === 'heal-parked') {
@@ -1485,6 +1567,15 @@ export function createEngine(deps: EngineDeps): Engine {
         if (gate.kind === 'manual') {
           const actions = (gate.actions ?? []).map((act, i) => ({ label: act.label, index: i }))
           raiseDecision(bp, buildManualGateDecision(node.id, nodeLabel(node), actions, resolveNodeOutputs(bp, node)))
+          break
+        }
+        if (gate.kind === 'external') {
+          // 外部门:进门核查外部状态(v1 pr-merged)。达成→过门;未达成→挂起弹「开始收尾」(决策已抛)。
+          const passed = await runExternalGate(bp, node, gate.verify)
+          if (passed) {
+            setPhase(bp, node, { kind: 'gate', index: k + 1 })
+            continue
+          }
           break
         }
         // 客观门:解析命令(inline 裸命令 / ref 规则库条目)后真跑。
@@ -1682,10 +1773,17 @@ export function createEngine(deps: EngineDeps): Engine {
           return drive(bp, a)
         }
 
-        // 人工评审门驳回（写了驳回意见）→ 新起只读回退判定 agent（内容驱动回退）。留空 + 通过走下面的 'pass'。
-        if (node && decided.source.endsWith(':manual-gate') && freeText) {
+        // 门（人工评审门 / 外部门）打回（写了反馈）→ 新起只读回退判定 agent（内容驱动回退）。留空走下面：评审门 'pass'、外部门再核查。
+        if (node && (decided.source.endsWith(':manual-gate') || decided.source.endsWith(':external-gate')) && freeText) {
           await runRollbackJudge(bp, node, freeText, a)
           return persist(bp)
+        }
+
+        // 外部门「开始收尾」（无自由文本）→ 再核查本门（phase 仍停在该 gate 索引，drive 重跑 runExternalGate：达成过门、未达成再挂起）。
+        if (node && decided.source.endsWith(':external-gate')) {
+          // 标记「本次是用户主动再核查」，供 runExternalGate 未达成时给出「检测到尚未合并」反馈而非初次引导语。
+          transient.set(bp.runId, { ...transient.get(bp.runId), recheckedGate: true })
+          return drive(bp, a)
         }
 
         // 回退确认决策：换说法→重判；取消→退回评审门；选目标节点→重入前向修复。
@@ -1695,7 +1793,7 @@ export function createEngine(deps: EngineDeps): Engine {
             return persist(bp)
           }
           if (!optionId || optionId === 'cancel-rollback') {
-            raiseManualGate(bp, node)
+            raiseGate(bp, node)
             return persist(bp)
           }
           return reenterFromRollback(bp, node, optionId, decided.raw ?? '', a)
@@ -1961,6 +2059,24 @@ export function createEngine(deps: EngineDeps): Engine {
 
 function opOf(node: WorkflowNode): string {
   return node.executor.kind === 'engine' ? node.executor.operation : node.executor.kind
+}
+
+/**
+ * `open-pr` 引擎操作的内置委派指令——喂给一个 agent(经 prepareAgent 拼装,自带涉及仓布局 + 需求卡上下文)。
+ * 平台无关:让 agent 自己认平台、用对的工具;逐涉及仓各开一个 PR/MR;幂等靠「先查再开」;缺工具/未登录经握手说清。
+ */
+const OPEN_PR_INSTRUCTION =
+  '在本需求涉及的**每个仓库**里,为当前工作分支在其所在的代码托管平台上开一个 PR / MR(合并请求):\n' +
+  '- **逐仓**:每个涉及仓各开自己的一个 PR/MR,目标为该仓主线分支。\n' +
+  '- **平台无关**:先判断每个仓用的是哪个平台(看 remote 地址——GitHub / GitLab / Bitbucket / Gitea / 自建等),再用该平台对应的方式开(如 GitHub 用 `gh`、GitLab 用 `glab`,或调其 API)。\n' +
+  '- **幂等**:开之前先查该分支是否已有开着的 PR/MR,已有就**不要重复开**。\n' +
+  '- **标题与正文**:据本需求卡的标题与描述,写清这个 PR 做了什么。\n' +
+  '- **缺工具/未登录别硬试**:若某平台 CLI 缺失或未登录(如 `gh` 未安装 / 未 `gh auth login`),通过握手把「缺什么、需要用户做什么」说清楚,不要瞎试。\n' +
+  '- **回报链接**:完成后把每个仓开出的 PR/MR 链接写进**握手文件的 `prs` 字段**(数组,每项 `{ "repo": 仓名, "url": 网址 }`),供用户在界面上点开查看。'
+
+/** 把一个 `open-pr` 引擎节点包装成等价的 agent 节点(保留 id/名/阶段/target),供 runAgentNode 委派执行。 */
+function openPrAgentNode(node: WorkflowNode): WorkflowNode {
+  return { ...node, executor: { kind: 'agent', instruction: { kind: 'inline', text: OPEN_PR_INSTRUCTION } } }
 }
 
 function isTransient(outcome: string): boolean {

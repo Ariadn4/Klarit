@@ -337,11 +337,16 @@ export type GateCheck =
   | { kind: 'inline'; command: string }
   | { kind: 'ref'; ref: RulePackItemRef }
 
+/** 外部门等待的**外部核查种类**（v1 仅「PR 已在平台合并」；未来可扩展别的外部状态）。 */
+export type ExternalVerify = 'pr-merged'
+
 /**
  * 一道检查项（判别联合）：
  * - `auto` 客观自动校验：一个校验（命令行或引用条目）+ 可选校验目标（指向本节点产出路径，空＝整体检查）。
  * - `manual` 人工评审：可选零或多个动作按钮（每个含文案 + 命令）。
- * 两类均不带「说明」——命令/按钮文案本身即自描述。
+ * - `external` 外部门：等一个 Klarit 控制不了的外部状态（`verify`，v1=`pr-merged`）达成才过门；未达成挂起等待
+ *   （现由用户点「开始收尾」触发再核查、将来可接平台 webhook），打回复用人工评审门的内容驱动回退。不带命令/按钮。
+ * 三类均不带「说明」——命令/按钮/核查本身即自描述。
  */
 export type WorkflowGateItem =
   | {
@@ -352,6 +357,7 @@ export type WorkflowGateItem =
       timeoutSec?: number
     }
   | { kind: 'manual'; actions?: GateAction[] }
+  | { kind: 'external'; verify: ExternalVerify }
 
 /**
  * 节点的目标仓选择（判别联合）——该节点的引擎操作作用于哪些成员仓。解析基准是运行所绑卡的涉及仓
@@ -820,6 +826,11 @@ export interface EngineDecision {
    */
   outputs?: Array<{ name: string; path: string }>
   /**
+   * 决策附带的**可点击外部链接**（label + url）：渲染层列成链接，点击用系统浏览器打开（经 IPC `shell:openExternal`）。
+   * 如外部门决策带 `open-pr` 回报的 PR/MR 链接，供用户在确认合并前点开查看。
+   */
+  links?: Array<{ label: string; url: string }>
+  /**
    * 客观门重试升级时携带的历史（每次失败的原因与重跑粒度），供渲染层按 i18n 展示，让用户据情判断。
    */
   gateHistory?: GateAttempt[]
@@ -921,6 +932,8 @@ export interface AgentHandshake {
   decision?: { title?: string; options?: AgentHandshakeOption[]; multi?: boolean; freeInput?: boolean }
   /** 本节点涉及的成员仓判定（填 `upstreamOutputs[nodeId].repos` 供下游 fromUpstream 收窄）。 */
   repos?: string[]
+  /** `open-pr` 回报的 PR/MR 链接（逐涉及仓，`repo` 为仓名/id、`url` 为可跳转网址）。引擎持久化并在外部门决策上呈现。 */
+  prs?: Array<{ repo?: string; url: string }>
   /** 给人看的小结（写入需求卡活现状）。 */
   note?: string
   /** 失败详情（供 `failed` 自愈回喂）。 */
@@ -993,6 +1006,11 @@ export interface RunBreakpoint {
    */
   upstreamOutputs?: Record<string, NodeStructuredOutput>
   /**
+   * `open-pr` 节点回报的 PR/MR 链接：键为节点 id，值为逐涉及仓的 `{ repo?, url }`。持久化使恢复后仍可见；
+   * 外部门决策据此呈现可点击链接（见 engine-execution）。
+   */
+  prLinks?: Record<string, Array<{ repo?: string; url: string }>>
+  /**
    * 每个 agent 节点的执行态（续接 token / 自愈计数 / 每目标仓起始与提交 SHA）：键为节点 id。
    * 持久化使续接与崩溃恢复稳定。见 agent-execution。
    */
@@ -1051,6 +1069,7 @@ export interface KlaritApi {
   importProjectFromManage: () => Promise<ImportOutcome | null>
   /** 在系统文件管理器中定位某路径。 */
   showItemInFolder: (path: string) => Promise<void>
+  openExternal: (url: string) => Promise<void>
   /** 读取应用版本号。 */
   getAppVersion: () => Promise<string>
   /** 弹目录选择，为缺失成员重新定位到新路径。 */

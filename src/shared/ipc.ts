@@ -19,6 +19,8 @@ export const IPC = {
   manageImportProject: 'manage:import',
   /** 在系统文件管理器中定位某路径。 */
   showItemInFolder: 'shell:showItemInFolder',
+  /** 用系统默认浏览器打开一个外部网址（如 PR/MR 链接）。 */
+  openExternal: 'shell:openExternal',
   /** 读取应用版本号。 */
   getAppVersion: 'app:getVersion',
   listDir: 'fs:listDir',

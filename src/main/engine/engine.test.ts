@@ -6,6 +6,7 @@ import { makeGitRunner } from '../git'
 import type { EngineProgressEvent, RunBreakpoint, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps } from './engine'
 import { createMemoryRunStore } from './run-store'
+import type { AgentRunner } from '../agent/runner'
 
 const trash = makeTrash()
 afterEach(() => trash.cleanup())
@@ -45,6 +46,15 @@ function withOrigin(repo: string): string {
   const bare = trash.track(initBare())
   git(repo, 'remote', 'add', 'origin', bare)
   return bare
+}
+
+/** 最小 agent 运行器桩：成功退出、不产改动（供外部门打回的回退判定 agent 等用）。 */
+function stubAgentRunner(): AgentRunner {
+  return {
+    supportsResume: () => true,
+    start: () => ({ kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }),
+    resume: () => ({ kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) })
+  }
 }
 
 describe('全生命周期(本地直合 mini smoke)', () => {
@@ -664,5 +674,225 @@ describe('多仓兼容与恢复', () => {
     expect(resumed.members).toEqual(before)
     expect(resumed.members?.A.baseBranch).toBe('main')
     expect(resumed.members?.B.baseBranch).toBe('main')
+  })
+})
+
+describe('external 外部门（等平台合并 / 开始收尾 / 打回回退）', () => {
+  const EXT: WorkflowNode['gate'] = [{ kind: 'external', verify: 'pr-merged' }]
+  function seedFeature(repo: string): void {
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    writeFileSync(join(repo, 'f.txt'), 'feature\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'feature work')
+    git(repo, 'checkout', '-q', 'main')
+  }
+
+  it('平台已合并 → 外部门过门 → done', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'merge', '-q', '--no-edit', 'feature') // 模拟平台已合并
+    git(repo, 'push', '-q', 'origin', 'main')
+    const def = wf([engineNode('create-branch', EXT)])
+    const engine = createEngine(deps(def))
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('done')
+  })
+
+  it('尚未合并 → waiting-decision，source `:external-gate`，含前进式「开始收尾」(recheck)', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'push', '-q', 'origin', 'feature') // 推上但未合并
+    const def = wf([engineNode('create-branch', EXT)])
+    const engine = createEngine(deps(def))
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    const d = bp.pendingDecision!
+    expect(d.source.endsWith(':external-gate')).toBe(true)
+    expect(d.sourceKind).toBe('engine')
+    const ids = d.options.map((o) => o.id)
+    expect(ids).not.toContain('abort')
+    expect(ids).toContain('recheck')
+    expect(d.input).toBeTruthy() // 打回入口（自由输入框）
+  })
+
+  it('开始收尾以核查为准：未合并时点 recheck → 再次挂起（不盲信）；合并后 → 过门 done', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'push', '-q', 'origin', 'feature')
+    const def = wf([engineNode('create-branch', EXT)])
+    const engine = createEngine(deps(def))
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    // 还没合并就点「开始收尾」→ 再核查判未达成 → 再次挂起（不放行），且标题换成「检测到尚未合并」反馈
+    const again = await engine.decide(bp.runId, { optionId: 'recheck' }).settled
+    expect(again.state).toBe('waiting-decision')
+    expect(again.pendingDecision!.source.endsWith(':external-gate')).toBe(true)
+    expect(again.pendingDecision!.titleKey).toBe('engineDecision.prStillNotMerged')
+    // 现在平台合并 → 点「开始收尾」→ 过门 done
+    git(repo, 'merge', '-q', '--no-edit', 'feature')
+    git(repo, 'push', '-q', 'origin', 'main')
+    const done = await engine.decide(again.runId, { optionId: 'recheck' }).settled
+    expect(done.state).toBe('done')
+  })
+
+  it('open-pr 回报 PR 链接 → 持久化 + 外部门决策带可点击 links', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'push', '-q', 'origin', 'feature') // 推上但未合并 → 外部门会挂起
+    const def = wf([engineNode('open-pr', EXT)])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: stubAgentRunner(),
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const, prs: [{ repo: 'app', url: 'https://github.com/me/app/pull/7' }] })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    // open-pr 回报的链接被持久化
+    const anyLinks = Object.values(bp.prLinks ?? {}).flat()
+    expect(anyLinks).toContainEqual({ repo: 'app', url: 'https://github.com/me/app/pull/7' })
+    // 外部门决策把它呈现成可点击 links（label=仓名、url=网址）
+    expect(bp.pendingDecision?.links).toEqual([{ label: 'app', url: 'https://github.com/me/app/pull/7' }])
+  })
+
+  it('兜底：agent 把 PR 链接写进 note（非 prs）也能捞出并呈现', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'push', '-q', 'origin', 'feature')
+    const def = wf([engineNode('open-pr', EXT)])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: stubAgentRunner(),
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        // 没有结构化 prs，链接藏在 note 散文里
+        readHandshake: () => ({ status: 'done' as const, note: '已开 PR：https://github.com/o/app/pull/1（待合并）' })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.pendingDecision?.links).toEqual([{ label: '查看 PR', url: 'https://github.com/o/app/pull/1' }])
+  })
+
+  it('open-pr 不产生代码提交：agent 留下的 worktree 改动被丢弃、HEAD 不变（免得多出没进 PR 的本地提交）', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    git(repo, 'checkout', '-q', '-b', 'feature')
+    writeFileSync(join(repo, 'f.txt'), 'feature\n')
+    git(repo, 'add', '-A')
+    git(repo, 'commit', '-q', '-m', 'feature work')
+    git(repo, 'push', '-q', 'origin', 'feature')
+    const tipBefore = git(repo, 'rev-parse', 'HEAD')
+    // agent 在 worktree（cwd）里乱改文件，模拟 open-pr agent 留下改动
+    const dirtyRunner: AgentRunner = {
+      supportsResume: () => true,
+      start: (spec) => {
+        writeFileSync(join(spec.cwd, 'f.txt'), 'dirtied by open-pr agent\n')
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      },
+      resume: () => ({ kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) })
+    }
+    const def = wf([engineNode('open-pr', EXT)])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: dirtyRunner,
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(tipBefore) // 没多出提交
+    expect(git(repo, 'status', '--porcelain')).toBe('') // agent 改动被丢弃、worktree 干净
+    expect(bp.state).toBe('waiting-decision') // 外部门（feature 未合并）挂起
+  })
+
+  it('打回：外部门自由文本 → 内容驱动回退(判定 agent)，非就地处置', async () => {
+    const repo = trash.track(initRepo())
+    withOrigin(repo)
+    git(repo, 'push', '-q', 'origin', 'main')
+    seedFeature(repo)
+    git(repo, 'push', '-q', 'origin', 'feature')
+    // 固定 id 节点：prep（可被 judge 提名回退）+ 挂外部门的 gated。
+    const prep: WorkflowNode = { id: 'prep', name: { zh: '准备' }, stageId: 's', executor: { kind: 'engine', operation: 'create-branch' }, outputs: [] }
+    const gated: WorkflowNode = { id: 'gated', name: { zh: '关口' }, stageId: 's', executor: { kind: 'engine', operation: 'create-branch' }, outputs: [], gate: EXT }
+    const judgeHs = { status: 'need-decision' as const, decision: { title: '根因在准备', options: [{ id: 'prep', label: '准备', recommended: true }] } }
+    const engine = createEngine(
+      deps(wf([prep, gated]), {
+        runAgent: stubAgentRunner(),
+        prepareHealAgent: () => ({ prompt: 'JUDGE', toolId: 'claude-code' }),
+        readHandshake: () => judgeHs
+      })
+    )
+    const atGate = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(atGate.pendingDecision?.source).toBe('gated:external-gate')
+    // 在外部门自由输入写反馈 → 走内容驱动回退（判定 → 回退确认），而非就地处置
+    const confirm = await engine.decide(atGate.runId, { text: '这段要改' }).settled
+    expect(confirm.state).toBe('waiting-decision')
+    expect(confirm.pendingDecision?.source).toBe('gated:rollback-confirm')
+    expect(confirm.pendingDecision?.options.map((o) => o.id)).toContain('prep')
+  })
+})
+
+describe('open-pr（平台预制节点，内部委派 agent）', () => {
+  /** 最小 agent 运行器桩：记录被喂的 prompt，直接成功退出。 */
+  function stubRunner(): AgentRunner & { calls: number } {
+    const r = {
+      calls: 0,
+      supportsResume: () => true,
+      start(): ReturnType<AgentRunner['start']> {
+        r.calls++
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      },
+      resume(): ReturnType<AgentRunner['resume']> {
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      }
+    }
+    return r
+  }
+
+  it('委派 agent 开 PR：prepareAgent 收到 agent+inline 指令、跑到 done', async () => {
+    const repo = trash.track(initRepo())
+    let seen: WorkflowNode | null = null
+    const runner = stubRunner()
+    const def = wf([engineNode('open-pr')])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: runner,
+        prepareAgent: (node) => {
+          seen = node
+          return { prompt: 'X', toolId: 'claude-code' }
+        },
+        readHandshake: () => ({ status: 'done' })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('done')
+    expect(runner.calls).toBe(1) // 确实委派了一个 agent
+    expect(seen!.executor.kind).toBe('agent')
+    const instr = (seen!.executor as { instruction?: { kind: string; text?: string } }).instruction
+    expect(instr?.kind).toBe('inline')
+    expect(instr?.text ?? '').toMatch(/PR|MR|合并请求/)
+  })
+
+  it('无可用 agent（未注入 prepareAgent）→ 终局失败抛决策，不静默跳过', async () => {
+    const repo = trash.track(initRepo())
+    const events: EngineProgressEvent[] = []
+    const def = wf([engineNode('open-pr')])
+    const engine = createEngine(deps(def, { emit: (e) => events.push(e) }))
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    expect(bp.pendingDecision?.sourceKind).toBe('engine')
+    // 不是被当作「未落地执行器」静默跳过
+    expect(events.some((e) => e.kind === 'skip')).toBe(false)
   })
 })

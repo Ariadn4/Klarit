@@ -64,7 +64,7 @@ import {
   unlinkMember as unlinkMemberCore
 } from './registry-core'
 import { createWorkflowStore } from './workflow-store'
-import { createAcceptanceSampleWorkflow, createDefaultWorkflow, createDefaultWorkflowPr, createRollbackSampleWorkflow } from '../shared/workflow'
+import { createAcceptanceSampleWorkflow, createDefaultWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
 import { createGlobalSkillStore } from './global-skill-store'
@@ -690,6 +690,11 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.showItemInFolder, (_e, path: string) => {
     shell.showItemInFolder(path)
+  })
+
+  // 用系统浏览器打开外部网址（PR/MR 链接）——只放行 http(s)，挡住 file:// 等本地协议。
+  ipcMain.handle(IPC.openExternal, (_e, url: string) => {
+    if (typeof url === 'string' && /^https?:\/\//i.test(url.trim())) shell.openExternal(url.trim())
   })
 
   ipcMain.handle(IPC.getAppVersion, (): string => app.getVersion())
@@ -1505,10 +1510,11 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = settings.appearance ?? DEFAULT_APPEARANCE
   // 系统明暗变化时（仅「跟随系统」会改变 shouldUseDarkColors）广播新生效主题。
   nativeTheme.on('updated', broadcastTheme)
-  // 库为空时种入两个内置默认工作流（本地直合 + PR 模式）。
+  // 库为空时种入三个内置默认工作流（本地直合 + PR 模式 + 真 PR）。
   if (workflows.list().length === 0) {
     workflows.save(createDefaultWorkflow(randomUUID()))
     workflows.save(createDefaultWorkflowPr(randomUUID()))
+    workflows.save(createRealPrWorkflow(randomUUID()))
   }
   // 「验收样例」按稳定 id 幂等种入（库非空也补，便于随时验收）。
   const ACCEPTANCE_WF_ID = 'acceptance-sample-multicmd'

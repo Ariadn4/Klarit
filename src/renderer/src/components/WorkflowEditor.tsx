@@ -1071,12 +1071,15 @@ function GateEditor({
                       i,
                       e.target.value === 'auto'
                         ? { kind: 'auto', check: { kind: 'inline', command: '' }, targets: [] }
-                        : { kind: 'manual', actions: [{ label: '', command: '' }] }
+                        : e.target.value === 'external'
+                          ? { kind: 'external', verify: 'pr-merged' }
+                          : { kind: 'manual', actions: [{ label: '', command: '' }] }
                     )
                   }
                 >
                   <option value="auto">{t('workflowEditor.autoCheck')}</option>
                   <option value="manual">{t('workflowEditor.manualReview')}</option>
+                  <option value="external">{t('workflowEditor.externalGate')}</option>
                 </select>
                 <button
                   type="button"
@@ -1169,7 +1172,7 @@ function GateEditor({
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : g.kind === 'manual' ? (
                 <FieldGroup
                   title={t('workflowEditor.actionButtons')}
                   hint={t('workflowEditor.actionButtonsHint')}
@@ -1234,6 +1237,9 @@ function GateEditor({
                     </div>
                   )}
                 </FieldGroup>
+              ) : (
+                // 外部门：v1 只等「PR 已在平台合并」，无可编辑字段，给一句自描述。
+                <p className="text-[12px] leading-relaxed text-stone-600">{t('workflowEditor.externalGateHint')}</p>
               )}
             </div>
           ))}

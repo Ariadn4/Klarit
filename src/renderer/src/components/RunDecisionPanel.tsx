@@ -104,6 +104,29 @@ export function RunDecisionPanel({
         </div>
       )}
 
+      {/* 可点击外部链接（如 open-pr 回报的 PR/MR 链接）——显示**裸 URL**：可点开（系统浏览器），也可选中复制自行打开。 */}
+      {decision.links && decision.links.length > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          <span className="text-[10px] font-medium text-stone-600">{t('engineDecision.prLinks')}</span>
+          {decision.links.map((l) => (
+            <div key={l.url} className="flex items-baseline gap-1.5">
+              {/* 仓名前缀只在多仓（多个链接）时显示以区分；单仓不加，避免噪音。 */}
+              {decision.links!.length > 1 && l.label && l.label !== l.url && (
+                <span className="shrink-0 text-[11px] text-stone-500">{l.label}</span>
+              )}
+              <button
+                type="button"
+                onClick={() => void window.klarit.openExternal(l.url)}
+                title={t('engineDecision.openInBrowser')}
+                className="select-text break-all text-left font-mono text-[12px] text-cobalt-600 underline underline-offset-2 hover:text-cobalt-700"
+              >
+                {l.url}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* 选项：可选中（单选 ◉/○、多选 ☑/☐），不即点即生效；详情常显在选项下方（不藏悬浮）。 */}
       <div className="mt-2 flex flex-col gap-1.5">
         {decision.options.map((opt) => {

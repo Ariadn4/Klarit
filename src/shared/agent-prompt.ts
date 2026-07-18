@@ -93,6 +93,7 @@ export function engineProtocolBody(handshakePath?: string): string {
     '- `status`：`"done"`（已完成）/ `"need-decision"`（需用户拍板才能继续）/ `"failed"`（失败，附 `detail`）。',
     '- `decision`（仅 `need-decision`）：`{ "title": 背景说明, "options": [{ "id", "label", "detail"?, "recommended"? }], "multi"?: 是否多选, "freeInput"?: 是否允许用户自由输入 }`。需要用户拍板时**停下并写它、然后退出**，不要自行臆断。',
     '- `repos`（可选）：本任务实际涉及的成员仓标识列表，供引擎给下游节点收窄目标仓。',
+    '- `prs`（可选）：开 PR/MR 类任务回报的链接，数组，每项 `{ "repo"?: 仓名, "url": 网址 }`，供引擎呈现可点击链接。',
     '- `note`（可选）：一句话小结，会写入需求卡活现状。',
     '你的 stdout 只用于向用户实时展示进度，引擎**不**解析它来判断状态——结构化意图一律走握手文件。'
   ].join('\n')
