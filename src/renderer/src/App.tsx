@@ -42,6 +42,30 @@ export function App(): React.JSX.Element {
   const cards = useCardsStore((s) => s.cards)
   const cardTypes = useCardsStore((s) => s.cardTypes)
   const runs = useCardsStore((s) => s.runs)
+  const detailSlug = useCardsStore((s) => s.detailSlug)
+
+  // 打开详情时联动 git 视图（判据 viewState 在本组件）：用 ref 读最新 viewState，
+  // 但只在 detailSlug 变化（开卡）时触发——绝不因用户手动切 git 视图（viewState 变）而反抢回来。
+  const viewStateRef = useRef(viewState)
+  useEffect(() => {
+    viewStateRef.current = viewState
+  }, [viewState])
+  useEffect(() => {
+    if (!detailSlug) return
+    let alive = true
+    void window.klarit.cardBranches(detailSlug).then((branches) => {
+      // 门控与卡面一致：仅当已建出分支才联动；默认取第一个成员仓（Q3 首仓）。
+      if (!alive || branches.length === 0) return
+      const first = branches[0]
+      const vs = viewStateRef.current
+      // 侧栏已在显示该 (成员仓, 分支) → 不打扰，保持当前 git 视图上下文。
+      if (vs.view === 'git' && vs.gitMemberId === first.memberId && vs.gitBranch === first.branch) return
+      void window.klarit.focusCardGitView(detailSlug, first.memberId)
+    })
+    return () => {
+      alive = false
+    }
+  }, [detailSlug])
 
   const refresh = useCallback(async (): Promise<void> => {
     const [cur, list] = await Promise.all([

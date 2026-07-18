@@ -5,6 +5,7 @@ import { App } from './App'
 import type { Project, WorkflowDefinition } from '@shared/types'
 import { useFileViewerStore } from './stores/fileViewer'
 import { useNewRequirementStore } from './stores/newRequirement'
+import { useCardsStore } from './stores/cards'
 
 interface KlaritMock {
   getSidebarWidth: ReturnType<typeof vi.fn>
@@ -33,6 +34,9 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     onEngineProgress: vi.fn(() => () => {}),
     onGitViewFocus: vi.fn(() => () => {}),
     getRunState: vi.fn(async () => null),
+    cardBranches: vi.fn(async () => []),
+    focusCardGitView: vi.fn(async () => {}),
+    setGitWatchPath: vi.fn(async () => {}),
     listCards: vi.fn(async () => []),
     listCardTypes: vi.fn(async () => []),
     listConversations: vi.fn(async () => []),
@@ -57,6 +61,8 @@ beforeEach(() => {
   installKlarit()
   useFileViewerStore.setState({ tabs: [], activePath: null, popupOpen: false })
   useNewRequirementStore.getState().cancel()
+  // 详情态跨用例会驱动「开卡联动 git 视图」副作用，逐用例复位避免泄漏。
+  useCardsStore.setState({ cards: [], runs: {}, detailSlug: null, detailFocus: null })
 })
 
 function workflow(stages: { id: string; name: string }[]): WorkflowDefinition {
@@ -185,6 +191,60 @@ describe('App 需求看板', () => {
     const create = await screen.findByRole('button', { name: '新建需求' })
     await userEvent.click(create)
     expect(await screen.findByText('描述想法')).toBeInTheDocument()
+  })
+})
+
+describe('App 打开详情联动 git 视图', () => {
+  beforeEach(() => {
+    useCardsStore.setState({ cards: [], runs: {}, detailSlug: null, detailFocus: null })
+  })
+
+  it('打开有分支的卡且侧栏未显示该分支 → 切到 git 视图（传首仓 memberId）', async () => {
+    const api = installKlarit({
+      cardBranches: vi.fn(async () => [{ memberId: 'A', name: 'web', branch: 'feat/x' }]),
+      focusCardGitView: vi.fn(async () => {})
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    act(() => {
+      useCardsStore.getState().openDetail('add-thing')
+    })
+    await waitFor(() => expect(api.focusCardGitView).toHaveBeenCalledWith('add-thing', 'A'))
+  })
+
+  it('侧栏已在显示该（成员仓, 分支）→ 不重复切换', async () => {
+    let gitFocusCb: ((req: { repoId: string; branch: string }) => void) | undefined
+    const api = installKlarit({
+      onGitViewFocus: vi.fn((cb: (req: { repoId: string; branch: string }) => void) => {
+        gitFocusCb = cb
+        return () => {}
+      }),
+      cardBranches: vi.fn(async () => [{ memberId: 'A', name: 'web', branch: 'feat/x' }]),
+      focusCardGitView: vi.fn(async () => {})
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    // 先把侧栏确定性地置为 git/A/feat/x（走既有 onGitViewFocus 通道）。
+    act(() => gitFocusCb?.({ repoId: 'A', branch: 'feat/x' }))
+    act(() => {
+      useCardsStore.getState().openDetail('add-thing')
+    })
+    await waitFor(() => expect(api.cardBranches).toHaveBeenCalledWith('add-thing'))
+    expect(api.focusCardGitView).not.toHaveBeenCalled()
+  })
+
+  it('打开未建分支的卡 → 不联动切换', async () => {
+    const api = installKlarit({
+      cardBranches: vi.fn(async () => []),
+      focusCardGitView: vi.fn(async () => {})
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    act(() => {
+      useCardsStore.getState().openDetail('add-thing')
+    })
+    await waitFor(() => expect(api.cardBranches).toHaveBeenCalledWith('add-thing'))
+    expect(api.focusCardGitView).not.toHaveBeenCalled()
   })
 })
 

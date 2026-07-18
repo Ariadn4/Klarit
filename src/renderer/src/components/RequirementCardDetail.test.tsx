@@ -1,11 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { CardTypeDef, RunBreakpoint, StoredCard } from '@shared/types'
+import type {
+  CardTypeDef,
+  NodeExecutor,
+  RunBreakpoint,
+  StoredCard,
+  WorkflowDefinition,
+  WorkflowNode
+} from '@shared/types'
 import { RequirementCardDetail } from './RequirementCardDetail'
 import { useCardsStore } from '../stores/cards'
 
 const TYPES: CardTypeDef[] = [{ id: 'feat', name: 'Feat', description: '', archetype: 'leaf' }]
+
+const commandExec: NodeExecutor = { kind: 'command', commands: [{ command: 'npm test' }] }
+function wfNode(id: string, executor: NodeExecutor, name = id): WorkflowNode {
+  return { id, name: { zh: name }, stageId: 's1', executor, outputs: [] }
+}
+function workflow(): WorkflowDefinition {
+  return { id: 'w', name: { zh: 'W' }, stages: [{ id: 's1', name: { zh: '开发' } }], nodes: [wfNode('n1', commandExec, '跑测试')] }
+}
 
 function card(over: Partial<StoredCard> = {}): StoredCard {
   return {
@@ -45,6 +60,8 @@ function installKlarit(extra: Record<string, unknown> = {}): Record<string, Retu
     runCard: vi.fn(async () => ({ runId: 'r1' })),
     removeCard: vi.fn(async () => {}),
     cardBranchCleanupInfo: vi.fn(async () => []),
+    cardBranches: vi.fn(async () => []),
+    focusCardGitView: vi.fn(async () => {}),
     listCards: vi.fn(async () => []),
     listCardTypes: vi.fn(async () => TYPES),
     copyText: vi.fn(async () => {}),
@@ -89,6 +106,81 @@ describe('RequirementCardDetail · header 运行主控图标化', () => {
     const resumeBtn = screen.getByLabelText('恢复')
     await userEvent.click(resumeBtn)
     expect(api.resumeRun).toHaveBeenCalledWith('r1')
+  })
+})
+
+describe('RequirementCardDetail · 头部运行进度', () => {
+  it('运行中 → 头部显示运行进度（圆点 + 节点文案 + 细状态），与卡面一致', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => workflow()) })
+    seed(card({ activeRunId: 'r1' }), { r1: bp({ state: 'running', currentNodeId: 'n1' }) })
+    render(<RequirementCardDetail />)
+    // RunStatusLine 的标签 span 与运行圆点是同一 flex 行的兄弟：圆点带 rounded-full。
+    const label = await screen.findByText('跑测试（工作中）')
+    const dot = label.parentElement?.querySelector('span.rounded-full')
+    expect(dot).not.toBeNull()
+    expect(dot?.className).toContain('dot-breathe') // 运行中呼吸态
+  })
+
+  it('头部不再出现「状态 · 预取名」文字行（不显 proposedName）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => workflow()) })
+    seed(card({ activeRunId: 'r1' }), { r1: bp({ state: 'running', currentNodeId: 'n1' }) })
+    render(<RequirementCardDetail />)
+    await screen.findByText('跑测试（工作中）')
+    // 预取名 add-thing 不再作为文字标识出现在面板任何处
+    expect(document.body.textContent).not.toContain('add-thing')
+  })
+
+  it('无运行卡 → 头部回落生命周期状态文案', () => {
+    installKlarit()
+    seed(card({ status: '未开始' }))
+    render(<RequirementCardDetail />)
+    const label = screen.getByText('未开始')
+    // 无运行不渲染运行圆点
+    expect(label.parentElement?.querySelector('span.rounded-full')).toBeNull()
+  })
+})
+
+describe('RequirementCardDetail · 主控 loading 过渡', () => {
+  it('点击主控后到兑现前呈 loading（转圈 + 禁用），兑现后复位', async () => {
+    let resolvePause: (bp: RunBreakpoint) => void = () => {}
+    const pending = new Promise<RunBreakpoint>((r) => {
+      resolvePause = r
+    })
+    installKlarit({ pauseRun: vi.fn(() => pending) })
+    seed(card({ activeRunId: 'r1' }), { r1: bp({ state: 'running' }) })
+    render(<RequirementCardDetail />)
+    await userEvent.click(screen.getByLabelText('暂停'))
+    // 兑现前：仍是暂停主控，但禁用且显示转圈
+    const btn = screen.getByLabelText('暂停')
+    expect(btn).toBeDisabled()
+    expect(btn.querySelector('.animate-spin')).not.toBeNull()
+    // 兑现
+    await act(async () => {
+      resolvePause(bp({ state: 'paused' }))
+      await pending
+    })
+    // 复位：变为恢复主控且不再禁用
+    await waitFor(() => expect(screen.getByLabelText('恢复')).not.toBeDisabled())
+  })
+})
+
+describe('RequirementCardDetail · 已建分支条目', () => {
+  it('已建分支 → 详情展示可点条目，点击跳 git 视图（传其 memberId）', async () => {
+    const api = installKlarit({
+      cardBranches: vi.fn(async () => [{ memberId: 'A', name: 'web', branch: 'feat/x' }])
+    })
+    seed(card({ activeRunId: 'r1', repos: ['A'] }), { r1: bp({ state: 'running' }) })
+    render(<RequirementCardDetail />)
+    await userEvent.click(await screen.findByText('web/feat/x'))
+    expect(api.focusCardGitView).toHaveBeenCalledWith('add-thing', 'A')
+  })
+
+  it('未建分支 → 不展示条目', async () => {
+    installKlarit({ cardBranches: vi.fn(async () => []) })
+    seed(card({ activeRunId: 'r1', repos: ['A'] }), { r1: bp({ state: 'running' }) })
+    render(<RequirementCardDetail />)
+    await waitFor(() => expect(window.klarit.cardBranches).toHaveBeenCalled())
+    expect(screen.queryByText('web/feat/x')).toBeNull()
   })
 })
 

@@ -7,9 +7,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Play, Pause, Trash2, X } from 'lucide-react'
+import { Play, Pause, Trash2, X, Loader2 } from 'lucide-react'
 import type { BranchCleanupItem, WorkflowDefinition } from '@shared/types'
 import { RunDecisionPanel } from './RunDecisionPanel'
+import { RunStatusLine } from './RunStatusLine'
+import { CardBranchChips } from './CardBranchChips'
 import { CardConsultPanel } from './CardConsultPanel'
 import { CommandOutputView } from './CommandOutputView'
 import { CopyButton } from './CopyButton'
@@ -32,6 +34,8 @@ export function RequirementCardDetail(): React.JSX.Element | null {
   const runCard = useCardsStore((s) => s.runCard)
   const removeCard = useCardsStore((s) => s.removeCard)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // 运行主控异步过渡：点击到引擎兑现（拿到新断点）之间转圈 + 禁用，杜绝「点了没反应」的空窗。
+  const [mainPending, setMainPending] = useState(false)
   const [cleanupInfo, setCleanupInfo] = useState<BranchCleanupItem[] | null>(null)
   const [recycleBranches, setRecycleBranches] = useState(false)
   const backgrounds = useCardsStore((s) =>
@@ -124,11 +128,11 @@ export function RequirementCardDetail(): React.JSX.Element | null {
 
   // header 运行主控（play/pause 同位切换）：可运行→运行；已暂停→恢复(play)；进行中/等待决策→暂停。
   const mainControl = canRun
-    ? { icon: <Play size={15} />, label: t('board.run'), onClick: () => void run() }
+    ? { icon: <Play size={15} />, label: t('board.run'), action: run }
     : state === 'paused'
-      ? { icon: <Play size={15} />, label: t('board.resume'), onClick: () => void resume() }
+      ? { icon: <Play size={15} />, label: t('board.resume'), action: resume }
       : state === 'running' || state === 'waiting-decision'
-        ? { icon: <Pause size={15} />, label: t('board.pause'), onClick: () => void pause() }
+        ? { icon: <Pause size={15} />, label: t('board.pause'), action: pause }
         : null
 
   // 卡有未完成运行（活跃且未到终局）：删除会级联中止该运行——确认提示据此加一句。
@@ -149,15 +153,38 @@ export function RequirementCardDetail(): React.JSX.Element | null {
                 </span>
               )}
             </div>
+            {/* 运行进度：与卡面完全一致的圆点 + 节点文案 + 细状态；无运行回落生命周期状态。 */}
             <div className="mt-0.5 text-[11px] text-stone-600">
-              {t(`board.status.${(state && runStateToCardStatus(state)) || card.status}`)} · {card.proposedName}
+              <RunStatusLine
+                breakpoint={bp}
+                workflow={wf}
+                fallbackStatus={(state && runStateToCardStatus(state)) || card.status}
+              />
+            </div>
+            {/* 已建分支条目（与卡面同口径）：点条目切 git 视图定位其分支 worktree（无则空态）。 */}
+            <div className="mt-1 empty:mt-0">
+              <CardBranchChips card={card} breakpoint={bp} />
             </div>
           </div>
           {/* header 操作图标排：运行主控（▶/⏸，随状态切换）· 删除（🗑，与关闭留间距防误点）· 关闭（✕）。 */}
           <div className="flex shrink-0 items-center gap-0.5">
             {mainControl && (
-              <button type="button" aria-label={mainControl.label} title={mainControl.label} onClick={mainControl.onClick} className={iconBtn}>
-                {mainControl.icon}
+              <button
+                type="button"
+                aria-label={mainControl.label}
+                title={mainControl.label}
+                disabled={mainPending}
+                onClick={async () => {
+                  setMainPending(true)
+                  try {
+                    await mainControl.action()
+                  } finally {
+                    setMainPending(false)
+                  }
+                }}
+                className={`${iconBtn} disabled:cursor-default disabled:opacity-60`}
+              >
+                {mainPending ? <Loader2 size={15} className="animate-spin" /> : mainControl.icon}
               </button>
             )}
             <button
