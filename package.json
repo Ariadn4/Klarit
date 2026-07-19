@@ -2,6 +2,7 @@
   "name": "klarit",
   "version": "0.1.0",
   "description": "需求驱动的项目管理应用——你描述要什么，它接管从需求到交付的全过程。",
+  "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "author": "Klarit",
   "main": "./out/main/index.js",
