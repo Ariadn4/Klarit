@@ -12,6 +12,13 @@ const OUTPUT_CAP = 20000
 /** 输出桶缓冲键。 */
 export const outputKey = (runId: string, bucket: string): string => `${runId}::${bucket}`
 
+/**
+ * `load()` 的单调序号（防并发竞态）：每次 load 领一个递增号,异步取数返回后仅当自己仍是**最后一次** load 才写入。
+ * 否则(已被更晚的 load 取代)丢弃——避免"较早发起、较晚返回、携陈旧数据"的 load 覆盖较新状态
+ * (自动排程并发启动多张卡时,引擎事件触发多次并发 load,尤易踩中)。
+ */
+let loadSeq = 0
+
 /** 后台命令的终态：运行中 / 用户中止 / 自行退出 / 超时被杀。终态项保留到用户点「清除」才移除。 */
 export type BgStatus = 'running' | 'stopped' | 'exited' | 'timeout'
 export interface BgEntry {
@@ -63,6 +70,7 @@ export const useCardsStore = create<CardsState>((set, get) => ({
   detailFocus: null,
 
   load: async () => {
+    const seq = ++loadSeq
     const [cards, cardTypes] = await Promise.all([
       window.klarit.listCards(),
       window.klarit.listCardTypes()
@@ -77,6 +85,8 @@ export const useCardsStore = create<CardsState>((set, get) => ({
           if (bp) runs[bp.runId] = bp
         })
     )
+    // 已被更晚的 load 取代 → 丢弃本次陈旧结果,不覆盖较新状态。
+    if (seq !== loadSeq) return
     set({ cards, cardTypes, runs })
   },
 

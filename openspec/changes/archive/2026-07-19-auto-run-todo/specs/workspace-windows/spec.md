@@ -1,8 +1,5 @@
-# workspace-windows Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-project-sidebar. Update Purpose after archive.
-## Requirements
 ### Requirement: 在新窗口打开项目
 
 当用户从项目切换器、或从管理项目窗口选择一个项目时，系统 SHALL 按如下优先级决定打开落点：
@@ -38,16 +35,3 @@ TBD - created by archiving change add-project-sidebar. Update Purpose after arch
 #### Scenario: 选择当前项目不重复开窗
 - **WHEN** 用户选择当前窗口已绑定的项目
 - **THEN** 系统不新建窗口，将该窗口聚焦置前
-
-### Requirement: 启动恢复上次会话
-
-系统 SHALL 在关闭软件时记录当时打开的窗口及各窗口绑定的项目。下次启动软件时 MUST 默认恢复上次关闭时的会话——重新打开上次的项目窗口集合。当此前从未成功打开过任何项目时，启动 MUST 进入「导入新项目」的初始状态。
-
-#### Scenario: 重开恢复上次的项目
-- **WHEN** 用户上次关闭软件时打开着项目 A（及可能的其它窗口），随后重新启动软件
-- **THEN** 系统重新打开上次会话的窗口集合，并各自绑定回原项目
-
-#### Scenario: 从未打开过项目时的首启
-- **WHEN** 用户首次启动软件、此前从未成功打开任何项目
-- **THEN** 软件进入「导入新项目」的初始状态，不尝试恢复任何项目
-

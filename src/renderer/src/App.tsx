@@ -120,6 +120,15 @@ export function App(): React.JSX.Element {
     })
     refresh()
     refreshActiveWorkflow()
+    // 本窗口被主进程绑定到（新）项目（如从管理窗口打开、或导入复用本空窗口）→ 重拉项目/卡/工作流，离开空状态。
+    const offBound = window.klarit.onProjectBound(() => {
+      void refresh()
+      void refreshActiveWorkflow()
+    })
+    // 主进程侧卡片链变化（自动排程异步起卡等）→ 重载卡片，使看板实时反映（不必等引擎事件/手动刷新）。
+    const offCards = window.klarit.onCardsChanged(() => {
+      void useCardsStore.getState().load()
+    })
     const offTree = window.klarit.onFileTreeChange(() => setRefreshKey((k) => k + 1))
     // 引擎运行进度：流式输出按桶累积；其余事件回灌断点；状态/后台变化重载卡（卡状态在主进程跟随更新）。
     const offEngine = window.klarit.onEngineProgress((evt) => {
@@ -157,6 +166,8 @@ export function App(): React.JSX.Element {
     })
     return () => {
       offTheme()
+      offBound()
+      offCards()
       offTree()
       offEngine()
       offGitFocus()

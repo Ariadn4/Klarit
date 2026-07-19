@@ -1165,6 +1165,10 @@ export interface KlaritApi {
   getEffectiveTheme: () => Promise<EffectiveTheme>
   /** 订阅生效主题变更（切外观或系统明暗变化时触发）；返回取消订阅函数。 */
   onThemeChange: (handler: (theme: EffectiveTheme) => void) => () => void
+  /** 本窗口被主进程绑定到（新）项目时触发：渲染层据此离开空状态、重拉当前项目/卡/工作流。 */
+  onProjectBound: (handler: () => void) => () => void
+  /** 主进程侧卡片链变化（尤其自动排程异步启动卡后）时触发：渲染层据此重载卡片，使看板实时反映。 */
+  onCardsChanged: (handler: () => void) => () => void
   /** 最小化当前窗口。 */
   minimizeWindow: () => Promise<void>
   /** 最大化/还原当前窗口。 */

@@ -15,6 +15,10 @@ export const IPC = {
   manageClose: 'manage:close',
   /** 管理项目窗口里点项目：统一打开落点后关闭管理窗口。 */
   openProjectFromManage: 'manage:openProject',
+  /** 主进程把一个既有窗口绑定到项目后推给该窗口渲染层：触发重启（离开空状态、拉取新项目）。 */
+  projectBound: 'project:bound',
+  /** 主进程侧卡片链变化（尤其自动排程异步启动卡后）→ 广播给所有窗口，渲染层据此重载卡片。 */
+  cardsChanged: 'cards:changed',
   /** 管理项目窗口里「打开本地项目」：选目录导入并打开。 */
   manageImportProject: 'manage:import',
   /** 在系统文件管理器中定位某路径。 */

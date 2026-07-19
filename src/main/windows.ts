@@ -44,6 +44,11 @@ export interface WindowManagerOptions {
   /** 新建一个 BrowserWindow（含 preload、尺寸、并加载渲染层）。 */
   newWindow: (state: WindowState | null) => BrowserWindow
   serviceDeps: ProjectServiceDeps
+  /**
+   * 把一个**既有**窗口绑定到项目后回调（新开窗口不走此路——它自加载即读到项目）。
+   * 用于通知该窗口渲染层重启：否则复用空窗口时主进程改了绑定、渲染层仍停在空状态 → 空屏。
+   */
+  notifyBound?: (win: BrowserWindow) => void
 }
 
 /** 每窗口绑定一个项目，管理多窗口、（多成员仓）文件监听、磁盘对账与会话快照。 */
@@ -170,7 +175,7 @@ export class WindowManager {
     return this.openProject(projectId)
   }
 
-  /** 把一个空状态窗口绑定到刚导入的项目（导入流程复用当前窗口）。 */
+  /** 把一个空状态窗口绑定到刚导入/选中的项目（复用当前窗口）。绑定后通知渲染层重启（否则停在空状态→空屏）。 */
   bindWindow(win: BrowserWindow, projectId: string): void {
     const ctx = this.ctxs.get(win.id)
     if (!ctx) return
@@ -178,6 +183,7 @@ export class WindowManager {
     this.maybeRebind(projectId)
     ctx.projectId = projectId
     this.startWatch(ctx)
+    this.opts.notifyBound?.(win)
   }
 
   /** 项目成员变化后（关联/解绑/重定位）重启监听并刷新渲染层。 */

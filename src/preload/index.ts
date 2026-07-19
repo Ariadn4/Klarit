@@ -80,6 +80,16 @@ const api: KlaritApi = {
     ipcRenderer.on(IPC.themeChanged, listener)
     return () => ipcRenderer.removeListener(IPC.themeChanged, listener)
   },
+  onProjectBound: (handler) => {
+    const listener = (): void => handler()
+    ipcRenderer.on(IPC.projectBound, listener)
+    return () => ipcRenderer.removeListener(IPC.projectBound, listener)
+  },
+  onCardsChanged: (handler) => {
+    const listener = (): void => handler()
+    ipcRenderer.on(IPC.cardsChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.cardsChanged, listener)
+  },
   minimizeWindow: () => ipcRenderer.invoke(IPC.windowMinimize),
   toggleMaximizeWindow: () => ipcRenderer.invoke(IPC.windowMaximizeToggle),
   closeWindow: () => ipcRenderer.invoke(IPC.windowClose),

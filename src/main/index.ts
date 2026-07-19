@@ -80,6 +80,7 @@ import {
 } from '../shared/card-type'
 import { createCardStore } from './card-store'
 import { deriveRunRequest } from './card-run'
+import { createAutoScheduler, type AutoScheduler } from './auto-scheduler'
 import { cardBranchesView } from './card-branches'
 import { createOutputBuffer } from './engine/output-buffer'
 import { createDecomposeSeam } from './global-agent'
@@ -147,7 +148,11 @@ const engine = createEngine({
       if (!win.isDestroyed()) win.webContents.send(IPC.engineProgress, evt)
     }
     // 运行状态变化 → 跟随更新其绑定卡的生命周期状态（按 activeRunId 反查所属卡）。
-    if (evt.kind === 'state') reconcileCardForRun(evt.runId, evt.state)
+    if (evt.kind === 'state') {
+      reconcileCardForRun(evt.runId, evt.state)
+      // 运行**完成**腾出槽位 → 触发该卡所属项目自动排程补位。只 `done` 触发；paused/waiting/aborted 不补。
+      if (evt.state === 'done') scheduleEvaluate(projectOfRun(evt.runId))
+    }
   },
   // 客观门 ref 形态:把 {packId,itemId} 解析为 objective-check 条目的命令(缺失返回 null,引擎按缺失处理)。
   getObjectiveCheck: (ref) => {
@@ -188,6 +193,68 @@ function reconcileCardForRun(runId: string, state: string): void {
       return
     }
   }
+}
+
+// ── 待办自动排程：每项目一个常驻回路（懒建、缓存），把有资格待办卡自动拉起、自动并发上限 3 ──
+
+/** 某运行归属的项目 id（按 activeRunId 反查所属卡）；找不到返回 null。 */
+function projectOfRun(runId: string): string | null {
+  for (const p of registry.projects) {
+    if (cardStore.list(p.id).some((c) => c.activeRunId === runId)) return p.id
+  }
+  return null
+}
+
+/** 广播「卡片链已变」给所有窗口（渲染层据此重载卡片）。用于主进程侧的**异步**卡变更(尤其自动排程启动卡)。 */
+function broadcastCardsChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC.cardsChanged)
+  }
+}
+
+/**
+ * 启动一张卡的运行（**手动与自动共用的单一接缝**）：派生运行请求 → engine.start → 建卡↔运行双向链、卡进「进行中」。
+ * 前置缺失（项目不存在 / 无法派生）返回可读错误。置卡链后广播 `cardsChanged`——自动排程异步起卡时,
+ * 引擎运行事件不刷卡状态(node-enter 只回灌断点、初始 running 无 state 变更),故显式让渲染层重载,否则看板停留「未开始」。
+ */
+function startCardRun(pid: string, card: StoredCard): { runId: string } | { error: string } {
+  const project = findProjectById(registry, pid)
+  if (!project) return { error: '项目不存在' }
+  const derived = deriveRunRequest(card, project)
+  if (!derived.ok) return { error: derived.reason }
+  const launched = engine.start(derived.request)
+  cardStore.update(pid, card.proposedName, { activeRunId: launched.runId, status: '进行中', updatedAt: Date.now() })
+  broadcastCardsChanged()
+  return { runId: launched.runId }
+}
+
+const autoSchedulers = new Map<string, AutoScheduler>()
+function schedulerFor(pid: string): AutoScheduler {
+  let s = autoSchedulers.get(pid)
+  if (!s) {
+    s = createAutoScheduler({
+      listCards: () => cardStore.list(pid),
+      getProject: () => findProjectById(registry, pid) ?? null,
+      getRegistry: () => typeArchetypeMap(getProjectCardTypes(registry, pid)),
+      canDerive: (card, project) => deriveRunRequest(card, project).ok,
+      // 单一真相来源：运行仍活（running/paused/waiting-decision 占槽），done/aborted/未知不占。
+      isRunLive: (runId) => {
+        const st = engine.getRunState(runId)?.state
+        return st === 'running' || st === 'paused' || st === 'waiting-decision'
+      },
+      startCard: (card) => {
+        startCardRun(pid, card)
+      },
+      maxConcurrent: 3
+    })
+    autoSchedulers.set(pid, s)
+  }
+  return s
+}
+
+/** 触发某项目的自动排程重评估（无 pid 时空操作）。 */
+function scheduleEvaluate(pid: string | null): void {
+  if (pid) void schedulerFor(pid).evaluate()
 }
 
 /**
@@ -596,7 +663,11 @@ const manager = new WindowManager({
   registry,
   saveRegistry,
   newWindow: createBrowserWindow,
-  serviceDeps
+  serviceDeps,
+  // 复用既有窗口绑定项目后，通知该窗口渲染层重启（离开空状态、拉取新项目）；否则会空屏。
+  notifyBound: (win) => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.projectBound)
+  }
 })
 
 function senderWindow(e: Electron.IpcMainInvokeEvent): BrowserWindow | null {
@@ -902,12 +973,16 @@ function registerIpc(): void {
         proposedName: candidates[i.index]?.proposedName ?? '',
         reason: i.reason
       }))
+      scheduleEvaluate(pid) // 新卡进待办 → 触发自动排程
       return { created: res.created, issues }
     }
   )
   ipcMain.handle(IPC.cardsUpdate, (e, slug: string, patch: Partial<StoredCard>): StoredCard | null => {
     const pid = currentProjectId(e)
-    return pid ? cardStore.update(pid, slug, { ...patch, updatedAt: Date.now() }) : null
+    if (!pid) return null
+    const updated = cardStore.update(pid, slug, { ...patch, updatedAt: Date.now() })
+    scheduleEvaluate(pid) // 状态/关系变更可能使某卡变得有资格（如解阻塞）→ 触发自动排程
+    return updated
   })
   // 卡的运行成员仓 → 回收上下文（分支/worktree/base + 显示名）；无运行给空。
   const cleanupMembersOf = (pid: string, slug: string): CleanupMember[] => {
@@ -947,20 +1022,16 @@ function registerIpc(): void {
       await recycleCardBranches(members, cleanupDeps, { allowUnmerged: opts.allowUnmerged ?? false })
     }
     cardStore.remove(pid, slug)
+    // 删卡释放槽位（删在跑卡已级联中止其运行）→ 触发自动排程补位（问题2:删在跑任务后待办继续排队）。
+    scheduleEvaluate(pid)
   })
   ipcMain.handle(IPC.cardsRun, (e, slug: string): { runId: string } | { error: string } => {
     const pid = currentProjectId(e)
     if (!pid) return { error: '未绑定项目' }
     const card = cardStore.get(pid, slug)
     if (!card) return { error: '需求卡不存在' }
-    const project = findProjectById(registry, pid)
-    if (!project) return { error: '项目不存在' }
-    const derived = deriveRunRequest(card, project)
-    if (!derived.ok) return { error: derived.reason }
-    const launched = engine.start(derived.request)
-    // 建立卡→运行反向链 + 进行中（运行→卡正向链为 request.cardId；后续状态由 reconcileCardForRun 跟随）。
-    cardStore.update(pid, slug, { activeRunId: launched.runId, status: '进行中', updatedAt: Date.now() })
-    return { runId: launched.runId }
+    // 手动启动与自动排程共用同一接缝（建卡→运行反向链 + 进行中；正向链为 request.cardId、后续状态由 reconcileCardForRun 跟随）。
+    return startCardRun(pid, card)
   })
   ipcMain.handle(IPC.cardsBranches, (e, slug: string): CardBranch[] => {
     const pid = currentProjectId(e)
@@ -1101,9 +1172,11 @@ function registerIpc(): void {
   })
   ipcMain.handle(
     IPC.submitDecomposedCandidates,
-    (e, candidates: CandidateCard[]): Promise<DecomposeOutcome> => {
+    async (e, candidates: CandidateCard[]): Promise<DecomposeOutcome> => {
       const projectId = currentProjectId(e)
-      return seamFor(projectId).submit(candidates, projectId)
+      const outcome = await seamFor(projectId).submit(candidates, projectId)
+      scheduleEvaluate(projectId) // 外部分解候选落库 → 触发自动排程
+      return outcome
     }
   )
 
@@ -1185,7 +1258,7 @@ function registerIpc(): void {
     (e, ops: CardOp[], confirmedDestructive?: boolean): ApplyOpsResult => {
       const pid = currentProjectId(e)
       if (!pid) return { created: [], updated: [], removed: [], issues: [] }
-      return applyOpsToStore(cardStore, {
+      const res = applyOpsToStore(cardStore, {
         projectId: pid,
         ops: ops ?? [],
         now: Date.now(),
@@ -1193,6 +1266,8 @@ function registerIpc(): void {
         repos: reposFor(pid),
         confirmedDestructive
       })
+      scheduleEvaluate(pid) // 编排落库（create/relate 等）可能新增/解阻塞有资格卡 → 触发自动排程
+      return res
     }
   )
 
@@ -1221,6 +1296,7 @@ function registerIpc(): void {
         registry: applyRegistryFor(pid),
         repos: reposFor(pid)
       })
+      scheduleEvaluate(pid) // 新项目种入卡 → 触发自动排程
       return { projectId: pid, applied }
     }
   )
@@ -1525,7 +1601,10 @@ app.whenReady().then(() => {
   rulePacks.seedIfEmpty(randomUUID())
   registerIpc()
   // 开机自动恢复:续跑上次关软件时仍处于 running 的运行（断点续，不重做上游）。
-  void engine.resumeAll()
+  // 恢复完再对每个项目踢一次自动排程：恢复可能既成超额（活跃>3，排程容忍不填），也可能有空槽可补待办。
+  void engine.resumeAll().finally(() => {
+    for (const p of registry.projects) scheduleEvaluate(p.id)
+  })
   restoreOrStart()
 
   app.on('activate', () => {

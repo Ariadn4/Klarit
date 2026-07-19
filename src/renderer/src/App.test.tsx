@@ -22,6 +22,8 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     setAppearance: vi.fn(async (a: string) => a),
     getEffectiveTheme: vi.fn(async () => 'light'),
     onThemeChange: vi.fn(() => () => {}),
+    onProjectBound: vi.fn(() => () => {}),
+    onCardsChanged: vi.fn(() => () => {}),
     getSidebarWidth: vi.fn(async () => 240),
     setSidebarWidth: vi.fn(async () => {}),
     getSidebarView: vi.fn(async () => ({ view: 'files', gitMemberId: null, gitBranch: null })),

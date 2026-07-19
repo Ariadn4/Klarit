@@ -28,7 +28,10 @@ function fakeWindow(id: number): BrowserWindow {
   } as unknown as BrowserWindow
 }
 
-function makeManager(): { manager: WindowManager; created: WindowState[] } {
+function makeManager(over: { notifyBound?: (win: BrowserWindow) => void } = {}): {
+  manager: WindowManager
+  created: WindowState[]
+} {
   const registry: RegistryData = { projects: [] }
   const created: WindowState[] = []
   let nextId = 1
@@ -39,7 +42,8 @@ function makeManager(): { manager: WindowManager; created: WindowState[] } {
       if (state) created.push(state)
       return fakeWindow(nextId++)
     },
-    serviceDeps: {} as never
+    serviceDeps: {} as never,
+    notifyBound: over.notifyBound
   })
   return { manager, created }
 }
@@ -169,6 +173,41 @@ describe('WindowManager.openOrFocus', () => {
     const w2 = manager.openOrFocus('p2')
     expect(w2).not.toBe(w1)
     expect(created.length).toBe(before + 1)
+  })
+})
+
+describe('WindowManager 绑定后通知渲染层（修复：复用空窗口不刷新的空屏 bug）', () => {
+  it('openOrFocus 复用空窗口绑定项目时，通知该窗口渲染层重启', () => {
+    const notifyBound = vi.fn()
+    const { manager } = makeManager({ notifyBound })
+    const empty = manager.createEmptyWindow()
+    const bound = manager.openOrFocus('p1')
+    expect(bound).toBe(empty)
+    expect(notifyBound).toHaveBeenCalledWith(empty)
+  })
+
+  it('bindWindow 直接绑定空窗口时也通知渲染层', () => {
+    const notifyBound = vi.fn()
+    const { manager } = makeManager({ notifyBound })
+    const empty = manager.createEmptyWindow()
+    manager.bindWindow(empty, 'p1')
+    expect(notifyBound).toHaveBeenCalledWith(empty)
+  })
+
+  it('openProject 新开窗口时不通知（新窗口自加载、无需刷新）', () => {
+    const notifyBound = vi.fn()
+    const { manager } = makeManager({ notifyBound })
+    manager.openProject('p1')
+    expect(notifyBound).not.toHaveBeenCalled()
+  })
+
+  it('openOrFocus 聚焦已绑定窗口时不通知（未发生绑定）', () => {
+    const notifyBound = vi.fn()
+    const { manager } = makeManager({ notifyBound })
+    manager.openProject('p1')
+    notifyBound.mockClear()
+    manager.openOrFocus('p1')
+    expect(notifyBound).not.toHaveBeenCalled()
   })
 })
 

@@ -110,6 +110,56 @@ function storedCard(over: Partial<StoredCard> = {}): StoredCard {
   }
 }
 
+describe('cards store · load 并发防竞态', () => {
+  beforeEach(() => {
+    useCardsStore.setState({ cards: [], cardTypes: [], runs: {}, detailSlug: null, detailFocus: null })
+  })
+
+  it('先发起但较晚返回的 load（陈旧数据）不覆盖后发起的 load（新数据）', async () => {
+    const stale = storedCard({ proposedName: 'stale', status: '未开始' })
+    const fresh = storedCard({ proposedName: 'fresh', status: '进行中' })
+    // 第一次 load 返回慢（陈旧），第二次 load 返回快（新）。
+    let call = 0
+    let releaseStale: () => void = () => {}
+    const staleGate = new Promise<void>((res) => {
+      releaseStale = res
+    })
+    const api = {
+      listCards: vi.fn(async () => {
+        call += 1
+        if (call === 1) {
+          await staleGate // 第一次卡住，等第二次先完成
+          return [stale]
+        }
+        return [fresh]
+      }),
+      listCardTypes: vi.fn(async () => []),
+      getRunState: vi.fn(async () => null)
+    }
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = api
+
+    const p1 = useCardsStore.getState().load() // 先发起（慢）
+    const p2 = useCardsStore.getState().load() // 后发起（快）
+    await p2 // 后发起者先完成 → 应用新数据
+    expect(useCardsStore.getState().cards.map((c) => c.proposedName)).toEqual(['fresh'])
+    releaseStale()
+    await p1 // 先发起者姗姗来迟 → 因已被取代而丢弃，不覆盖
+    expect(useCardsStore.getState().cards.map((c) => c.proposedName)).toEqual(['fresh'])
+  })
+
+  it('单次 load 正常写入结果', async () => {
+    const c = storedCard({ proposedName: 'only', status: '进行中' })
+    const api = {
+      listCards: vi.fn(async () => [c]),
+      listCardTypes: vi.fn(async () => []),
+      getRunState: vi.fn(async () => null)
+    }
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = api
+    await useCardsStore.getState().load()
+    expect(useCardsStore.getState().cards.map((x) => x.proposedName)).toEqual(['only'])
+  })
+})
+
 describe('cards store · removeCard', () => {
   beforeEach(() => {
     useCardsStore.setState({ cards: [], cardTypes: [], runs: {}, detailSlug: null, detailFocus: null })
