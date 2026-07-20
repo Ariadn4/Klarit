@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import type { DocRegistry, Project } from '@shared/types'
 import { useDocumentsStore } from '../stores/documents'
 import { DocumentRegistrySettings } from './DocumentRegistrySettings'
+import { SettingsHeaderSlotContext } from './ui/SettingsHeaderSlot'
 
 const registry = (over: Partial<DocRegistry> = {}): DocRegistry => ({
   memberId: 'm1',
@@ -56,6 +57,36 @@ describe('DocumentRegistrySettings · 设置常驻文档面板', () => {
     await waitFor(() => expect(api.getDocuments).toHaveBeenCalledWith('m1'))
     expect(await screen.findByRole('region', { name: '动态文档' })).toBeInTheDocument()
     expect(screen.getByText('README.md')).toBeInTheDocument()
+  })
+
+  it('动作走顶栏插槽：重新扫描/保存为图标按钮，内容区不再自画文字按钮', async () => {
+    install()
+    const slot = document.createElement('div')
+    document.body.appendChild(slot)
+    render(
+      <SettingsHeaderSlotContext.Provider value={slot}>
+        <DocumentRegistrySettings project={project([{ id: 'm1', name: 'web' }])} />
+      </SettingsHeaderSlotContext.Provider>
+    )
+    await screen.findByText('README.md')
+    const rescan = screen.getByRole('button', { name: '重新扫描' })
+    const save = screen.getByRole('button', { name: '保存' })
+    // 传送进顶栏插槽（与关闭 X 同行），而不是留在内容区。
+    expect(slot.contains(rescan)).toBe(true)
+    expect(slot.contains(save)).toBe(true)
+    // 图标按钮：无文字、hover 有提示。
+    expect(rescan).toHaveTextContent('')
+    expect(rescan).toHaveAttribute('title', '重新扫描')
+    expect(save).toHaveTextContent('')
+    expect(save).toHaveAttribute('title', '保存')
+    slot.remove()
+  })
+
+  it('用途说明可见（agent 参考 + 归档节点统一更新）', async () => {
+    install()
+    render(<DocumentRegistrySettings project={project([{ id: 'm1', name: 'web' }])} />)
+    await screen.findByText('README.md')
+    expect(screen.getByText(/项目参考/)).toHaveTextContent(/归档/)
   })
 
   it('改判后点保存 → 整表审批并落盘（保存即审批）', async () => {

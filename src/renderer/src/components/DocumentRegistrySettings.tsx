@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ScanSearch, Save } from 'lucide-react'
 import type { Project } from '@shared/types'
 import { useDocumentsStore } from '../stores/documents'
-import { DocumentRegistryEditor } from './DocumentRegistryEditor'
+import { DocumentRegistryEditor, DocumentRegistryPurpose } from './DocumentRegistryEditor'
 import { AnalyzeStatusBanner } from './DocumentOnboardingDialog'
+import { HeaderActions } from './ui/SettingsHeaderSlot'
+import { IconButton } from './ui/controls'
 import { inputClass } from './ui/styles'
 
 /**
@@ -23,42 +25,49 @@ export function DocumentRegistrySettings({ project }: { project: Project }): Rea
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        {project.members.length > 1 && (
-          <select
-            aria-label={t('documentRegistry.memberSelectAria')}
-            className={`${inputClass} w-44 cursor-pointer`}
-            value={memberId}
-            onChange={(e) => setMemberId(e.target.value)}
+      {/* 动作走设置面板顶栏插槽（与关闭 X 同行、图标按钮），内容区只留登记表本身。 */}
+      <HeaderActions>
+        <span />
+        <div className="flex items-center gap-1">
+          <IconButton
+            label={t('documentRegistry.rescan')}
+            tooltip={t('documentRegistry.rescan')}
+            disabled={analyzing}
+            onClick={() => void analyze(memberId)}
           >
-            {project.members.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.derivedName}
-              </option>
-            ))}
-          </select>
-        )}
-        <span className="flex-1" />
-        <button
-          type="button"
-          disabled={analyzing}
-          onClick={() => void analyze(memberId)}
-          className="rounded border border-stone-300 px-2.5 py-1 text-[13px] text-ink hover:border-cobalt-500 hover:text-cobalt-500 disabled:opacity-50"
+            <ScanSearch size={16} />
+          </IconButton>
+          <IconButton
+            label={t('common.save')}
+            tooltip={t('common.save')}
+            onClick={() => {
+              // 保存即整表审批（与 onboarding「确认并保存」同语义）。
+              approveAll()
+              void save()
+            }}
+          >
+            <Save size={16} />
+          </IconButton>
+        </div>
+      </HeaderActions>
+
+      {/* 成员切换只在多仓项目出现（单仓时不留空行）。 */}
+      {project.members.length > 1 && (
+        <select
+          aria-label={t('documentRegistry.memberSelectAria')}
+          className={`${inputClass} w-44 cursor-pointer self-start`}
+          value={memberId}
+          onChange={(e) => setMemberId(e.target.value)}
         >
-          {t('documentRegistry.rescan')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            // 保存即整表审批（与 onboarding「确认并保存」同语义）。
-            approveAll()
-            void save()
-          }}
-          className="rounded bg-cobalt-500 px-2.5 py-1 text-[13px] font-medium text-paper hover:bg-cobalt-800"
-        >
-          {t('common.save')}
-        </button>
-      </div>
+          {project.members.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.derivedName}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <DocumentRegistryPurpose />
 
       {analyzing ? (
         <p className="flex items-center gap-2 text-[13px] text-stone-600">

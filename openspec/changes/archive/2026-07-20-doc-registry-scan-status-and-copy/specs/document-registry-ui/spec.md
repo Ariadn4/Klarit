@@ -1,8 +1,5 @@
-# document-registry-ui Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-document-registry. Update Purpose after archive.
-## Requirements
 ### Requirement: 两栏改判编辑器
 
 系统 SHALL 提供文档登记表编辑器：**两栏**分别呈现 `dynamic` 与 `snapshot` 两桶（「不纳管」不设可见栏），条目区**各栏独立滚动**。每行行头含图标（文件/文件夹）、相对路径、**改判控件**（`⇄`，在两栏间切换该条 kind）、**移出控件**（`✕`，从表移除）。行**可展开**，展开区含：文件夹条目的**覆盖计数**（「覆盖 N 个文件」，**不列文件明细**——文件夹条目的重心是这一类怎么写，不是内部清单）、**可编辑的路径**（agent 分组不合意时用户手动改 location；改路径打回该条未审批）、**文档规定**的可编辑文本框。**不设逐条审批开关**——审批由「确认并保存」承担。
@@ -25,7 +22,7 @@ UI MUST 遵 `docs/brand`：仅用语义令牌（`bg-canvas`/`bg-paper`/`text-ink
 
 #### Scenario: 界面用词为「文档规定」与「项目级文档公约」
 - **WHEN** 用户展开一条条目并看向底部公约区
-- **THEN** 条目内的规定编辑框标为「文档规定」、两栏上方的通则区标为「项目级文档公约」，界面不出现「习惯 prompt」这类实现词
+- **THEN** 条目内的规定编辑框标为「文档规定」、底部通则区标为「项目级文档公约」，界面不出现「习惯 prompt」这类实现词
 
 #### Scenario: 两栏各呈一桶
 - **WHEN** 登记表含 2 条 dynamic、3 条 snapshot
@@ -106,4 +103,3 @@ UI MUST 遵 `docs/brand`：仅用语义令牌（`bg-canvas`/`bg-paper`/`text-ink
 #### Scenario: 设置里触发重扫
 - **WHEN** 用户在设置的文档面板触发重新扫描
 - **THEN** 扫描运行并把新发现的文档并入（不覆盖用户已审批的既有条目）
-

@@ -51,6 +51,14 @@ describe('scanDocuments：walker + IGNORED_DIRS + .gitignore + classify + collap
     expect(docs.map((d) => d.location)).toEqual(['docs/api.md'])
   })
 
+  it('兜底排除计划容器：计划/提案夹下的文档不纳管，归档目标照常', () => {
+    seed(dir, 'openspec/changes/add-a/proposal.md')
+    seed(dir, 'openspec/changes/add-a/design.md')
+    seed(dir, 'openspec/specs/foo/spec.md')
+    seed(dir, 'openspec/specs/bar/spec.md')
+    expect(scanDocuments(dir).map((d) => d.location)).toEqual(['openspec/specs'])
+  })
+
   it('目录不存在时给空表（不抛）', () => {
     expect(scanDocuments(join(dir, '不存在'))).toEqual([])
   })
@@ -80,6 +88,8 @@ describe('analyzeDocuments：agent 语义分组 + 分类 + 起草（一体）', 
   const candidates = [
     'openspec/changes/add-a/proposal.md',
     'openspec/changes/add-b/design.md',
+    'docs/handbook/onboarding.md',
+    'docs/handbook/ops.md',
     'openspec/specs/foo/spec.md',
     'docs/draft-x.md',
     'README.md'
@@ -89,12 +99,12 @@ describe('analyzeDocuments：agent 语义分组 + 分类 + 起草（一体）', 
   it('规整 agent 条目：文件夹按前缀圈 coversFiles、文件精确匹配、approved:false', async () => {
     const agent = vi.fn(async (prompt: string) => {
       // 全量候选清单与内容样本都进 prompt。
-      expect(prompt).toContain('openspec/changes/add-a/proposal.md')
+      expect(prompt).toContain('docs/handbook/onboarding.md')
       expect(prompt).toContain('《README.md 的内容样本》')
       return JSON.stringify({
         convention: '全项目大白话',
         entries: [
-          { location: 'openspec/changes', kind: 'dynamic', habitPrompt: '工作草稿' },
+          { location: 'docs/handbook', kind: 'dynamic', habitPrompt: '手册' },
           { location: 'openspec/specs', kind: 'dynamic', habitPrompt: '主 spec' },
           { location: 'docs/draft-x.md', kind: 'snapshot', habitPrompt: '冻结草稿' },
           { location: 'README.md', kind: 'dynamic', habitPrompt: '概览' }
@@ -105,14 +115,14 @@ describe('analyzeDocuments：agent 语义分组 + 分类 + 起草（一体）', 
     expect(agent).toHaveBeenCalledTimes(1)
     expect(out.error).toBe(null)
     expect(out.conventionPreamble).toBe('全项目大白话')
-    // 同 kind 的 changes 与 specs 保持两条（agent 语义分组说了算，不再按同类合并）。
-    const changes = out.docs.find((d) => d.location === 'openspec/changes')
-    expect(changes).toMatchObject({
+    // 同 kind 的 handbook 与 specs 保持两条（agent 语义分组说了算，不再按同类合并）。
+    const handbook = out.docs.find((d) => d.location === 'docs/handbook')
+    expect(handbook).toMatchObject({
       isFolder: true,
       kind: 'dynamic',
-      habitPrompt: '工作草稿',
+      habitPrompt: '手册',
       approved: false,
-      coversFiles: ['openspec/changes/add-a/proposal.md', 'openspec/changes/add-b/design.md']
+      coversFiles: ['docs/handbook/onboarding.md', 'docs/handbook/ops.md']
     })
     expect(out.docs.find((d) => d.location === 'openspec/specs')?.coversFiles).toEqual([
       'openspec/specs/foo/spec.md'
@@ -120,6 +130,40 @@ describe('analyzeDocuments：agent 语义分组 + 分类 + 起草（一体）', 
     const readme = out.docs.find((d) => d.location === 'README.md')
     expect(readme?.isFolder).toBeUndefined()
     expect(out.docs.every((d) => d.approved === false)).toBe(true)
+  })
+
+  it('公约起草指令收窄到语言 + 目录约定，不要风格类内容且要短', async () => {
+    let prompt = ''
+    await analyzeDocuments(candidates, reader, async (p) => {
+      prompt = p
+      return '{"convention":"","entries":[]}'
+    })
+    // 只识别两项事实。
+    expect(prompt).toContain('语言')
+    expect(prompt).toContain('目录')
+    // 明说不写风格类内容，且要求简短。
+    expect(prompt).toMatch(/不写|不要写/)
+    expect(prompt).toContain('风格')
+    expect(prompt).toMatch(/简短|越短越好/)
+  })
+
+  it('分析指令要求排除计划类文档；agent 判为计划类的容器不进登记表，归档目标照常', async () => {
+    const agent = vi.fn(async (prompt: string) => {
+      // 指令里明说计划类（任务作用域的计划/提案产物）不列入。
+      expect(prompt).toContain('计划类')
+      expect(prompt).toContain('不要列')
+      // agent 据此把 openspec/changes 这类计划容器整个略过。
+      return JSON.stringify({
+        convention: '',
+        entries: [
+          { location: 'openspec/specs', kind: 'dynamic', habitPrompt: '主 spec' },
+          { location: 'README.md', kind: 'dynamic', habitPrompt: '概览' }
+        ]
+      })
+    })
+    const out = await analyzeDocuments(candidates, reader, agent)
+    expect(out.error).toBe(null)
+    expect(out.docs.map((d) => d.location).sort()).toEqual(['README.md', 'openspec/specs'])
   })
 
   it('幻觉与非法条目被过滤：不存在的 location、非法 kind、重复 location', async () => {

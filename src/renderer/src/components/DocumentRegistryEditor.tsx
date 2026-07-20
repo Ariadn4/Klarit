@@ -8,7 +8,7 @@ import { IconButton } from './ui/controls'
 import { Field } from './ui/Field'
 import { inputClass } from './ui/styles'
 
-/** 可编辑路径：agent 分组不合意时手动收级（如 openspec/changes/add-x → openspec/changes）。 */
+/** 可编辑路径：agent 分组不合意时手动收级（如 docs/handbook/ops → docs/handbook）。 */
 function PathField({ doc }: { doc: ManagedDoc }): React.JSX.Element {
   const { t } = useTranslation()
   const editLocation = useDocumentsStore((s) => s.editLocation)
@@ -47,7 +47,7 @@ function PathField({ doc }: { doc: ManagedDoc }): React.JSX.Element {
   )
 }
 
-/** 一条登记条目（可展开：覆盖计数 + 可编辑路径 + 习惯 prompt）。审批由「确认并保存」整表承担。 */
+/** 一条登记条目（可展开：覆盖计数 + 可编辑路径 + 文档规定）。审批由「确认并保存」整表承担。 */
 function DocRow({
   doc,
   open,
@@ -221,8 +221,22 @@ function AddEntry(): React.JSX.Element {
 }
 
 /**
+ * 登记表用途说明：讲清这张表被谁消费（agent 拿来当项目参考、「归档」节点按它统一更新），
+ * 用户才知道批它有什么用、该怎么改。属**标题区**而非表内容——由弹窗/设置面板摆在各自顶部
+ * （弹窗里在分割线之上），不塞进会滚走的条目区，故独立于编辑器导出。
+ */
+export function DocumentRegistryPurpose(): React.JSX.Element {
+  const { t } = useTranslation()
+  return (
+    <p className="text-[12px] leading-normal text-stone-600">
+      {t('documentRegistry.registryPurpose')}
+    </p>
+  )
+}
+
+/**
  * 文档登记表编辑器（document-registry-ui 核心）：两栏（动态/快照）+ 行展开
- * （覆盖计数 + 可编辑路径 + 习惯 prompt）+ `⇄` 改判 + `✕` 移出 + `+ 添加` + 文档公约区。
+ * （覆盖计数 + 可编辑路径 + 文档规定）+ `⇄` 改判 + `✕` 移出 + `+ 添加`；项目级文档公约区在两栏之上。
  * 「不纳管」无可见栏——移出即离表。**不设逐条审批控件**：审批由「确认并保存」整表承担。
  * 数据经 documents store，落盘由父层触发。
  */
@@ -236,13 +250,7 @@ export function DocumentRegistryEditor(): React.JSX.Element | null {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-start gap-4">
-        <Column kind="dynamic" docs={dynamicDocs} isOpen={single.isOpen} toggle={single.toggle} />
-        <Column kind="snapshot" docs={snapshotDocs} isOpen={single.isOpen} toggle={single.toggle} />
-      </div>
-
-      <AddEntry />
-
+      {/* 通则在前、细目在后：公约管全项目，排末尾会被长条目列表推出视野。 */}
       <Field
         label={t('documentRegistry.convention')}
         description={t('documentRegistry.conventionDescription')}
@@ -256,6 +264,13 @@ export function DocumentRegistryEditor(): React.JSX.Element | null {
           onChange={(e) => editConvention(e.target.value)}
         />
       </Field>
+
+      <div className="flex items-start gap-4">
+        <Column kind="dynamic" docs={dynamicDocs} isOpen={single.isOpen} toggle={single.toggle} />
+        <Column kind="snapshot" docs={snapshotDocs} isOpen={single.isOpen} toggle={single.toggle} />
+      </div>
+
+      <AddEntry />
     </div>
   )
 }

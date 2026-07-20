@@ -90,7 +90,23 @@ function pathTokens(relPath: string): string[] {
 const DOC_DIR_SEGMENTS = new Set(['docs', 'doc', 'documentation'])
 
 /**
- * 启发式分类（纯路径/文件名，不读内容），强弱两级：
+ * 计划/提案容器目录段：装的是任务作用域的前瞻计划稿（要做什么），不是沉淀成果的归档目标，
+ * 归档节点不该经手，故不纳管。只看目录段、不看文件名——避免误伤 CHANGELOG.md、adr/xxx-plan-format.md
+ * 这类归档目标。
+ */
+const PLANNING_DIR_SEGMENTS = new Set([
+  'change',
+  'changes',
+  'plan',
+  'plans',
+  'planning',
+  'proposal',
+  'proposals'
+])
+
+/**
+ * 启发式分类（纯路径/文件名，不读内容），一排三级：
+ * - 计划容器（最高优先）→ null（不纳管）。判不准的（无计划目录段）继续走下面的信号，交用户事后改判。
  * - 强信号仅一侧命中 → 该侧（snapshot / dynamic）。
  * - 冲突或无强信号 → 位于文档目录（docs/doc/documentation 段）弱兜底判 dynamic——
  *   文档目录里的东西默认在表里而非蒸发，误判交给用户改判。
@@ -99,6 +115,8 @@ const DOC_DIR_SEGMENTS = new Set(['docs', 'doc', 'documentation'])
 export function classify(relPath: string): DocKind | null {
   const tokens = pathTokens(relPath)
   const segments = relPath.split('/')
+  const dirTokens = pathTokens(segments.slice(0, -1).join('/'))
+  if (dirTokens.some((t) => PLANNING_DIR_SEGMENTS.has(t))) return null
   const fileName = segments[segments.length - 1]
   const snapshot = tokens.some((t) => SNAPSHOT_SIGNALS.has(t)) || DATE_PREFIX.test(fileName)
   const dynamic = tokens.some((t) => DYNAMIC_SIGNALS.has(t))
@@ -149,7 +167,8 @@ const fileDoc = (leaf: ClassifiedLeaf): ManagedDoc => ({
 
 /**
  * 文件夹坍缩——**收在最高有意义的同类层**：一个子树（非仓根）全部纳管叶子（≥2）同 kind 时坍缩成一条
- * （coversFiles 圈全部纳管叶子），登记表不逐子夹展开（如 openspec/changes 一条，而非每个 change 一条）。
+ * （coversFiles 圈全部纳管叶子），登记表不逐子夹展开（如 docs/handbook 一条，而非每个子夹一条）。
+ * 只作用于纳管叶子——被计划容器排除掉的叶子（kind=null）不参与坍缩。
  * 细节：纯中转链（无直属纳管叶子、只有一个含内容子夹）继续下钻，收在有意义那层——docs/ 下只有 adr/
  * 时记 docs/adr 而非笼统的 docs。混合类型不坍缩，逐层下钻各自处理。单叶文件夹保留文件级条目。
  * 纯函数，输出按 location 排序。

@@ -126,7 +126,7 @@ export function SettingsPanel({
         aria-modal="true"
         aria-label={t('settingsPanel.dialogLabel')}
         onClick={(e) => e.stopPropagation()}
-        className="flex h-[78vh] max-h-[640px] w-[720px] overflow-hidden rounded-card border border-stone-100 bg-paper"
+        className="flex h-[88vh] max-h-[840px] w-[min(1040px,92vw)] overflow-hidden rounded-card border border-stone-100 bg-paper"
       >
         {/* 左侧分组导航 */}
         <nav aria-label={t('settingsPanel.navAriaLabel')} className="flex w-44 shrink-0 flex-col gap-3 border-r border-stone-100 bg-canvas p-3">

@@ -1048,14 +1048,14 @@ export type EngineProgressEvent =
 /** 文档脾性——仅此两值；「不纳管」不是一个 kind，它表达为该文档不在登记表内。 */
 export type DocKind = 'dynamic' | 'snapshot'
 
-/** 登记表一条：三件套（位置 + 脾性 + 习惯 prompt）+ 审批闸；文件夹坍缩条目额外圈 coversFiles。 */
+/** 登记表一条：三件套（位置 + 脾性 + 文档规定 habitPrompt）+ 审批闸；文件夹坍缩条目额外圈 coversFiles。 */
 export interface ManagedDoc {
   /** 条目 id（取 location，登记表内唯一）。 */
   id: string
   /** 相对成员仓根的路径（POSIX 分隔）。 */
   location: string
   kind: DocKind
-  /** 习惯 prompt（格式/模板/命名/时态 + 用户补的频率/意图）；未起草为空串。 */
+  /** 文档规定（界面用词；格式/模板/命名/时态 + 用户补的频率/意图）；未起草为空串。 */
   habitPrompt: string
   /** 审批闸：false 时 habitPrompt 是草稿，下游文档操作不得依赖它行使习惯。 */
   approved: boolean

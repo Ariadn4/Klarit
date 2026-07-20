@@ -57,6 +57,29 @@ describe('DocumentRegistryEditor · 两栏改判编辑器', () => {
     expect(screen.getAllByRole('region').filter((r) => r.getAttribute('data-doc-column'))).toHaveLength(2)
   })
 
+  it('用途说明不由编辑器渲染（它属于标题区，由弹窗/设置面板各自摆放）', () => {
+    render(<DocumentRegistryEditor />)
+    expect(screen.queryByText(/归档/)).toBeNull()
+  })
+
+  it('界面用词讲人话：「文档规定」与「项目级文档公约」，不露实现词', async () => {
+    render(<DocumentRegistryEditor />)
+    expect(screen.getByRole('textbox', { name: '项目级文档公约' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '文档 docs/adr' }))
+    expect(screen.getByRole('textbox', { name: '文档规定 docs/adr' })).toBeInTheDocument()
+    expect(screen.queryByText(/习惯 ?prompt/i)).toBeNull()
+  })
+
+  it('版面从通则到细目：公约区排在两栏之前，添加入口在两栏之后', () => {
+    render(<DocumentRegistryEditor />)
+    const convention = screen.getByRole('textbox', { name: '项目级文档公约' })
+    const columns = dynamicColumn()
+    const addEntry = screen.getByRole('button', { name: '添加文件/文件夹' })
+    // Node.DOCUMENT_POSITION_FOLLOWING = 4：前者在文档序里排在后者之前。
+    expect(convention.compareDocumentPosition(columns) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(columns.compareDocumentPosition(addEntry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('点 ⇄ 改判把行移到另一栏', async () => {
     render(<DocumentRegistryEditor />)
     await userEvent.click(screen.getByRole('button', { name: '改判 README.md' }))
@@ -71,7 +94,7 @@ describe('DocumentRegistryEditor · 两栏改判编辑器', () => {
     expect(within(dynamicColumn()).queryByText('CHANGELOG.md')).toBeNull()
   })
 
-  it('展开文件夹条目露覆盖计数（不列文件明细）+ 习惯 prompt 编辑 + 审批', async () => {
+  it('展开文件夹条目露覆盖计数（不列文件明细）+ 文档规定 编辑 + 审批', async () => {
     render(<DocumentRegistryEditor />)
     await userEvent.click(screen.getByRole('button', { name: '文档 docs/adr' }))
     // 只显示覆盖计数，不逐个列文件路径（文件夹条目的重心是 prompt）。
@@ -79,7 +102,7 @@ describe('DocumentRegistryEditor · 两栏改判编辑器', () => {
     expect(screen.queryByText('docs/adr/0001-first.md')).toBeNull()
     expect(screen.queryByText('docs/adr/0002-second.md')).toBeNull()
     // prompt 可编辑；无逐条审批开关（审批=确认并保存）。
-    const textarea = screen.getByRole('textbox', { name: '习惯 prompt docs/adr' })
+    const textarea = screen.getByRole('textbox', { name: '文档规定 docs/adr' })
     expect(textarea).toHaveValue('Nygard 模板')
     await userEvent.type(textarea, '，NNNN-kebab 命名')
     expect(
@@ -116,12 +139,12 @@ describe('DocumentRegistryEditor · 两栏改判编辑器', () => {
     expect(within(dynamicColumn()).getByText('LICENSE')).toBeInTheDocument()
   })
 
-  it('「文档公约」区可编辑（编辑打回未审批；无单独审批按钮）', async () => {
+  it('「项目级文档公约」区可编辑（编辑打回未审批；无单独审批按钮）', async () => {
     useDocumentsStore.setState({ registry: registry({ conventionApproved: true }) })
     render(<DocumentRegistryEditor />)
-    const textarea = screen.getByRole('textbox', { name: '文档公约' })
+    const textarea = screen.getByRole('textbox', { name: '项目级文档公约' })
     expect(textarea).toHaveValue('全项目用大白话')
-    expect(screen.queryByRole('button', { name: '审批文档公约' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '审批项目级文档公约' })).toBeNull()
     await userEvent.type(textarea, '；spec 过时直接改')
     expect(useDocumentsStore.getState().registry?.conventionApproved).toBe(false)
   })

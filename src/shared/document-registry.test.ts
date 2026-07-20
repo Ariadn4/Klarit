@@ -51,6 +51,19 @@ describe('classify：路径/文件名启发式（不读内容）', () => {
   it('信号按整词匹配，不误命中子串（radar 不含 adr）', () => {
     expect(classify('radar.md')).toBe(null)
   })
+
+  it('计划/提案容器优先排除：其下叶子不纳管，哪怕带动态强信号', () => {
+    expect(classify('openspec/changes/add-a/design.md')).toBe(null)
+    expect(classify('openspec/changes/archive/2026-06-01-c/tasks.md')).toBe(null)
+    expect(classify('docs/proposals/new-idea.md')).toBe(null)
+    expect(classify('docs/plans/q3.md')).toBe(null)
+  })
+
+  it('计划排除只看目录段，不误伤归档目标', () => {
+    expect(classify('openspec/specs/foo/spec.md')).toBe('dynamic')
+    expect(classify('docs/CHANGELOG.md')).toBe('snapshot')
+    expect(classify('docs/adr/0007-plan-format.md')).toBe('snapshot')
+  })
 })
 
 describe('filterDocCandidates：候选叶子过滤（扩展名 + IGNORED_DIRS + 注入 .gitignore）', () => {
@@ -129,24 +142,24 @@ describe('collapse：自底向上文件夹坍缩', () => {
     expect(collapse([leaf('notes.md', null)])).toEqual([])
   })
 
-  it('同类子树坍缩到最高层：多个同类子夹收成父夹一条（openspec/changes 不逐 change 记）', () => {
+  it('同类子树坍缩到最高层：多个同类子夹收成父夹一条（不逐子夹记）', () => {
     const leaves = [
-      leaf('openspec/changes/add-a/proposal.md', 'dynamic'),
-      leaf('openspec/changes/add-a/design.md', 'dynamic'),
-      leaf('openspec/changes/add-b/proposal.md', 'dynamic'),
-      leaf('openspec/changes/archive/2026-06-01-c/tasks.md', 'dynamic')
+      leaf('docs/handbook/onboarding/setup.md', 'dynamic'),
+      leaf('docs/handbook/onboarding/tools.md', 'dynamic'),
+      leaf('docs/handbook/ops/deploy.md', 'dynamic'),
+      leaf('docs/handbook/ops/oncall.md', 'dynamic')
     ]
     const out = collapse(leaves)
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({
-      location: 'openspec/changes',
+      location: 'docs/handbook',
       isFolder: true,
       kind: 'dynamic',
       coversFiles: [
-        'openspec/changes/add-a/design.md',
-        'openspec/changes/add-a/proposal.md',
-        'openspec/changes/add-b/proposal.md',
-        'openspec/changes/archive/2026-06-01-c/tasks.md'
+        'docs/handbook/onboarding/setup.md',
+        'docs/handbook/onboarding/tools.md',
+        'docs/handbook/ops/deploy.md',
+        'docs/handbook/ops/oncall.md'
       ]
     })
   })

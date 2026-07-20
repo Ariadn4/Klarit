@@ -10,13 +10,13 @@ const registry = (over: Partial<DocRegistry> = {}): DocRegistry => ({
   docs: [
     { id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '概览', approved: false },
     {
-      id: 'openspec/changes',
-      location: 'openspec/changes',
+      id: 'docs/handbook',
+      location: 'docs/handbook',
       kind: 'dynamic',
-      habitPrompt: '工作草稿',
+      habitPrompt: '团队手册',
       approved: false,
       isFolder: true,
-      coversFiles: ['openspec/changes/a/proposal.md']
+      coversFiles: ['docs/handbook/onboarding.md']
     }
   ],
   conventionPreamble: '大白话',
@@ -40,7 +40,7 @@ beforeEach(() => {
 })
 
 describe('DocumentOnboardingDialog · 导入后的文档确认步（统一推出）', () => {
-  it('分析完成前只显示加载指示（不出现中间分类），完成后统一呈现编辑器', async () => {
+  it('分析进行中不弹确认步（进度归底栏），完成后弹窗直接推出完整编辑器', async () => {
     let resolveAnalyze: ((v: { registry: DocRegistry; error: null }) => void) | undefined
     const api = install({
       analyzeDocuments: vi.fn(
@@ -52,14 +52,26 @@ describe('DocumentOnboardingDialog · 导入后的文档确认步（统一推出
     })
     render(<DocumentOnboardingDialog memberId="m1" onClose={() => {}} />)
     await waitFor(() => expect(api.analyzeDocuments).toHaveBeenCalledWith('m1'))
-    // 分析中：扫描文案（含可跳过说明），无两栏编辑器。
-    expect(screen.getByText(/正在扫描该仓库文档现状/)).toBeInTheDocument()
+    // 分析中：确认步整个不出现（模态不该把用户堵在纯等待的空壳里），进度由底栏承载。
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByRole('region', { name: '动态文档' })).toBeNull()
-    // 完成 → 分类与 prompt 一并出现，扫描/引导文案不再显示。
+    // 完成 → 弹窗推出，分类与文档规定一并呈现。
     await act(async () => resolveAnalyze?.({ registry: registry(), error: null }))
     expect(await screen.findByRole('region', { name: '动态文档' })).toBeInTheDocument()
-    expect(screen.getByText('openspec/changes')).toBeInTheDocument()
-    expect(screen.queryByText(/正在扫描该仓库文档现状/)).toBeNull()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('docs/handbook')).toBeInTheDocument()
+  })
+
+  it('用途说明在标题区、分割线之上（不随条目区滚走）', async () => {
+    install()
+    render(<DocumentOnboardingDialog memberId="m1" onClose={() => {}} />)
+    await screen.findByText('README.md')
+    const heading = screen.getByRole('heading', { name: '文档登记表' })
+    const header = heading.parentElement as HTMLElement
+    // 说明与标题同处标题区（该区带下边框=分割线），而非条目区。
+    expect(header).toHaveTextContent(/项目参考/)
+    expect(header.className).toContain('border-b')
+    expect(header.querySelector('[data-doc-column]')).toBeNull()
   })
 
   it('「跳过」保存当前（未审批）状态并关闭', async () => {

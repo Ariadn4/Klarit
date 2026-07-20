@@ -15,6 +15,7 @@ import GlobalChatPanel, { GlobalChatEntry } from './components/GlobalChatPanel'
 import { KanbanBoard } from './components/KanbanBoard'
 import { AgentOnboardingDialog } from './components/AgentOnboardingDialog'
 import { DocumentOnboardingDialog } from './components/DocumentOnboardingDialog'
+import { DocumentScanStatus } from './components/DocumentScanStatus'
 import { RequirementCardDetail } from './components/RequirementCardDetail'
 import { useCardsStore } from './stores/cards'
 import i18n from './i18n'
@@ -387,6 +388,10 @@ export function App(): React.JSX.Element {
             {/* 全局对话：常驻入口「项目Agent」+ 无蒙层面板；限看板区，不漂到详情抽屉上。 */}
             <GlobalChatEntry />
             <GlobalChatPanel />
+            {/* 底栏左侧状态位：文档扫描进度——只告知不可交互，故整条 pointer-events-none 让点击穿透。 */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[61] flex h-7 items-center px-2">
+              <DocumentScanStatus />
+            </div>
           </div>
           {/* 需求卡详情：右侧推挤式侧抽屉（含底部询问 Agent 抽屉）；关闭时 null 不占宽。 */}
           <RequirementCardDetail />

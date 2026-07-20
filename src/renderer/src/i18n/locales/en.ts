@@ -618,28 +618,29 @@ export const en: Dictionary = {
     addPathPlaceholder: 'Path relative to repo root, e.g. docs/notes.md',
     addKindAria: 'Target bucket',
     addConfirm: 'Add',
-    habitPromptLabel: 'Habit prompt',
-    habitPromptAria: 'Habit prompt {{location}}',
+    habitPromptLabel: 'Doc rules',
+    habitPromptAria: 'Doc rules {{location}}',
     habitPromptDescription:
-      'Drafts capture only readable format habits; add when-to-write intent, then Confirm & save to make it effective',
+      'Format requirements for this document; add your own writing cadence and intent so agents maintain it the way you want.',
     pathLabel: 'Path',
     pathAria: 'Path {{location}}',
     pathApply: 'Apply path {{location}}',
     pathApplyText: 'Apply',
     coversFiles: 'Covers {{count}} files',
-    convention: 'Doc conventions',
+    convention: 'Project doc conventions',
     conventionDescription:
-      'Project-wide cross-file rules (language, style, layout…); effective downstream after Confirm & save',
+      'The writing language and folder layout used across the project; effective downstream after Confirm & save',
     rescan: 'Rescan',
     skip: 'Skip',
     analyzing: 'Scanning this repo’s documentation…',
-    onboardingScanning:
-      'Scanning this repo’s documentation… You can also skip and continue later in Settings.',
     noAgentHint:
       'No default agent configured — this table came from path heuristics (no semantic grouping or prompts). Configure one, then hit “Rescan” for agent analysis.',
     analyzeFailed:
       'Analysis failed: {{message}} — showing the heuristic fallback; hit “Rescan” to retry',
     onboardingTitle: 'Document registry',
+    registryPurpose:
+      'Agents read these documents as project reference, and update them together at the “Archive” node.',
+    scanStatus: 'Scanning the project’s document structure…',
     confirmSave: 'Confirm & save',
     settingsEmpty: 'No registry yet — hit “Rescan” to generate one',
     memberSelectAria: 'Select repo member',

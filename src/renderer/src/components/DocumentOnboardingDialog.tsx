@@ -1,9 +1,8 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Loader2 } from 'lucide-react'
 import { useDocumentsStore } from '../stores/documents'
-import { DocumentRegistryEditor } from './DocumentRegistryEditor'
+import { DocumentRegistryEditor, DocumentRegistryPurpose } from './DocumentRegistryEditor'
 
 /**
  * 分析状态横幅（dialog 与设置面板共用）：确无 agent（no-agent，启发式兜底结果）/
@@ -26,9 +25,9 @@ export function AnalyzeStatusBanner({ analyzeError }: { analyzeError: string | n
 
 /**
  * 导入项目后的文档确认步（onboarding）：挂载即触发 agent 语义分析（分组+分类+起草一体）。
- * **统一推出**：分析完成前只显示加载指示，不展示会被推翻的中间态；完成后两栏编辑器一并呈现
- * （改判/移出/添加/编辑/审批）。「确认并保存」与「跳过」都按当前状态落盘（跳过=留待设置里继续）。
- * 模态遮罩用规范唯一例外 bg-black/50。
+ * **扫描期间不弹窗**——模态不该把用户堵在纯等待的空壳里，进度交给底栏 `DocumentScanStatus`；
+ * 分析完成才推出，一出来就是完整两栏编辑器（改判/移出/添加/编辑/审批），不展示会被推翻的中间态。
+ * 「确认并保存」与「跳过」都按当前状态落盘（跳过=留待设置里继续）。模态遮罩用规范唯一例外 bg-black/50。
  */
 export function DocumentOnboardingDialog({
   memberId,
@@ -36,7 +35,7 @@ export function DocumentOnboardingDialog({
 }: {
   memberId: string
   onClose: () => void
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useTranslation()
   const { analyzing, analyzeError, analyze, approveAll, save } = useDocumentsStore()
 
@@ -51,6 +50,9 @@ export function DocumentOnboardingDialog({
     onClose()
   }
 
+  // 扫描期间整个不渲染：底栏状态条负责告知进度，用户该干嘛干嘛。
+  if (analyzing) return null
+
   const content = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
       <div
@@ -59,27 +61,17 @@ export function DocumentOnboardingDialog({
         aria-label={t('documentRegistry.onboardingTitle')}
         className="flex max-h-[82vh] w-[760px] flex-col overflow-hidden rounded-card border border-stone-100 bg-paper"
       >
-        <div className="border-b border-stone-100 px-4 py-3">
+        {/* 标题区：标题 + 用途说明同在分割线之上——说明是对整张表的交代，跟着条目区滚走就读不到了。 */}
+        <div className="flex flex-col gap-1.5 border-b border-stone-100 px-4 py-3">
           <h2 className="text-[15px] font-semibold text-ink">
             {t('documentRegistry.onboardingTitle')}
           </h2>
+          <DocumentRegistryPurpose />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          {analyzing ? (
-            // 扫描中：图标 + 其下方的「在干什么 + 可跳过」说明；结果呈现后不显示任何引导文案。
-            <div role="status" className="flex flex-col items-center gap-2 py-6">
-              <Loader2 size={18} className="animate-spin text-cobalt-500" />
-              <p className="text-[12px] leading-normal text-stone-600">
-                {t('documentRegistry.onboardingScanning')}
-              </p>
-            </div>
-          ) : (
-            <>
-              <AnalyzeStatusBanner analyzeError={analyzeError} />
-              <DocumentRegistryEditor />
-            </>
-          )}
+          <AnalyzeStatusBanner analyzeError={analyzeError} />
+          <DocumentRegistryEditor />
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t border-stone-100 px-4 py-3">
@@ -92,9 +84,8 @@ export function DocumentOnboardingDialog({
           </button>
           <button
             type="button"
-            disabled={analyzing}
             onClick={() => void finish(true)}
-            className="rounded bg-cobalt-500 px-3 py-1.5 text-[13px] font-medium text-paper hover:bg-cobalt-800 disabled:opacity-50"
+            className="rounded bg-cobalt-500 px-3 py-1.5 text-[13px] font-medium text-paper hover:bg-cobalt-800"
           >
             {t('documentRegistry.confirmSave')}
           </button>
