@@ -19,5 +19,5 @@
 
 ## 4. 收尾
 
-- [ ] 4.1 按 Conventional Commits 提交（`fix(command-run): ...`）
-- [ ] 4.2 运行 `/opsx:sync` 把 delta spec 并回 `openspec/specs/command-execution/spec.md`，再归档本 change
+- [x] 4.1 按 Conventional Commits 提交（`fix(command-run): ...`）
+- [x] 4.2 运行 `/opsx:sync` 把 delta spec 并回 `openspec/specs/command-execution/spec.md`，再归档本 change
