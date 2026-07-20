@@ -5,6 +5,8 @@
  *
  * 取消(signal.abort)时**杀整棵进程树**——`shell:true` 下杀父 shell 在 Windows 会留下孙子(node)
  * 进程,故 Windows 走 `taskkill /T /F`、POSIX 用 `detached` 进程组 + `kill(-pid)`。被取消即 `killed`。
+ * 杀进程树是**尽力而为**:其自身失败静默,且绝不冒泡到进程级(异步 `'error'` 事件与延后的兜底强杀
+ * 都得接住),否则一次取消就能崩掉主进程。
  * 永不抛:失败以非零 `code` 表达(由调用方据 `code`/`killed` 判定)。
  */
 
@@ -32,14 +34,21 @@ export interface RunCommandOptions {
 
 const isWin = process.platform === 'win32'
 
-/** 杀掉以 pid 为根的整棵进程树(绝不残留孤儿)。 */
+/**
+ * 杀掉以 pid 为根的整棵进程树(绝不残留孤儿)。**尽力而为**:杀不掉就静默——不同步抛,
+ * 也不让异步错误冒泡到进程级(调用方均为即发即忘,一次失败不该带走主进程)。
+ */
 export function killTree(pid: number): void {
   if (isWin) {
-    // /T 连子孙、/F 强制;吞掉错误(进程可能已退)。
+    // /T 连子孙、/F 强制。
     try {
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+      const tk = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+      // spawn 拉起失败是**异步 'error' 事件**(不是 throw),无监听者时 Node 抛未捕获异常——必须接住。
+      tk.on('error', () => {
+        /* taskkill 缺失/句柄耗尽,忽略 */
+      })
     } catch {
-      /* 已退/无权,忽略 */
+      /* 参数非法等同步失败,忽略 */
     }
     return
   }
@@ -49,7 +58,7 @@ export function killTree(pid: number): void {
   } catch {
     /* 已退,忽略 */
   }
-  // 宽限后兜底 SIGKILL。
+  // 宽限后兜底 SIGKILL。回调在事件循环后续轮次里跑,抛出即未捕获异常——try/catch 不可省。
   setTimeout(() => {
     try {
       process.kill(-pid, 'SIGKILL')

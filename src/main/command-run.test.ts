@@ -1,5 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCommand } from './command-run'
@@ -108,4 +109,64 @@ describe('command-run：可取消命令运行器', () => {
     },
     15000
   )
+})
+
+/** 临时改写 process.platform（`isWin` 在模块加载期求值，故须配合 resetModules 重新 import）。 */
+function withPlatform(p: NodeJS.Platform): () => void {
+  const orig = process.platform
+  Object.defineProperty(process, 'platform', { value: p, configurable: true })
+  return () => Object.defineProperty(process, 'platform', { value: orig, configurable: true })
+}
+
+describe('command-run：杀进程树失败不冒泡到进程级', () => {
+  it('杀进程树的手段拉不起来也不崩进程', async () => {
+    const restore = withPlatform('win32')
+    // EventEmitter 的契约：'error' 事件无监听者即抛。捕到抛出＝错误逃逸成了未捕获异常。
+    let escaped: unknown = null
+    vi.resetModules()
+    vi.doMock('node:child_process', () => ({
+      spawn: () => {
+        const fake = new EventEmitter()
+        process.nextTick(() => {
+          try {
+            fake.emit('error', Object.assign(new Error('spawn taskkill ENOENT'), { code: 'ENOENT' }))
+          } catch (e) {
+            escaped = e
+          }
+        })
+        return fake
+      }
+    }))
+    try {
+      const { killTree } = await import('./command-run')
+      expect(() => killTree(4242)).not.toThrow()
+      await new Promise((r) => setTimeout(r, 0))
+    } finally {
+      restore()
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+    expect(escaped).toBeNull()
+  })
+
+  it('延后的兜底强杀失败也不崩进程', async () => {
+    const restore = withPlatform('linux')
+    vi.useFakeTimers()
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+    })
+    vi.resetModules()
+    try {
+      const { killTree } = await import('./command-run')
+      expect(() => killTree(4242)).not.toThrow()
+      // 宽限期后的兜底 SIGKILL 在事件循环后续轮次里跑，抛出即未捕获异常。
+      expect(() => vi.advanceTimersByTime(2000)).not.toThrow()
+      expect(killSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      killSpy.mockRestore()
+      vi.useRealTimers()
+      restore()
+      vi.resetModules()
+    }
+  })
 })
