@@ -11,6 +11,7 @@ import { WorkflowPicker } from './WorkflowPicker'
 import { RuleLibrary } from './RuleLibrary'
 import { CardTypeLibrary } from './CardTypeLibrary'
 import { ConstitutionSettings } from './ConstitutionSettings'
+import { DocumentRegistrySettings } from './DocumentRegistrySettings'
 import { Field } from './ui/Field'
 import { inputClass } from './ui/styles'
 import { SettingsHeaderSlotContext } from './ui/SettingsHeaderSlot'
@@ -49,6 +50,7 @@ type SectionId =
   | 'project-workflow'
   | 'project-card-types'
   | 'project-constitution'
+  | 'project-documents'
 
 interface NavItem {
   id: SectionId
@@ -73,7 +75,8 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'project-workflow', labelKey: 'settingsPanel.navWorkflow' },
       { id: 'project-card-types', labelKey: 'settingsPanel.navCardTypes' },
-      { id: 'project-constitution', labelKey: 'settingsPanel.navConstitution' }
+      { id: 'project-constitution', labelKey: 'settingsPanel.navConstitution' },
+      { id: 'project-documents', labelKey: 'settingsPanel.navDocuments' }
     ]
   }
 ]
@@ -306,6 +309,18 @@ export function SettingsPanel({
                   <CardTypeLibrary />
                 ) : (
                   <p className="text-[13px] text-stone-600">{t('settingsPanel.noProjectCardTypes')}</p>
+                )}
+              </section>
+            )}
+
+            {section === 'project-documents' && (
+              <section aria-label={t('settingsPanel.sectionProjectDocuments')}>
+                {project ? (
+                  <DocumentRegistrySettings project={project} />
+                ) : (
+                  <p className="text-[13px] text-stone-600">
+                    {t('settingsPanel.noProjectDocuments')}
+                  </p>
                 )}
               </section>
             )}

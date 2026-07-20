@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AgentInstruction,
@@ -22,6 +22,7 @@ import type {
   DecomposeOutcome,
   DecomposePromptOutcome,
   DetectedAgent,
+  DocRegistry,
   ImportOutcome,
   Project,
   RegistryData,
@@ -118,6 +119,8 @@ import {
 import { listBranches, listWorktrees, makeGitRunner, probeGit } from './git'
 import { makeAsyncGitRunner } from './git-write'
 import { branchCleanupInfo, recycleCardBranches, type CleanupMember } from './card-cleanup'
+import { createDocumentStore } from './document-store'
+import { analyzeDocuments, mergeScan, scanCandidates, scanDocuments, type DraftAgent } from './document-scan'
 import { ensureProjectId, readProjectId } from './identity'
 import { listDir } from './filetree'
 import { readFileForPreview } from './readfile'
@@ -176,6 +179,9 @@ const rulePacks = createRulePackStore(join(app.getPath('userData'), 'rule-packs'
 // 需求卡库：一卡一文件存于 userData/cards/<projectId>/<slug>.json（不入 git，按项目身份关联）。
 const cardStore = createCardStore(join(app.getPath('userData'), 'cards'))
 
+// 文档登记表：per-成员仓一份 JSON 存于 userData/documents/（不入 git）。
+const documentStore = createDocumentStore(join(app.getPath('userData'), 'documents'))
+
 /** 运行态 → 卡生命周期状态：按 activeRunId 反查所属卡并跟随更新（done→已完成等）。 */
 function reconcileCardForRun(runId: string, state: string): void {
   const map: Record<string, StoredCard['status']> = {
@@ -209,6 +215,13 @@ function projectOfRun(runId: string): string | null {
 function broadcastCardsChanged(): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(IPC.cardsChanged)
+  }
+}
+
+/** 广播「项目注册表已变」（管理窗移除/导入、成员关联变更等）→ 各窗口刷新项目列表与绑定状态。 */
+function broadcastProjectsChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC.projectsChanged)
   }
 }
 
@@ -723,6 +736,7 @@ function registerIpc(): void {
     const outcome = importProject(registry, chosen, serviceDeps)
     saveRegistry()
     bindOrOpen(win, outcome.project.id)
+    broadcastProjectsChanged()
     return outcome
   })
 
@@ -750,12 +764,21 @@ function registerIpc(): void {
     saveRegistry()
     manager.openOrFocus(outcome.project.id)
     closeManageWindow()
+    broadcastProjectsChanged()
+    // 新建项目（含移除后立刻重导入——项目 id 复用成员 UUID，目标窗口可能已绑定同 id、
+    // openOrFocus 只聚焦不重 bind）→ 直接推「进文档确认步」，不依赖绑定事件。
+    if (!outcome.reused) notifyDocumentsOnboard(outcome.project)
     return outcome
   })
 
   ipcMain.handle(IPC.removeProject, (_e, projectId: string): Project[] => {
+    // 移除就是移除：连各成员仓的文档登记表一并删——之后重导入即白纸重新识别。
+    const removed = findProjectById(registry, projectId)
+    for (const m of removed?.members ?? []) documentStore.remove(m.id)
     removeProjectCore(registry, projectId)
     saveRegistry()
+    // 广播给所有窗口：切换器子菜单/绑定状态即时反映移除，不需要重启。
+    broadcastProjectsChanged()
     return registry.projects
   })
 
@@ -784,8 +807,11 @@ function registerIpc(): void {
     IPC.unlinkMember,
     (_e, projectId: string, memberId: string): Project | null => {
       const project = unlinkMemberCore(registry, projectId, memberId, new Date().toISOString())
+      // 成员离开管理 → 其文档登记表一并删（重新关联时重新识别）。
+      documentStore.remove(memberId)
       saveRegistry()
       manager.refreshWindowsFor(projectId)
+      broadcastProjectsChanged()
       return project
     }
   )
@@ -1060,6 +1086,85 @@ function registerIpc(): void {
     const members = card.activeRunId ? engine.getRunState(card.activeRunId)?.members : undefined
     const branch = members?.[repoId]?.branch ?? card.proposedName
     senderWindow(e)?.webContents.send(IPC.gitViewFocusRequest, { repoId, branch })
+  })
+
+  // ── 文档登记表：扫描 / 读 / 写 / 补起草（per-成员仓）──
+
+  /** 把「新导入项目 → 进文档确认步」推给该项目当前绑定的所有窗口（首仓）。 */
+  function notifyDocumentsOnboard(project: Project): void {
+    const memberId = project.members[0]?.id
+    if (!memberId) return
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
+        win.webContents.send(IPC.documentsOnboard, memberId)
+      }
+    }
+  }
+
+  /** 全注册表范围找成员仓（窗口可能尚未绑定项目——onboarding 导入后立即扫）。 */
+  const findMember = (memberId: string): { rootPath: string } | null => {
+    for (const p of registry.projects) {
+      const m = p.members.find((mm) => mm.id === memberId)
+      if (m) return m
+    }
+    return null
+  }
+
+  /** 起草 agent 接缝：未选默认 agent 给 null（跳过起草，登记表照常生成）。超时放宽到 5 分钟（大仓样本多）。 */
+  const draftAgent = (): DraftAgent | null => {
+    const agentId = settings.defaultAgent
+    if (!agentId) return null
+    const inv = headlessInvocation(agentId, settings.defaultModel)
+    return (prompt) => runAgentHeadless(inv, prompt, { timeoutMs: 300_000 })
+  }
+
+  /** 样本读取：相对成员仓根读文本（读不了给 null，起草侧跳过该样本）。 */
+  const sampleReaderFor = (rootPath: string) => (rel: string): string | null => {
+    try {
+      return readFileSync(join(rootPath, ...rel.split('/')), 'utf8')
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * agent 语义分析（分组+分类+起草一体）：候选清单+样本一次交给 agent，产出并入既有表
+   * （既有条目按 location 保留用户改判/审批）。无 agent → 启发式兜底 + 'no-agent'；
+   * agent 失败 → 启发式兜底 + 具体错误摘要（绝不把失败误报成「未配置 agent」）。
+   */
+  ipcMain.handle(
+    IPC.documentsAnalyze,
+    async (_e, memberId: string): Promise<{ registry: DocRegistry; error: string | null } | null> => {
+      const member = findMember(memberId)
+      if (!member) return null
+      const existing = documentStore.get(memberId)
+      const agent = draftAgent()
+      if (!agent) {
+        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: 'no-agent' }
+      }
+      const analyzed = await analyzeDocuments(
+        scanCandidates(member.rootPath),
+        sampleReaderFor(member.rootPath),
+        agent
+      )
+      if (analyzed.error) {
+        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: analyzed.error }
+      }
+      const merged = mergeScan(existing, analyzed.docs)
+      return {
+        registry: {
+          ...merged,
+          conventionPreamble: merged.conventionPreamble || analyzed.conventionPreamble
+        },
+        error: null
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.documentsGet, (_e, memberId: string): DocRegistry => documentStore.get(memberId))
+
+  ipcMain.handle(IPC.documentsSave, (_e, reg: DocRegistry): void => {
+    documentStore.save(reg)
   })
 
   ipcMain.handle(IPC.listWorkflows, (): WorkflowSummary[] => workflows.list())

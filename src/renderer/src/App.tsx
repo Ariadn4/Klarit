@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Loader2 } from 'lucide-react'
 import type { DetectedAgent, Project, SidebarViewState, WorkflowDefinition } from '@shared/types'
 import { DEFAULT_LANGUAGE, type SupportedLanguage } from '@shared/language'
 import { DEFAULT_APPEARANCE, type Appearance } from '@shared/appearance'
@@ -12,11 +14,13 @@ import { NewRequirementFlow } from './components/NewRequirementFlow'
 import GlobalChatPanel, { GlobalChatEntry } from './components/GlobalChatPanel'
 import { KanbanBoard } from './components/KanbanBoard'
 import { AgentOnboardingDialog } from './components/AgentOnboardingDialog'
+import { DocumentOnboardingDialog } from './components/DocumentOnboardingDialog'
 import { RequirementCardDetail } from './components/RequirementCardDetail'
 import { useCardsStore } from './stores/cards'
 import i18n from './i18n'
 
 export function App(): React.JSX.Element {
+  const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
   const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [resizing, setResizing] = useState(false)
@@ -33,6 +37,10 @@ export function App(): React.JSX.Element {
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
   // 首启引导：仅当用户尚未选默认 agent 且扫描到至少一个 agent 时显示。
   const [onboarding, setOnboarding] = useState(false)
+  // 导入后的文档确认步：待扫描的成员仓 id；null=不显示。排在 agent 引导之后。
+  const [docOnboardMember, setDocOnboardMember] = useState<string | null>(null)
+  // 导入/识别进行中（从触发导入到落定）——期间显示加载指示，不让用户面对无反馈的停顿。
+  const [importing, setImporting] = useState(false)
   const [viewState, setViewState] = useState<SidebarViewState>({
     view: 'files',
     gitMemberId: null,
@@ -89,6 +97,19 @@ export function App(): React.JSX.Element {
     setActiveWorkflow(await window.klarit.getWorkflow(id))
   }, [])
 
+  /**
+   * 新导入项目 → 触发文档确认步（首仓；多仓项目其余成员在设置里继续）。
+   * 只对**新建**项目触发；旧项目（复用/重开）按 spec 在设置里手动扫。
+   */
+  const maybeDocOnboard = useCallback(async (project: Project | null) => {
+    const member = project?.members[0]
+    if (!project || !member) return
+    // projectBound 也会带旧项目进来——只认刚导入的（创建时间在 2 分钟内且尚无登记表）。
+    if (Date.now() - new Date(project.createdAt).getTime() > 120_000) return
+    const reg = await window.klarit.getDocuments(member.id)
+    if (reg.docs.length === 0 && reg.conventionPreamble === '') setDocOnboardMember(member.id)
+  }, [])
+
   useEffect(() => {
     window.klarit.getSidebarCollapsed().then(setCollapsed)
     window.klarit.getSidebarWidth().then(setWidth)
@@ -122,6 +143,20 @@ export function App(): React.JSX.Element {
     refreshActiveWorkflow()
     // 本窗口被主进程绑定到（新）项目（如从管理窗口打开、或导入复用本空窗口）→ 重拉项目/卡/工作流，离开空状态。
     const offBound = window.klarit.onProjectBound(() => {
+      void refresh()
+      void refreshActiveWorkflow()
+      // 从管理项目窗口导入的新项目绑到本窗口 → 同样进文档确认步（旧项目由 maybeDocOnboard 判掉）。
+      void window.klarit.getCurrentProject().then(maybeDocOnboard)
+    })
+    // 主进程推送：新导入项目落定（管理窗导入，含移除后立刻重导入——窗口已绑定同 id 时不会重触发
+    // projectBound，只能靠这条显式推送）→ 立即进文档确认步。
+    const offDocsOnboard = window.klarit.onDocumentsOnboard((memberId) => {
+      void refresh()
+      setDocOnboardMember(memberId)
+    })
+    // 注册表变更广播（管理窗移除/导入等）→ 刷新项目列表与绑定状态：被移除项目从切换器消失、
+    // 当前项目被移除则窗口回空态；激活工作流随绑定状态一并重读。
+    const offProjects = window.klarit.onProjectsChanged(() => {
       void refresh()
       void refreshActiveWorkflow()
     })
@@ -167,12 +202,14 @@ export function App(): React.JSX.Element {
     return () => {
       offTheme()
       offBound()
+      offDocsOnboard()
+      offProjects()
       offCards()
       offTree()
       offEngine()
       offGitFocus()
     }
-  }, [refresh, refreshActiveWorkflow])
+  }, [refresh, refreshActiveWorkflow, maybeDocOnboard])
 
   const onChangeLanguage = useCallback(async (lang: SupportedLanguage) => {
     const saved = await window.klarit.setLanguage(lang)
@@ -259,8 +296,18 @@ export function App(): React.JSX.Element {
 
   const onImport = useCallback(async () => {
     // 含多子仓的目录直接组建多仓项目（无需确认）；导入后刷新以显示。
-    const outcome = await window.klarit.importProject()
-    if (outcome) await refresh()
+    setImporting(true)
+    try {
+      const outcome = await window.klarit.importProject()
+      if (outcome) {
+        await refresh()
+        // 本窗口内导入：新建项目**一律**进文档确认步（含移除后重导入——重导入=重新识别）；
+        // 复用既有项目（重复导入/多 worktree）不弹。
+        if (!outcome.reused) setDocOnboardMember(outcome.project.members[0]?.id ?? null)
+      }
+    } finally {
+      setImporting(false)
+    }
   }, [refresh])
 
   const onSelectProject = useCallback(
@@ -351,6 +398,22 @@ export function App(): React.JSX.Element {
           onConfirm={onConfirmOnboarding}
           onSkip={onSkipOnboarding}
         />
+      )}
+      {/* 文档确认步排在 agent 引导之后（起草依赖已选 agent）。 */}
+      {docOnboardMember && !onboarding && (
+        <DocumentOnboardingDialog
+          memberId={docOnboardMember}
+          onClose={() => setDocOnboardMember(null)}
+        />
+      )}
+      {/* 导入/识别进行中：全屏加载指示（原生目录选择器悬浮其上，不受影响）。 */}
+      {importing && (
+        <div role="status" className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50">
+          <div className="flex items-center gap-2 rounded-card border border-stone-100 bg-paper px-4 py-3 text-[13px] text-ink">
+            <Loader2 size={16} className="animate-spin text-cobalt-500" />
+            {t('projectSwitcher.importing')}
+          </div>
+        </div>
       )}
     </div>
   )

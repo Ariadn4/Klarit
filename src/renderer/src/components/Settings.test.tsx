@@ -150,4 +150,54 @@ describe('Settings 设置入口', () => {
     await userEvent.click(screen.getByRole('button', { name: '关闭设置' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
+
+  it('项目设置组含「文档」项，点选展示当前成员仓的登记表编辑器', async () => {
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = {
+      listWorkflows: vi.fn(async () => []),
+      getActiveWorkflow: vi.fn(async () => null),
+      getDocuments: vi.fn(async () => ({
+        memberId: 'm1',
+        docs: [
+          { id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }
+        ],
+        conventionPreamble: '',
+        conventionApproved: false
+      })),
+      scanDocuments: vi.fn(async () => null),
+      saveDocuments: vi.fn(async () => undefined),
+      redraftDocuments: vi.fn(async () => null)
+    }
+    renderSettings({
+      project: {
+        id: 'p1',
+        displayName: 'proj',
+        derivedName: 'proj',
+        members: [
+          {
+            id: 'm1',
+            idKind: 'uuid',
+            derivedName: 'web',
+            rootPath: '/repo/web',
+            worktreePaths: ['/repo/web'],
+            git: null,
+            gitless: true
+          }
+        ],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    })
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    await userEvent.click(screen.getByRole('button', { name: '文档' }))
+    expect(await screen.findByRole('region', { name: '动态文档' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '快照文档' })).toBeInTheDocument()
+    expect(screen.getByText('README.md')).toBeInTheDocument()
+  })
+
+  it('项目设置→文档：未绑定项目时显示空态、不报错', async () => {
+    renderSettings()
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    await userEvent.click(screen.getByRole('button', { name: '文档' }))
+    expect(screen.getByText(/未绑定项目/)).toBeInTheDocument()
+  })
 })

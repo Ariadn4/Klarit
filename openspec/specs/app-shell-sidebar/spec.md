@@ -79,6 +79,8 @@ TBD - created by archiving change add-project-sidebar. Update Purpose after arch
 
 侧边栏底部 SHALL 有一个项目切换器。当存在已导入项目时，它显示当前项目名；点击弹出子菜单，列出所有已导入项目（当前项目带勾选标记），并在子菜单内提供「管理项目…」入口。当从未导入过任何项目时，切换器 MUST 改为显示「导入新项目」按钮。「管理项目…」MUST 可点击，点击打开管理项目窗口（见 `manage-projects-window`）。
 
+注册表变更 MUST **实时广播到所有已开窗口**：在管理项目窗口移除/导入项目后，各窗口的切换器子菜单与项目状态 MUST 立即反映注册表当前内容（被移除的项目不再出现在子菜单里），不需要重启应用。
+
 #### Scenario: 已有项目时显示当前项目名
 - **WHEN** 窗口绑定了某项目
 - **THEN** 切换器按钮显示该项目名
@@ -94,6 +96,10 @@ TBD - created by archiving change add-project-sidebar. Update Purpose after arch
 #### Scenario: 点击「管理项目…」打开管理窗口
 - **WHEN** 用户打开切换器子菜单并点击「管理项目…」
 - **THEN** 系统打开管理项目窗口（其布局与行为见 `manage-projects-window`）
+
+#### Scenario: 管理窗移除项目后子菜单即时同步
+- **WHEN** 项目在管理项目窗口被移除，而另一窗口开着切换器可用状态
+- **THEN** 该窗口收到注册表变更广播并刷新：子菜单不再列出被移除项目；若被移除的是当前项目，窗口回到未绑定空态
 
 ### Requirement: 侧边栏宽度可拖动调整
 

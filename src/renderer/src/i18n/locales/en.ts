@@ -39,6 +39,7 @@ export const en: Dictionary = {
   },
   projectSwitcher: {
     importNew: 'Import new project',
+    importing: 'Importing project…',
     selectProject: 'Select project',
     manageProjects: 'Manage projects…'
   },
@@ -71,6 +72,9 @@ export const en: Dictionary = {
     navRules: 'Rule library',
     navCardTypes: 'Cards',
     navConstitution: 'Constitution',
+    navDocuments: 'Documents',
+    sectionProjectDocuments: 'Project documents',
+    noProjectDocuments: 'No project bound — open a project to manage its document registry here.',
     appearanceLabel: 'Appearance',
     appearanceOption: {
       dark: 'Dark',
@@ -599,5 +603,46 @@ export const en: Dictionary = {
     rejectReasonPlaceholder: 'Describe what’s wrong; on submit the AI decides which node to roll back to and fix',
     rollbackRejudge: 'Not these nodes? Rephrase (optional)',
     rollbackRejudgePlaceholder: 'If it should go elsewhere, write a line and the AI re-decides'
+  },
+  documentRegistry: {
+    dynamicColumn: 'Living docs',
+    snapshotColumn: 'Snapshot docs',
+    dynamicDescription: 'Keep only the latest state; rewrite when stale',
+    snapshotDescription: 'Frozen records of a moment; append-only',
+    emptyColumn: 'No entries',
+    rowAria: 'Document {{location}}',
+    reclassifyAria: 'Reclassify {{location}}',
+    ejectAria: 'Remove {{location}}',
+    addEntry: 'Add file/folder',
+    addPathAria: 'Path to add',
+    addPathPlaceholder: 'Path relative to repo root, e.g. docs/notes.md',
+    addKindAria: 'Target bucket',
+    addConfirm: 'Add',
+    habitPromptLabel: 'Habit prompt',
+    habitPromptAria: 'Habit prompt {{location}}',
+    habitPromptDescription:
+      'Drafts capture only readable format habits; add when-to-write intent, then Confirm & save to make it effective',
+    pathLabel: 'Path',
+    pathAria: 'Path {{location}}',
+    pathApply: 'Apply path {{location}}',
+    pathApplyText: 'Apply',
+    coversFiles: 'Covers {{count}} files',
+    convention: 'Doc conventions',
+    conventionDescription:
+      'Project-wide cross-file rules (language, style, layout…); effective downstream after Confirm & save',
+    rescan: 'Rescan',
+    skip: 'Skip',
+    analyzing: 'Scanning this repo’s documentation…',
+    onboardingScanning:
+      'Scanning this repo’s documentation… You can also skip and continue later in Settings.',
+    noAgentHint:
+      'No default agent configured — this table came from path heuristics (no semantic grouping or prompts). Configure one, then hit “Rescan” for agent analysis.',
+    analyzeFailed:
+      'Analysis failed: {{message}} — showing the heuristic fallback; hit “Rescan” to retry',
+    onboardingTitle: 'Document registry',
+    confirmSave: 'Confirm & save',
+    settingsEmpty: 'No registry yet — hit “Rescan” to generate one',
+    memberSelectAria: 'Select repo member',
+    noProject: 'No project bound to this window.'
   }
 }

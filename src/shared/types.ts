@@ -1043,6 +1043,38 @@ export type EngineProgressEvent =
   | { kind: 'decision'; runId: string; decision: EngineDecision }
   | { kind: 'state'; runId: string; state: RunState }
 
+// ── 文档登记表（document-registry）：per-成员仓的文档现状单一事实源 ──
+
+/** 文档脾性——仅此两值；「不纳管」不是一个 kind，它表达为该文档不在登记表内。 */
+export type DocKind = 'dynamic' | 'snapshot'
+
+/** 登记表一条：三件套（位置 + 脾性 + 习惯 prompt）+ 审批闸；文件夹坍缩条目额外圈 coversFiles。 */
+export interface ManagedDoc {
+  /** 条目 id（取 location，登记表内唯一）。 */
+  id: string
+  /** 相对成员仓根的路径（POSIX 分隔）。 */
+  location: string
+  kind: DocKind
+  /** 习惯 prompt（格式/模板/命名/时态 + 用户补的频率/意图）；未起草为空串。 */
+  habitPrompt: string
+  /** 审批闸：false 时 habitPrompt 是草稿，下游文档操作不得依赖它行使习惯。 */
+  approved: boolean
+  /** 文件夹级坍缩条目标记。 */
+  isFolder?: boolean
+  /** 仅文件夹条目：该夹下全部纳管叶子的相对路径。 */
+  coversFiles?: string[]
+}
+
+/** per-成员仓的文档登记表：docs + 项目级「文档公约」前言（跨文件通则）。 */
+export interface DocRegistry {
+  memberId: string
+  docs: ManagedDoc[]
+  /** 项目级文档公约（跨文件通则）；未起草为空串。 */
+  conventionPreamble: string
+  /** 公约审批闸：false 时公约是草稿、不生效。 */
+  conventionApproved: boolean
+}
+
 /** preload 经 contextBridge 暴露给渲染层的 API。 */
 export interface KlaritApi {
   /** 弹目录选择并导入；用户取消返回 null。含多子仓的目录直接组建多仓项目（无需确认）。 */
@@ -1322,4 +1354,21 @@ export interface KlaritApi {
   copyText: (text: string) => Promise<void>
   /** 取拖入文件的本地绝对路径（Electron webUtils；同步）。 */
   getDroppedFilePath: (file: File) => string
+  // ── 文档登记表（per-成员仓）──
+  /**
+   * agent 语义分析某成员仓（分组+分类+起草一体，读清单+内容样本），并入既有表后返回（不落盘）；
+   * 成员不存在返回 null。`error`：null=成功；'no-agent'=确未配置默认 agent（回落启发式结果）；
+   * 其它=agent 调用/解析的具体错误摘要（同样回落启发式结果）。
+   */
+  analyzeDocuments: (
+    memberId: string
+  ) => Promise<{ registry: DocRegistry; error: string | null } | null>
+  /** 读某成员仓的登记表；无表给空壳。 */
+  getDocuments: (memberId: string) => Promise<DocRegistry>
+  /** 规整后整表落盘（编辑/审批/跳过保存当前态共用）。 */
+  saveDocuments: (registry: DocRegistry) => Promise<void>
+  /** 订阅「新导入项目 → 进文档确认步」推送（管理窗导入等窗口外入口）；返回取消订阅函数。 */
+  onDocumentsOnboard: (handler: (memberId: string) => void) => () => void
+  /** 订阅项目注册表变更广播（管理窗移除/导入等）——收到即刷新项目列表与绑定状态；返回取消订阅函数。 */
+  onProjectsChanged: (handler: () => void) => () => void
 }

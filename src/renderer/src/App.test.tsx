@@ -23,6 +23,8 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     getEffectiveTheme: vi.fn(async () => 'light'),
     onThemeChange: vi.fn(() => () => {}),
     onProjectBound: vi.fn(() => () => {}),
+    onDocumentsOnboard: vi.fn(() => () => {}),
+    onProjectsChanged: vi.fn(() => () => {}),
     onCardsChanged: vi.fn(() => () => {}),
     getSidebarWidth: vi.fn(async () => 240),
     setSidebarWidth: vi.fn(async () => {}),
@@ -247,6 +249,132 @@ describe('App 打开详情联动 git 视图', () => {
     })
     await waitFor(() => expect(api.cardBranches).toHaveBeenCalledWith('add-thing'))
     expect(api.focusCardGitView).not.toHaveBeenCalled()
+  })
+})
+
+describe('App 文档确认步（导入后）', () => {
+  const emptyRegistry = { memberId: 'm1', docs: [], conventionPreamble: '', conventionApproved: false }
+  const scannedRegistry = {
+    memberId: 'm1',
+    docs: [
+      { id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }
+    ],
+    conventionPreamble: '',
+    conventionApproved: false
+  }
+
+  it('新导入项目绑定本窗口（projectBound）→ 弹文档确认步并触发扫描', async () => {
+    let boundCb: (() => void) | undefined
+    const fresh = singleRepoProject('/p')
+    fresh.createdAt = new Date().toISOString()
+    const api = installKlarit({
+      onProjectBound: vi.fn((cb: () => void) => {
+        boundCb = cb
+        return () => {}
+      }),
+      getCurrentProject: vi.fn(async () => fresh),
+      getDocuments: vi.fn(async () => emptyRegistry),
+      analyzeDocuments: vi.fn(async () => ({ registry: scannedRegistry, error: null })),
+      saveDocuments: vi.fn(async () => undefined)
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    act(() => boundCb?.())
+    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
+    await waitFor(() => expect(api.analyzeDocuments).toHaveBeenCalledWith('m1'))
+    // 跳过 → 保存当前态并关闭。
+    await userEvent.click(screen.getByRole('button', { name: '跳过' }))
+    await waitFor(() => expect(api.saveDocuments).toHaveBeenCalled())
+    expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+  })
+
+  it('导入进行中显示加载指示，完成后进入文档确认步', async () => {
+    let resolveImport: ((v: unknown) => void) | undefined
+    const fresh = singleRepoProject('/p')
+    fresh.createdAt = new Date().toISOString()
+    const api = installKlarit({
+      importProject: vi.fn(
+        () =>
+          new Promise((r) => {
+            resolveImport = r
+          })
+      ),
+      getCurrentProject: vi.fn(async () => fresh),
+      getDocuments: vi.fn(async () => emptyRegistry),
+      analyzeDocuments: vi.fn(async () => ({ registry: scannedRegistry, error: null })),
+      saveDocuments: vi.fn(async () => undefined)
+    })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: '导入新项目' }))
+    // 导入/识别期间显示加载指示。
+    expect(await screen.findByText('正在导入项目…')).toBeInTheDocument()
+    act(() => resolveImport?.({ project: fresh, reused: false }))
+    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
+    expect(screen.queryByText('正在导入项目…')).toBeNull()
+    expect(api.analyzeDocuments).toHaveBeenCalledWith('m1')
+  })
+
+  it('主进程推送 documents:onboard（管理窗导入/移除后立刻重导入）→ 立即弹文档确认步', async () => {
+    let onboardCb: ((memberId: string) => void) | undefined
+    const api = installKlarit({
+      onDocumentsOnboard: vi.fn((cb: (memberId: string) => void) => {
+        onboardCb = cb
+        return () => {}
+      }),
+      getDocuments: vi.fn(async () => emptyRegistry),
+      analyzeDocuments: vi.fn(async () => ({ registry: scannedRegistry, error: null })),
+      saveDocuments: vi.fn(async () => undefined)
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    act(() => onboardCb?.('m1'))
+    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
+    await waitFor(() => expect(api.analyzeDocuments).toHaveBeenCalledWith('m1'))
+  })
+
+  it('旧项目绑定（创建已久）不弹文档确认步', async () => {
+    let boundCb: (() => void) | undefined
+    const api = installKlarit({
+      onProjectBound: vi.fn((cb: () => void) => {
+        boundCb = cb
+        return () => {}
+      }),
+      getCurrentProject: vi.fn(async () => singleRepoProject('/p')), // createdAt=2026-01-01（久远）
+      getDocuments: vi.fn(async () => emptyRegistry),
+      analyzeDocuments: vi.fn(async () => ({ registry: scannedRegistry, error: null }))
+    })
+    render(<App />)
+    await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
+    act(() => boundCb?.())
+    await waitFor(() => expect(api.getCurrentProject).toHaveBeenCalled())
+    expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+    expect(api.analyzeDocuments).not.toHaveBeenCalled()
+  })
+})
+
+describe('App 注册表变更广播', () => {
+  it('收到 projects:changed 后刷新：被移除项目从切换器消失、当前窗口回空态', async () => {
+    let projectsCb: (() => void) | undefined
+    const proj = singleRepoProject('/p')
+    let projects = [proj]
+    const api = installKlarit({
+      onProjectsChanged: vi.fn((cb: () => void) => {
+        projectsCb = cb
+        return () => {}
+      }),
+      getCurrentProject: vi.fn(async () => (projects.length > 0 ? proj : null)),
+      listProjects: vi.fn(async () => projects)
+    })
+    render(<App />)
+    // 挂载后切换器显示当前项目名（项目名可能同时出现在文件树分组，用 findAll）。
+    expect((await screen.findAllByText('proj')).length).toBeGreaterThan(0)
+    // 管理窗移除该项目 → 主进程广播 → 本窗口刷新。
+    projects = []
+    act(() => projectsCb?.())
+    await waitFor(() => expect(screen.queryByText('proj')).toBeNull())
+    // 无项目后切换器回「导入新项目」空态。
+    expect(screen.getByRole('button', { name: '导入新项目' })).toBeInTheDocument()
+    expect((api.listProjects as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 })
 

@@ -166,6 +166,19 @@ const api: KlaritApi = {
   pickAttachments: () => ipcRenderer.invoke(IPC.pickAttachments),
   saveClipboardImage: () => ipcRenderer.invoke(IPC.saveClipboardImage),
   copyText: (text) => ipcRenderer.invoke(IPC.copyText, text),
+  analyzeDocuments: (memberId) => ipcRenderer.invoke(IPC.documentsAnalyze, memberId),
+  getDocuments: (memberId) => ipcRenderer.invoke(IPC.documentsGet, memberId),
+  saveDocuments: (registry) => ipcRenderer.invoke(IPC.documentsSave, registry),
+  onDocumentsOnboard: (handler) => {
+    const listener = (_e: unknown, memberId: string): void => handler(memberId)
+    ipcRenderer.on(IPC.documentsOnboard, listener)
+    return () => ipcRenderer.removeListener(IPC.documentsOnboard, listener)
+  },
+  onProjectsChanged: (handler) => {
+    const listener = (): void => handler()
+    ipcRenderer.on(IPC.projectsChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.projectsChanged, listener)
+  },
   // Electron 42 起 File.path 已移除，拖入文件的本地路径用 webUtils 取（同步、在 preload 上下文执行）。
   getDroppedFilePath: (file: File) => webUtils.getPathForFile(file)
 }

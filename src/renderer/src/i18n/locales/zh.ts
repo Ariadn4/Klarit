@@ -37,6 +37,7 @@ export const zh = {
   },
   projectSwitcher: {
     importNew: '导入新项目',
+    importing: '正在导入项目…',
     selectProject: '选择项目',
     manageProjects: '管理项目…'
   },
@@ -69,6 +70,9 @@ export const zh = {
     navRules: '规则库',
     navCardTypes: '需求卡',
     navConstitution: '宪法',
+    navDocuments: '文档',
+    sectionProjectDocuments: '项目文档',
+    noProjectDocuments: '未绑定项目——打开一个项目后在此管理其文档登记表。',
     appearanceLabel: '外观',
     appearanceOption: {
       dark: '深色',
@@ -592,6 +596,42 @@ export const zh = {
     rejectReasonPlaceholder: '写明哪里不满意，提交后交给 AI 判定该回退到哪个节点修复',
     rollbackRejudge: '不该退到这些节点？换个说法（可留空）',
     rollbackRejudgePlaceholder: '觉得该退到别处，写一句，AI 重新判定'
+  },
+  documentRegistry: {
+    dynamicColumn: '动态文档',
+    snapshotColumn: '快照文档',
+    dynamicDescription: '只记最新现状、过时直接改写',
+    snapshotDescription: '某时刻的冻结记录、只追加不改写',
+    emptyColumn: '暂无条目',
+    rowAria: '文档 {{location}}',
+    reclassifyAria: '改判 {{location}}',
+    ejectAria: '移出 {{location}}',
+    addEntry: '添加文件/文件夹',
+    addPathAria: '要添加的路径',
+    addPathPlaceholder: '相对仓根路径，如 docs/notes.md',
+    addKindAria: '添加到的桶',
+    addConfirm: '确认添加',
+    habitPromptLabel: '习惯 prompt',
+    habitPromptAria: '习惯 prompt {{location}}',
+    habitPromptDescription: '起草只写读得出的格式习惯；请补上何时写、写不写的意图，确认保存即生效',
+    pathLabel: '路径',
+    pathAria: '路径 {{location}}',
+    pathApply: '应用路径 {{location}}',
+    pathApplyText: '应用',
+    coversFiles: '覆盖 {{count}} 个文件',
+    convention: '文档公约',
+    conventionDescription: '项目级跨文件通则（语言、风格、目录约定……），确认保存后对下游生效',
+    rescan: '重新扫描',
+    skip: '跳过',
+    analyzing: '正在扫描该仓库文档现状…',
+    onboardingScanning: '正在扫描该仓库文档现状……也可先跳过，稍后在设置里继续。',
+    noAgentHint: '未配置默认 agent——本表由路径启发式生成（无语义分组与 prompt）；配好后点「重新扫描」交给 agent 分析',
+    analyzeFailed: '分析失败：{{message}}——当前显示启发式兜底结果，可点「重新扫描」重试',
+    onboardingTitle: '文档登记表',
+    confirmSave: '确认并保存',
+    settingsEmpty: '尚无登记表——点「重新扫描」生成',
+    memberSelectAria: '选择成员仓',
+    noProject: '当前窗口未绑定项目。'
   }
 }
 

@@ -19,6 +19,8 @@ export const IPC = {
   projectBound: 'project:bound',
   /** 主进程侧卡片链变化（尤其自动排程异步启动卡后）→ 广播给所有窗口，渲染层据此重载卡片。 */
   cardsChanged: 'cards:changed',
+  /** main → renderer：项目注册表变更（管理窗移除/导入等）→ 广播所有窗口刷新项目列表与绑定状态。 */
+  projectsChanged: 'projects:changed',
   /** 管理项目窗口里「打开本地项目」：选目录导入并打开。 */
   manageImportProject: 'manage:import',
   /** 在系统文件管理器中定位某路径。 */
@@ -208,6 +210,15 @@ export const IPC = {
   cardsRun: 'cards:run',
   /** 列某卡各成员仓已建出分支的条目（成员仓名 + 实际分支）。 */
   cardsBranches: 'cards:branches',
+  // ── 文档登记表（per-成员仓：分析/读/写）──
+  /** agent 语义分析（分组+分类+起草一体，读清单+样本）；无 agent/失败回落启发式。并入既有表返回（不落盘）。 */
+  documentsAnalyze: 'documents:analyze',
+  /** 读某成员仓的登记表；无表给空壳。 */
+  documentsGet: 'documents:get',
+  /** 规整后整表落盘。 */
+  documentsSave: 'documents:save',
+  /** main → renderer：新导入项目落定，请该项目的窗口立即进入文档确认步（载荷为 memberId）。 */
+  documentsOnboard: 'documents:onboard',
   /** 程序化聚焦：把侧边栏切到 git 视图并定位到指定（成员仓, 分支）的 worktree。 */
   gitViewFocus: 'gitView:focus',
   /** main → renderer：请求渲染层把 git 视图聚焦到某（成员仓, 分支）。 */

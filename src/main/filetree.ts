@@ -2,9 +2,9 @@ import { readdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import chokidar, { type FSWatcher } from 'chokidar'
 import type { FileNode, FileTreeChange } from '../shared/types'
+import { IGNORED_DIRS } from '../shared/ignored-dirs'
 
-/** 文件树默认忽略的重目录（性能 + 噪声）。 */
-export const IGNORED_DIRS = new Set(['node_modules', '.git', 'out', 'dist', 'coverage'])
+export { IGNORED_DIRS }
 
 /** 列出目录直接子项（懒加载：目录子项按需再取）。目录在前、按名排序。 */
 export function listDir(dirPath: string): FileNode[] {
