@@ -21,6 +21,12 @@ export interface SupportedAgent {
   command: string
   /** 该 agent 的可选模型清单（可为空，表示无可选模型）。 */
   models: AgentModel[]
+  /**
+   * 该运行时是否**确证支持子 agent**（如 Claude Code 的 Task/子 agent 能力）——供 `archive-docs` 等节点
+   * 决定「派多个子 agent 并行」还是「单 agent 串行退化」。**缺省视为不支持**（保守：探测不准即走串行，
+   * 不因误判并行而失败）。
+   */
+  supportsSubagents?: boolean
 }
 
 /**
@@ -32,6 +38,8 @@ export const SUPPORTED_AGENTS: SupportedAgent[] = [
     id: 'claude-code',
     name: 'Claude Code',
     command: 'claude',
+    // Claude Code 自带 Task/子 agent 能力 → 归档等可派多个子 agent 并行。
+    supportsSubagents: true,
     models: [
       { id: 'claude-opus-4-8', name: 'Opus 4.8' },
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
@@ -76,6 +84,14 @@ export function modelsForAgent(id: AgentId): AgentModel[] {
 /** 把任意输入收敛为受支持 agent id；非受支持值返回 undefined（视为未选择）。 */
 export function coerceDefaultAgentId(value: unknown): AgentId | undefined {
   return findAgent(value)?.id
+}
+
+/**
+ * 某运行时是否**确证支持子 agent**（供 `archive-docs` 决定并行 vs 串行退化）。**保守**：未知/未选择/未声明
+ * 一律返回 `false`（探测不准即走串行，不因误判并行而失败）。见 document-archive 的能力门控。
+ */
+export function agentSupportsSubagents(id: unknown): boolean {
+  return findAgent(id)?.supportsSubagents === true
 }
 
 /**

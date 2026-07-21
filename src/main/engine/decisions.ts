@@ -91,6 +91,14 @@ export function buildFailureDecision(
     // agent 开 PR 不可用(无默认 agent)——终局失败,给重试/跳过(前进式)。
     return make(`${K}.openPrNoAgent`, [RETRY, SKIP_NODE], { titleParams: { node: nodeName }, reason: detail || undefined })
   }
+  if (operation === 'archive-docs' && outcome === 'no-registry') {
+    // 该成员仓从未建立文档登记表——挂起提示先建表(去设置/onboarding 建),再重试或跳过。
+    return make(`${K}.archiveNoRegistry`, [RETRY, SKIP_NODE], { titleParams: { node: nodeName }, reason: detail || undefined })
+  }
+  if (operation === 'archive-docs') {
+    // 归档委派 agent 不可用(无默认 agent)——终局失败,给重试/跳过(前进式)。
+    return make(`${K}.archiveNoAgent`, [RETRY, SKIP_NODE], { titleParams: { node: nodeName }, reason: detail || undefined })
+  }
   if (operation === 'merge-branch' && outcome === 'conflict') {
     // heal 超限/不可用才回落到此;`reason`=冲突详情(哪些文件冲突),让用户看到具体是什么冲突。
     return make(`${K}.mergeConflict`, [{ id: 'skip', labelKey: `${K}.optSkipMerge` }], { reason: detail || undefined })

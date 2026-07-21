@@ -12,6 +12,8 @@ import { emptyRegistry, normalizeRegistry } from '../shared/document-registry'
 export interface DocumentStore {
   /** 读某成员仓的登记表；无表/损坏返回空壳。 */
   get(memberId: string): DocRegistry
+  /** 该成员仓是否已建立登记表（落盘文件存在）；供归档区分「从未建表→挂起」与「空表→noop」。 */
+  has(memberId: string): boolean
   /** 规整后落盘（整表覆写）。 */
   save(registry: DocRegistry): void
   /** 删除某成员仓的登记表（项目移除时连带清理；重导入即白纸重扫）。无表 no-op。 */
@@ -29,6 +31,9 @@ export function createDocumentStore(baseDir: string): DocumentStore {
       } catch {
         return emptyRegistry(memberId)
       }
+    },
+    has(memberId) {
+      return existsSync(file(memberId))
     },
     save(registry) {
       mkdirSync(baseDir, { recursive: true })

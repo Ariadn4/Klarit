@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { WorkflowDefinition, WorkflowGateItem, WorkflowNode } from './types'
+import type { DocRegistry, WorkflowDefinition, WorkflowGateItem, WorkflowNode } from './types'
 import {
   isSafeRelativePath,
   validateWorkflow,
@@ -14,6 +14,7 @@ import {
   ENGINE_OPERATIONS,
   engineOpCapabilities,
   buildAuthorWorkflowSkill,
+  buildArchiveDelegation,
   repairWorkflow
 } from './workflow'
 
@@ -60,7 +61,7 @@ describe('isSafeRelativePath', () => {
 })
 
 describe('engineOpCapabilities', () => {
-  it('封闭操作集为 9 个操作（含平台预制的 open-pr；核查已合并不是操作、是外部门）', () => {
+  it('封闭操作集为 10 个操作（含平台预制的 open-pr 与 archive-docs；核查已合并不是操作、是外部门）', () => {
     expect([...ENGINE_OPERATIONS]).toEqual([
       'create-branch',
       'open-worktree',
@@ -70,19 +71,26 @@ describe('engineOpCapabilities', () => {
       'remove-worktree',
       'delete-branch',
       'delete-remote-branch',
-      'open-pr'
+      'open-pr',
+      'archive-docs'
     ])
     expect([...ENGINE_OPERATIONS]).not.toContain('verify-pr-merged')
   })
 
-  it('产出/可写范围皆否；supportsGate 仅 push-branch 与 open-pr 为真', () => {
+  it('supportsGate 仅 push-branch 与 open-pr 为真；产出位仅 archive-docs 为真（其写文档并提交）', () => {
     for (const op of ENGINE_OPERATIONS) {
       expect(engineOpCapabilities(op)).toEqual({
-        producesOutputs: false,
+        producesOutputs: op === 'archive-docs',
         supportsGate: op === 'push-branch' || op === 'open-pr',
         supportsWritableScope: false
       })
     }
+  })
+
+  it('archive-docs 不支持门（不可在其上挂门）、产出位为是', () => {
+    const cap = engineOpCapabilities('archive-docs')
+    expect(cap.supportsGate).toBe(false)
+    expect(cap.producesOutputs).toBe(true)
   })
 
   it('复合别名 delete-branch-worktree 回落为三项皆否（仍被识别、不在下拉）', () => {
@@ -184,6 +192,19 @@ describe('buildAuthorWorkflowSkill', () => {
     expect(skill).toMatch(/平台无关|各平台|平台/)
   })
 
+  it('讲清 archive-docs 的面向需求语义：读登记表、按习惯归档、并行/串行、产生提交', () => {
+    expect(skill).toContain('archive-docs')
+    // 读文档登记表
+    expect(skill).toMatch(/登记表/)
+    // 按 kind 归档（动态就地更新 / 快照按习惯追加）
+    expect(skill).toMatch(/就地更新|动态/)
+    expect(skill).toMatch(/追加|快照/)
+    // 子 agent 支持时并行、否则串行退化
+    expect(skill).toMatch(/子 ?agent|并行|串行/)
+    // 产生并提交
+    expect(skill).toMatch(/提交/)
+  })
+
   it('讲清外部门 external：等平台合并、pr-merged、打回即回退', () => {
     expect(skill).toContain('external')
     expect(skill).toContain('pr-merged')
@@ -191,6 +212,76 @@ describe('buildAuthorWorkflowSkill', () => {
     expect(skill).toMatch(/合并/)
     // 门把三类都出现
     for (const k of ['auto', 'manual', 'external']) expect(skill).toContain(k)
+  })
+})
+
+describe('buildArchiveDelegation', () => {
+  const reg = (over: Partial<DocRegistry> = {}): DocRegistry => ({
+    memberId: 'app',
+    docs: [],
+    conventionPreamble: '',
+    conventionApproved: false,
+    ...over
+  })
+
+  it('dynamic 条目合成就地更新指令（只留现状、不留旧版）', () => {
+    const text = buildArchiveDelegation(
+      reg({ docs: [{ id: 'docs/architecture.md', location: 'docs/architecture.md', kind: 'dynamic', habitPrompt: '', approved: false }] })
+    )
+    expect(text).toContain('docs/architecture.md')
+    expect(text).toMatch(/就地更新|最新现状/)
+    expect(text).toMatch(/不留旧版|只留现状|不留历史|不留差异/)
+  })
+
+  it('snapshot 条目合成追加冻结指令（既有内容不回改）', () => {
+    const text = buildArchiveDelegation(
+      reg({ docs: [{ id: 'docs/adr', location: 'docs/adr', kind: 'snapshot', habitPrompt: '', approved: false, isFolder: true, coversFiles: ['docs/adr/0001.md'] }] })
+    )
+    expect(text).toContain('docs/adr')
+    expect(text).toMatch(/追加/)
+    expect(text).toMatch(/不.*回改|不修改既有|冻结/)
+  })
+
+  it('仅 approved 的 habitPrompt 被注入；未审批不注入其习惯文本', () => {
+    const approved = buildArchiveDelegation(
+      reg({ docs: [{ id: 'CHANGELOG.md', location: 'CHANGELOG.md', kind: 'snapshot', habitPrompt: '仅重大改动才落一条', approved: true }] })
+    )
+    expect(approved).toContain('仅重大改动才落一条')
+
+    const draft = buildArchiveDelegation(
+      reg({ docs: [{ id: 'CHANGELOG.md', location: 'CHANGELOG.md', kind: 'snapshot', habitPrompt: '仅重大改动才落一条', approved: false }] })
+    )
+    expect(draft).not.toContain('仅重大改动才落一条')
+    // 未审批仍按 kind 兜底给出动作
+    expect(draft).toContain('CHANGELOG.md')
+    expect(draft).toMatch(/追加/)
+  })
+
+  it('仅 conventionApproved 的项目公约作前言注入', () => {
+    const approved = buildArchiveDelegation(
+      reg({ conventionPreamble: '所有文档用中文写', conventionApproved: true, docs: [{ id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }] })
+    )
+    expect(approved).toContain('所有文档用中文写')
+
+    const draft = buildArchiveDelegation(
+      reg({ conventionPreamble: '所有文档用中文写', conventionApproved: false, docs: [{ id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }] })
+    )
+    expect(draft).not.toContain('所有文档用中文写')
+  })
+
+  it('支持子 agent 时给并行提示、否则给串行提示', () => {
+    const docs = [{ id: 'README.md', location: 'README.md', kind: 'dynamic' as const, habitPrompt: '', approved: false }]
+    const parallel = buildArchiveDelegation(reg({ docs }), { subagents: true })
+    expect(parallel).toMatch(/并行|子 ?agent/)
+    const serial = buildArchiveDelegation(reg({ docs }), { subagents: false })
+    expect(serial).toMatch(/顺次|逐条|串行/)
+  })
+
+  it('指令要求提交文档改动（归档产生提交，非外部动作丢弃）', () => {
+    const text = buildArchiveDelegation(
+      reg({ docs: [{ id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }] })
+    )
+    expect(text).toMatch(/提交/)
   })
 })
 

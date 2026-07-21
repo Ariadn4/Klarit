@@ -4,7 +4,8 @@ import {
   listSupportedAgents,
   modelsForAgent,
   coerceDefaultAgentId,
-  coerceDefaultModel
+  coerceDefaultModel,
+  agentSupportsSubagents
 } from './agents'
 
 describe('listSupportedAgents', () => {
@@ -75,5 +76,23 @@ describe('coerceDefaultModel', () => {
   it('model 非字符串时返回 undefined', () => {
     expect(coerceDefaultModel('claude-code', undefined)).toBeUndefined()
     expect(coerceDefaultModel('claude-code', 42)).toBeUndefined()
+  })
+})
+
+describe('agentSupportsSubagents', () => {
+  it('支持子 agent 的运行时返回真（claude-code 有 Task/子 agent 能力）', () => {
+    expect(agentSupportsSubagents('claude-code')).toBe(true)
+  })
+
+  it('不确定/不支持子 agent 的运行时保守返回假（串行退化）', () => {
+    // codex/cursor 无确证的子 agent 能力 → 保守走串行。
+    expect(agentSupportsSubagents('codex')).toBe(false)
+    expect(agentSupportsSubagents('cursor')).toBe(false)
+  })
+
+  it('未选择 / 未知运行时返回假（保守，不因误判并行而失败）', () => {
+    expect(agentSupportsSubagents(undefined)).toBe(false)
+    expect(agentSupportsSubagents('nope')).toBe(false)
+    expect(agentSupportsSubagents(123 as never)).toBe(false)
   })
 })

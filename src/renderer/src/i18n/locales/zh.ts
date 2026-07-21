@@ -535,6 +535,8 @@ export const zh = {
     prNotMerged: 'PR 确认已合并后，点击以进行收尾工作。',
     prStillNotMerged: '检测到 PR 尚未在平台合并——请在平台确认合并后，再点「开始收尾」。',
     openPrNoAgent: '节点「{{node}}」要开 PR，但没有可用的 AI（默认 agent）来处理。请先在设置里配置默认 agent，再重试或跳过。',
+    archiveNoAgent: '节点「{{node}}」要归档文档，但没有可用的 AI（默认 agent）来处理。请先在设置里配置默认 agent，再重试或跳过。',
+    archiveNoRegistry: '节点「{{node}}」要归档文档，但这个成员仓还没建立文档登记表。请先在设置或初次引导里建立登记表，再重试或跳过。',
     generic: '节点「{{node}}」未能完成，请重试或跳过。',
     agentAsk: '「{{node}}」里的 AI 需要你的决定。',
     agentContinue: '继续',

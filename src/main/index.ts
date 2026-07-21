@@ -50,6 +50,7 @@ import {
   setDefaultModel as applyDefaultModel
 } from './settings'
 import { makeAgentProbe, scanAgents } from './agents'
+import { agentSupportsSubagents } from '../shared/agents'
 import {
   clearActiveWorkflow,
   findProjectById,
@@ -170,7 +171,11 @@ const engine = createEngine({
   // 临时 heal / 处置 agent 的 prompt：复用同一公共输入拼装，仅任务段换成 heal/处置文本。未选默认 agent → null（heal 不可用，回落人工）。
   prepareHealAgent: (bp, ctx) => prepareHealAgentForRun(bp, ctx),
   // 握手文件根目录：userData/engine-runs/handshakes/<runId>/<nodeId>.json（worktree 之外、不入 git）。
-  handshakeDir: join(app.getPath('userData'), 'engine-runs', 'handshakes')
+  handshakeDir: join(app.getPath('userData'), 'engine-runs', 'handshakes'),
+  // archive-docs 归档读某成员仓文档登记表：从未建表返回 null（→ 挂起提示建表），已建表返回其登记表（空 docs → noop）。
+  getDocRegistry: (memberId) => (documentStore.has(memberId) ? documentStore.get(memberId) : null),
+  // archive-docs 并行 vs 串行退化：按当前默认 agent 是否确证支持子 agent（未选/不确定 → false 走串行）。
+  supportsSubagents: () => agentSupportsSubagents(settings.defaultAgent)
 })
 
 // 规则包库：包目录存于 userData/rule-packs/<id>/（rule-pack.yaml）。

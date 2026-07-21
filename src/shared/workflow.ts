@@ -2,8 +2,10 @@
 
 import type {
   AgentInstruction,
+  DocRegistry,
   ExternalVerify,
   GateCheck,
+  ManagedDoc,
   NodeExecutor,
   WorkflowDefinition,
   WorkflowGateItem,
@@ -54,6 +56,13 @@ const GATE_ENGINE_CAP: EngineOpCapabilities = {
   supportsWritableScope: false
 }
 
+/** 产出文档并提交的引擎操作：archive-docs（内部委派 agent 归档、产生文档写入并提交；不支持门）。 */
+const PRODUCE_ENGINE_CAP: EngineOpCapabilities = {
+  producesOutputs: true,
+  supportsGate: false,
+  supportsWritableScope: false
+}
+
 /**
  * 引擎内置操作集（封闭操作集）——UI 下拉、校验与引擎执行的单一来源。
  * 「引擎操作」是**平台预制的现成节点**：对外统一是 engine 操作，**内部实现可由确定性 git/fs 动作、
@@ -74,7 +83,10 @@ const ENGINE_OPERATION_SPECS: Readonly<Record<string, EngineOpCapabilities>> = {
   'delete-remote-branch': NO_ENGINE_CAP,
   // 平台预制节点（内部委派 agent 应对各家平台差异，见 engine 分派）。open-pr 是「等平台合并」外部门的
   // 天然 host，故 supportsGate 为真。（「核查已合并」不是操作，而是外部门的过门条件，见 workflow-definition。）
-  'open-pr': GATE_ENGINE_CAP
+  'open-pr': GATE_ENGINE_CAP,
+  // 平台预制节点（内部委派 agent 读文档登记表按习惯归档）。与 open-pr 不同：它**产生文档写入并提交**
+  // （producesOutputs 为真），且不作外部门 host（supportsGate 为否）。见 engine 分派与 document-archive。
+  'archive-docs': PRODUCE_ENGINE_CAP
 }
 
 /** 旧复合别名（删 worktree + 删本地分支）；仍被校验与引擎识别，但不进下拉。 */
@@ -105,7 +117,9 @@ const EXECUTOR_KIND_DOC: Record<NodeExecutor['kind'], string> = {
 /** 少数操作的面向需求语义注解（写工作流 skill 用）——平台预制节点里内部实现特殊者点明其用途，别臆造平台细节。 */
 const ENGINE_OP_NOTES: Readonly<Record<string, string>> = {
   'open-pr':
-    '在各成员仓所在的托管平台上开 PR/MR——**逐涉及仓、平台无关**（内部委派 agent 认平台并用对的工具，你无需臆造 `gh`/`glab` 等具体平台 CLI）。想「等平台把 PR 合并、合了才收尾」就在它上面挂一道**外部门**（见下），**别配 `merge-branch`**（合并在平台上发生）'
+    '在各成员仓所在的托管平台上开 PR/MR——**逐涉及仓、平台无关**（内部委派 agent 认平台并用对的工具，你无需臆造 `gh`/`glab` 等具体平台 CLI）。想「等平台把 PR 合并、合了才收尾」就在它上面挂一道**外部门**（见下），**别配 `merge-branch`**（合并在平台上发生）',
+  'archive-docs':
+    '把本次任务该沉淀的内容归档到位——内部委派 agent **读该成员仓的文档登记表**（哪些是动态文档、哪些是快照文档、各自该怎么续写），照**审批过的习惯**各归各位：动态文档**就地更新**（只留最新现状）、快照文档**按习惯追加**一条冻结记录（可判定本次不落）。运行时 agent **支持子 agent 时派多个子 agent 并行**处理不同文档、不支持则**串行退化**。与 open-pr 不同，它**产生文档写入并提交**。挂在交付段收尾即可，无需你操心内部；某仓没建登记表会挂起提示先建表'
 }
 
 /** 引擎操作能力的可读标注（写工作流 skill 用）。 */
@@ -212,6 +226,60 @@ auto 门是「命令**退出码 0 才放行**」，**没有「反着判」**。�
 - \`reply\` 与工作流 \`description\` 都**面向需求、简短**：说这条流干什么用、为需求做了什么取舍。**不要**复述引擎的既定机制（多仓逐仓、门/分支配对怎么工作）——那些用户已知，复述是噪音。
 - 只输出这个 JSON 对象，不要解释、不要 markdown 代码围栏包整段。
 `
+}
+
+/** 一条 `ManagedDoc` 的归档动作行——按 kind 路由 + 仅注入审批过的 habitPrompt（否则按 kind 兜底）。 */
+function archiveDocLine(doc: ManagedDoc, index: number): string {
+  const folderNote =
+    doc.isFolder && doc.coversFiles?.length
+      ? `（文件夹这一类文档，含 ${doc.coversFiles.join('、')}）`
+      : ''
+  const head = `${index + 1}. \`${doc.location}\`${folderNote}`
+  const action =
+    doc.kind === 'dynamic'
+      ? '**动态文档 · 就地更新**：把它改写到反映最新现状——只留现状，不留旧版/差异/历史版本。'
+      : '**快照文档 · 追加冻结**：至多向它**追加**一条新的冻结记录；既有内容绝不回改、不修改。'
+  // 仅审批过的 habitPrompt 被注入；未审批只按 kind 兜底（不照未审批习惯）。
+  const habit =
+    doc.approved && doc.habitPrompt.trim()
+      ? `\n   文档规定（务必遵守）：${doc.habitPrompt.trim()}`
+      : doc.kind === 'snapshot'
+        ? '\n   （无审批过的文档规定：谨慎起见，仅本次确有值得沉淀的重大改动才追加一条，否则本次不落。）'
+        : '\n   （无审批过的文档规定：按动态文档就地更新兜底。）'
+  return `${head}\n   ${action}${habit}`
+}
+
+/**
+ * `archive-docs` 引擎操作的内置委派指令合成器——从**某成员仓的文档登记表**拼装，交给（子）agent 归档。
+ * 按 `ManagedDoc.kind` 路由（dynamic 就地更新 / snapshot 按习惯追加）；**仅 `approved` 的 habitPrompt 与
+ * `conventionApproved` 的项目公约被注入**，未审批的至多按 kind 兜底。`subagents` 为真时给并行提示（每条派一个
+ * 子 agent），否则给串行提示（顺次逐条）；两路产出语义等价、仅并发度不同。产生的文档改动要求提交。纯函数。
+ */
+export function buildArchiveDelegation(
+  registry: DocRegistry,
+  opts: { subagents?: boolean; repoLabel?: string } = {}
+): string {
+  const parts: string[] = []
+  const scope = opts.repoLabel ? `仓库「${opts.repoLabel}」` : '本仓'
+  parts.push(
+    `把本次任务产生、该沉淀下来的内容归档到${scope}文档登记表所列的位置——各归各位，**只碰下面列出的这些文档**，别动别的文件。`
+  )
+  // 项目级文档公约：仅审批过才作前言注入。
+  if (registry.conventionApproved && registry.conventionPreamble.trim()) {
+    parts.push(`\n## 项目文档公约（跨文件通则，务必遵守）\n${registry.conventionPreamble.trim()}`)
+  }
+  // 子 agent 支持时并行、否则串行退化（同一批逐条指令，仅并发度不同）。
+  parts.push(
+    opts.subagents
+      ? '\n下面每条文档彼此独立。**为每条文档各派一个子 agent 并行处理**，各干各的、互不阻塞。'
+      : '\n下面每条文档彼此独立。**顺次逐条处理**（一条处理完再下一条，串行）。'
+  )
+  parts.push('\n## 要归档的文档')
+  parts.push(registry.docs.map((d, i) => archiveDocLine(d, i)).join('\n'))
+  parts.push(
+    '\n完成后**提交这些文档改动**到当前分支（归档就是要把内容沉淀进仓里）。某条本次无需改动（如快照习惯判定本次不落）就跳过它，节点照常收尾。'
+  )
+  return parts.join('\n')
 }
 
 /**

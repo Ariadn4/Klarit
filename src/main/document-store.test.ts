@@ -99,6 +99,17 @@ describe('createDocumentStore：per-成员仓 JSON 持久化', () => {
     store.remove('从未存在')
   })
 
+  it('has：从未建表返回 false、建过返回 true、remove 后回 false（供归档区分「无表挂起」与「空表 noop」）', () => {
+    expect(store.has('member-h')).toBe(false)
+    store.save(reg('member-h'))
+    expect(store.has('member-h')).toBe(true)
+    // 空 docs 但已建表：仍算「有表」（归档据此走 noop 而非挂起建表）。
+    store.save({ memberId: 'member-empty', docs: [], conventionPreamble: '', conventionApproved: false })
+    expect(store.has('member-empty')).toBe(true)
+    store.remove('member-h')
+    expect(store.has('member-h')).toBe(false)
+  })
+
   it('save 前经 normalize：非法条目不落盘', () => {
     const dirty = {
       ...reg('member-y'),

@@ -3,7 +3,7 @@ import { writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { git, initRepo, initBare, makeTrash } from '../git-test-helpers'
 import { makeGitRunner } from '../git'
-import type { EngineProgressEvent, RunBreakpoint, WorkflowDefinition, WorkflowNode } from '../../shared/types'
+import type { DocRegistry, EngineProgressEvent, RunBreakpoint, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps } from './engine'
 import { createMemoryRunStore } from './run-store'
 import type { AgentRunner } from '../agent/runner'
@@ -894,5 +894,211 @@ describe('open-pr（平台预制节点，内部委派 agent）', () => {
     expect(bp.pendingDecision?.sourceKind).toBe('engine')
     // 不是被当作「未落地执行器」静默跳过
     expect(events.some((e) => e.kind === 'skip')).toBe(false)
+  })
+})
+
+describe('archive-docs（平台预制节点，内部委派 agent 读登记表按习惯归档并提交）', () => {
+  const reg = (over: Partial<DocRegistry> = {}): DocRegistry => ({
+    memberId: '<single>',
+    docs: [{ id: 'DOC.md', location: 'DOC.md', kind: 'dynamic', habitPrompt: '', approved: false }],
+    conventionPreamble: '',
+    conventionApproved: false,
+    ...over
+  })
+  /** 在 repo 上建 feature 分支并切过去（归档 agent 在其上写文档 → scopeGuard 提交）。 */
+  function onFeature(repo: string): void {
+    git(repo, 'checkout', '-q', '-b', 'feature')
+  }
+  /** agent 运行器桩：在 cwd 里把 `path` 写成 `content`（模拟归档 agent 落文档），记录调用次数与被喂 prompt。 */
+  function archivingRunner(path: string, content: string): AgentRunner & { calls: number; prompts: string[] } {
+    const r = {
+      calls: 0,
+      prompts: [] as string[],
+      supportsResume: () => true,
+      start(spec: Parameters<AgentRunner['start']>[0]): ReturnType<AgentRunner['start']> {
+        r.calls++
+        if (spec.prompt) r.prompts.push(spec.prompt)
+        writeFileSync(join(spec.cwd, path), content)
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      },
+      resume(): ReturnType<AgentRunner['resume']> {
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      }
+    }
+    return r
+  }
+
+  it('有表有 agent → 委派归档、提交文档改动、过节点', async () => {
+    const repo = trash.track(initRepo())
+    onFeature(repo)
+    const tipBefore = git(repo, 'rev-parse', 'HEAD')
+    const runner = archivingRunner('DOC.md', '# 最新现状\n')
+    const def = wf([engineNode('archive-docs')])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: runner,
+        getDocRegistry: () => reg(),
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('done')
+    expect(runner.calls).toBe(1)
+    // 文档改动被提交（不同于 open-pr 的丢弃）：HEAD 前进、DOC.md 进了版本历史
+    expect(git(repo, 'rev-parse', 'HEAD')).not.toBe(tipBefore)
+    expect(git(repo, 'show', 'HEAD:DOC.md')).toContain('最新现状')
+    expect(git(repo, 'status', '--porcelain')).toBe('')
+  })
+
+  it('委派的是 agent+inline 节点，指令由登记表按 kind 合成（读登记表、按习惯归档）', async () => {
+    const repo = trash.track(initRepo())
+    onFeature(repo)
+    let seen: WorkflowNode | null = null
+    const def = wf([engineNode('archive-docs')])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: archivingRunner('DOC.md', 'x'),
+        getDocRegistry: () => reg({ docs: [{ id: 'DOC.md', location: 'DOC.md', kind: 'dynamic', habitPrompt: '', approved: false }] }),
+        prepareAgent: (node) => {
+          seen = node
+          return { prompt: 'X', toolId: 'claude-code' }
+        },
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(seen!.executor.kind).toBe('agent')
+    const instr = (seen!.executor as { instruction?: { kind: string; text?: string } }).instruction
+    expect(instr?.kind).toBe('inline')
+    expect(instr?.text ?? '').toContain('DOC.md')
+    expect(instr?.text ?? '').toMatch(/就地更新|最新现状/)
+  })
+
+  it('支持子 agent → 委派指令带并行提示；不支持 → 串行提示（两路都跑到 done）', async () => {
+    const run = async (subagents: boolean): Promise<string> => {
+      const repo = trash.track(initRepo())
+      onFeature(repo)
+      let text = ''
+      const engine = createEngine(
+        deps(wf([engineNode('archive-docs')]), {
+          runAgent: archivingRunner('DOC.md', 'x'),
+          getDocRegistry: () => reg(),
+          supportsSubagents: () => subagents,
+          prepareAgent: (node) => {
+            text = (node.executor as { instruction?: { text?: string } }).instruction?.text ?? ''
+            return { prompt: 'X', toolId: 'claude-code' }
+          },
+          readHandshake: () => ({ status: 'done' as const })
+        })
+      )
+      const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+      expect(bp.state).toBe('done')
+      return text
+    }
+    expect(await run(true)).toMatch(/并行|子 ?agent/)
+    expect(await run(false)).toMatch(/顺次|逐条|串行/)
+  })
+
+  it('无可用 agent（未注入 prepareAgent）→ no-agent 挂起，不静默跳过', async () => {
+    const repo = trash.track(initRepo())
+    onFeature(repo)
+    const events: EngineProgressEvent[] = []
+    const engine = createEngine(
+      deps(wf([engineNode('archive-docs')]), {
+        getDocRegistry: () => reg(),
+        emit: (e) => events.push(e)
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    expect(bp.pendingDecision?.sourceKind).toBe('engine')
+    expect(bp.pendingDecision?.titleKey).toBe('engineDecision.archiveNoAgent')
+    expect(events.some((e) => e.kind === 'skip')).toBe(false)
+  })
+
+  it('从未建立登记表（getDocRegistry 返回 null）→ 挂起提示先建表', async () => {
+    const repo = trash.track(initRepo())
+    onFeature(repo)
+    const runner = archivingRunner('DOC.md', 'x')
+    const engine = createEngine(
+      deps(wf([engineNode('archive-docs')]), {
+        runAgent: runner,
+        getDocRegistry: () => null,
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('waiting-decision')
+    expect(bp.pendingDecision?.titleKey).toBe('engineDecision.archiveNoRegistry')
+    expect(runner.calls).toBe(0) // 没委派 agent
+  })
+
+  it('空表（docs[] 为空）→ noop 过节点，不提交、不委派 agent', async () => {
+    const repo = trash.track(initRepo())
+    onFeature(repo)
+    const tipBefore = git(repo, 'rev-parse', 'HEAD')
+    const runner = archivingRunner('DOC.md', 'x')
+    const engine = createEngine(
+      deps(wf([engineNode('archive-docs')]), {
+        runAgent: runner,
+        getDocRegistry: () => reg({ docs: [] }),
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' }).settled
+    expect(bp.state).toBe('done')
+    expect(runner.calls).toBe(0)
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(tipBefore) // 无提交
+  })
+
+  it('多仓：每个涉及成员仓读各自登记表、在各自 worktree 归档并提交', async () => {
+    const a = trash.track(initRepo())
+    const b = trash.track(initRepo())
+    const registries: Record<string, DocRegistry> = {
+      A: { memberId: 'A', docs: [{ id: 'A.md', location: 'A.md', kind: 'dynamic', habitPrompt: '', approved: false }], conventionPreamble: '', conventionApproved: false },
+      B: { memberId: 'B', docs: [{ id: 'B.md', location: 'B.md', kind: 'dynamic', habitPrompt: '', approved: false }], conventionPreamble: '', conventionApproved: false }
+    }
+    // agent 跨仓：主 cwd（A 的 worktree）写 A.md，其余 git worktree（B，靠 .git 指针识别、排除握手目录）写 B.md。
+    const runner: AgentRunner = {
+      supportsResume: () => true,
+      start(spec): ReturnType<AgentRunner['start']> {
+        writeFileSync(join(spec.cwd, 'A.md'), '# A 现状\n')
+        for (const d of spec.extraDirs ?? []) {
+          if (existsSync(join(d, '.git'))) writeFileSync(join(d, 'B.md'), '# B 现状\n')
+        }
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      },
+      resume: () => ({ kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) })
+    }
+    const def = wf([
+      engineNode('create-branch'),
+      engineNode('open-worktree'),
+      engineNode('archive-docs')
+    ])
+    const engine = createEngine(
+      deps(def, {
+        runAgent: runner,
+        getDocRegistry: (id) => registries[id] ?? null,
+        prepareAgent: () => ({ prompt: 'X', toolId: 'claude-code' }),
+        readHandshake: () => ({ status: 'done' as const })
+      })
+    )
+    const bp = await engine.start({
+      workflowId: 'wf',
+      repoPath: a,
+      branch: 'feature',
+      baseBranch: 'main',
+      repos: [
+        { memberId: 'A', repoPath: a },
+        { memberId: 'B', repoPath: b }
+      ]
+    }).settled
+    expect(bp.state).toBe('done')
+    // 各仓在自己 feature 分支上提交了自己的文档
+    expect(git(a, 'show', 'feature:A.md')).toContain('A 现状')
+    expect(git(b, 'show', 'feature:B.md')).toContain('B 现状')
   })
 })

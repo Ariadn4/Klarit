@@ -541,6 +541,8 @@ export const en: Dictionary = {
     prNotMerged: 'Once the PR is merged, click to start the cleanup.',
     prStillNotMerged: 'The PR isn’t merged on the platform yet — merge it there, then click “Start cleanup” again.',
     openPrNoAgent: 'Node “{{node}}” needs to open a PR, but no AI (default agent) is available. Configure a default agent in settings, then retry or skip.',
+    archiveNoAgent: 'Node “{{node}}” needs to archive docs, but no AI (default agent) is available. Configure a default agent in settings, then retry or skip.',
+    archiveNoRegistry: 'Node “{{node}}” needs to archive docs, but this member repo has no document registry yet. Set one up in settings or onboarding first, then retry or skip.',
     generic: 'Node “{{node}}” could not complete; retry or skip.',
     agentAsk: 'The AI in “{{node}}” needs your decision.',
     agentContinue: 'Continue',
