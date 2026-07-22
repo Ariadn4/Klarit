@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react'
 import type { DetectedAgent, Project, SidebarViewState, WorkflowDefinition } from '@shared/types'
 import { DEFAULT_LANGUAGE, type SupportedLanguage } from '@shared/language'
 import { DEFAULT_APPEARANCE, type Appearance } from '@shared/appearance'
-import type { AgentId } from '@shared/agents'
+import type { AgentId, EffortLevel } from '@shared/agents'
 import { DEFAULT_SIDEBAR_WIDTH, clampSidebarWidth } from '@shared/sidebar'
 import { chunkBucket } from '@shared/output-bucket'
 import { Topbar } from './components/Topbar'
@@ -36,6 +36,7 @@ export function App(): React.JSX.Element {
   const [detectedAgents, setDetectedAgents] = useState<DetectedAgent[]>([])
   const [defaultAgent, setDefaultAgent] = useState<AgentId | null>(null)
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
+  const [defaultEffort, setDefaultEffort] = useState<EffortLevel | null>(null)
   // 首启引导：仅当用户尚未选默认 agent 且扫描到至少一个 agent 时显示。
   const [onboarding, setOnboarding] = useState(false)
   // 导入后的文档确认步：待扫描的成员仓 id；null=不显示。排在 agent 引导之后。
@@ -126,11 +127,13 @@ export function App(): React.JSX.Element {
     Promise.all([
       window.klarit.scanAgents(),
       window.klarit.getDefaultAgent(),
-      window.klarit.getDefaultModel()
-    ]).then(([agents, agent, model]) => {
+      window.klarit.getDefaultModel(),
+      window.klarit.getDefaultEffort()
+    ]).then(([agents, agent, model, effort]) => {
       setDetectedAgents(agents)
       setDefaultAgent(agent)
       setDefaultModel(model)
+      setDefaultEffort(effort)
       if (agent === null && agents.length > 0) setOnboarding(true)
     })
     // 生效主题：读入后写 <html data-theme> 驱动令牌翻色；订阅变更（切外观或系统明暗）实时更新。
@@ -237,6 +240,11 @@ export function App(): React.JSX.Element {
   const onChangeDefaultModel = useCallback(async (modelId: string) => {
     const saved = await window.klarit.setDefaultModel(modelId)
     setDefaultModel(saved)
+  }, [])
+
+  const onChangeDefaultEffort = useCallback(async (effort: EffortLevel | null) => {
+    const saved = await window.klarit.setDefaultEffort(effort)
+    setDefaultEffort(saved)
   }, [])
 
   // 首启引导确认：持久化所选 agent + 模型后关闭弹窗。
@@ -362,8 +370,10 @@ export function App(): React.JSX.Element {
             detectedAgents={detectedAgents}
             defaultAgent={defaultAgent}
             defaultModel={defaultModel}
+            defaultEffort={defaultEffort}
             onChangeDefaultAgent={onChangeDefaultAgent}
             onChangeDefaultModel={onChangeDefaultModel}
+            onChangeDefaultEffort={onChangeDefaultEffort}
             onActiveWorkflowChange={onActiveWorkflowChange}
             onResizeStart={onResizeStart}
             onResizeMove={onResizeMove}

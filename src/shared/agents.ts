@@ -40,9 +40,15 @@ export const SUPPORTED_AGENTS: SupportedAgent[] = [
     command: 'claude',
     // Claude Code 自带 Task/子 agent 能力 → 归档等可派多个子 agent 并行。
     supportsSubagents: true,
+    // 别名条目在前：claude CLI 把 opus/sonnet/haiku 解析为该系最新模型，用户不动手即自动跟新；
+    // 钉死 id 供需要可复现（不随发布漂移）的场景。
     models: [
+      { id: 'opus', name: 'Opus（自动最新）' },
+      { id: 'sonnet', name: 'Sonnet（自动最新）' },
+      { id: 'haiku', name: 'Haiku（自动最新）' },
+      { id: 'claude-fable-5', name: 'Fable 5' },
       { id: 'claude-opus-4-8', name: 'Opus 4.8' },
-      { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
+      { id: 'claude-sonnet-5', name: 'Sonnet 5' },
       { id: 'claude-haiku-4-5', name: 'Haiku 4.5' }
     ]
   },
@@ -95,12 +101,33 @@ export function agentSupportsSubagents(id: unknown): boolean {
 }
 
 /**
- * 把模型值收敛为「属于该 agent 的模型」；不属于 / agent 未选择 / 未知一律返回 undefined。
- * 用于切换 agent 时清除不匹配的旧模型，保证 settings 中 agent 与 model 始终自洽。
+ * 把模型值收敛为可用的模型标识：agent 已选 + 任意**非空**字符串即放行（trim 后原值返回）。
+ * 静态模型表只是 UI 建议列表——CLI 本身接受任意模型 id / 别名，不在这里做清单校验，
+ * 新模型无需等 Klarit 发版；输错 id 由 CLI 启动失败的「技术失败」归宿兜底。
  */
 export function coerceDefaultModel(agentId: AgentId | undefined, modelId: unknown): string | undefined {
-  if (typeof modelId !== 'string') return undefined
-  const agent = findAgent(agentId)
-  if (!agent) return undefined
-  return agent.models.some((m) => m.id === modelId) ? modelId : undefined
+  if (typeof modelId !== 'string' || !modelId.trim()) return undefined
+  if (!findAgent(agentId)) return undefined
+  return modelId
+}
+
+/**
+ * 推理力度的统一枚举：前五档对齐 claude CLI 完整档位（撞真 CLI 确证 low/medium/high/xhigh/max）；
+ * `ultracode` 是特殊档——不是 `--effort` 取值，而是 Claude Code 的提示词关键词（该轮开多 agent 编排），
+ * 由 claude adapter 注入 prompt 开头实现。档位不全/无对应能力的家由其 adapter 收敛或忽略。
+ * 未设置＝不向 CLI 注入 effort 参数。UI 一律显示原文，不翻译。
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+
+/** 全部合法档位（设置/工作流编辑器的选项来源，单一来源）。 */
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']
+
+/** 把任意输入收敛为合法 effort 档位；枚举外/空/非字符串返回 undefined（跟随各 agent CLI 自身默认）。 */
+export function coerceEffort(value: unknown): EffortLevel | undefined {
+  return EFFORT_LEVELS.includes(value as EffortLevel) ? (value as EffortLevel) : undefined
+}
+
+/** 供档位止于 high 的家（如 codex）：xhigh/max/ultracode 就近收敛为 high，其余原样。 */
+export function clampEffortToHigh(effort: EffortLevel): 'low' | 'medium' | 'high' {
+  return effort === 'low' || effort === 'medium' ? effort : 'high'
 }

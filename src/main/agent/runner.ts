@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { killTree } from '../command-run'
 import { resolveAdapter, type AgentAdapter, type AgentInvocation, type AgentInvokeOpts } from './adapter'
+import type { EffortLevel } from '../../shared/agents'
 
 /** 一个在跑的 agent：可杀，退出兑现 `{ code, killed }`。 */
 export interface AgentLaunch {
@@ -25,6 +26,8 @@ export interface AgentRunSpec {
   /** 其余目标仓 worktree（一个 agent 跨仓，翻成 --add-dir 等）。 */
   extraDirs?: string[]
   model?: string
+  /** 推理力度（统一枚举，级联已在 prepare 侧解析完）；adapter 按家翻译，不支持的家忽略。 */
+  effort?: EffortLevel
   extraArgs?: string
   onChunk?: (stream: 'stdout' | 'stderr', chunk: string) => void
   signal?: AbortSignal
@@ -124,7 +127,12 @@ export const realAgentRunner: AgentRunner = {
   start: (spec) => {
     const adapter = resolveAdapter(spec.toolId)
     if (!adapter) return null
-    const opts: AgentInvokeOpts = { model: spec.model, extraArgs: spec.extraArgs, extraDirs: spec.extraDirs }
+    const opts: AgentInvokeOpts = {
+      model: spec.model,
+      effort: spec.effort,
+      extraArgs: spec.extraArgs,
+      extraDirs: spec.extraDirs
+    }
     return runInvocation(adapter.start(spec.prompt, opts), spec, adapter)
   },
 
@@ -133,6 +141,7 @@ export const realAgentRunner: AgentRunner = {
     if (!adapter || !adapter.supportsResume) return null
     const opts: AgentInvokeOpts = {
       model: spec.model,
+      effort: spec.effort,
       extraArgs: spec.extraArgs,
       extraDirs: spec.extraDirs,
       sessionId: spec.sessionId

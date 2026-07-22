@@ -9,6 +9,7 @@ import { normalizeOps } from '../shared/card-ops'
 import { migrateWorkflowShape } from '../shared/workflow'
 import type { OpsProducer, ProducedOps } from './orchestrate-service'
 import type { AgentRunner, AgentRunSpec } from './agent/runner'
+import type { EffortLevel } from '../shared/agents'
 import { launchContinuation } from './agent/continuation'
 
 /** 会话 sessionId 存取（供多轮原生续接）；缺省即每轮全新起。 */
@@ -24,6 +25,8 @@ export interface OpsProducerConfig {
   /** 只读工作目录（项目主仓或 scratch）；不开 worktree。 */
   cwd: string
   model?: string
+  /** 推理力度（全局默认；聊天无会话级覆盖）。 */
+  effort?: EffortLevel
   timeoutMs?: number
   sessions?: SessionBridge
 }
@@ -119,6 +122,7 @@ export function createOpsProducer(cfg: OpsProducerConfig): OpsProducer {
       toolId: cfg.toolId,
       cwd: cfg.cwd,
       model: cfg.model,
+      effort: cfg.effort,
       onChunk: (stream, chunk) => {
         if (stream === 'stdout') out += chunk
       },

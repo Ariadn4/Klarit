@@ -60,8 +60,10 @@ function renderSidebar(current: Project | null, over: Partial<Parameters<typeof 
       detectedAgents={[]}
       defaultAgent={null}
       defaultModel={null}
+      defaultEffort={null}
       onChangeDefaultAgent={noop}
       onChangeDefaultModel={noop}
+      onChangeDefaultEffort={noop}
       {...over}
     />
   )
@@ -171,8 +173,10 @@ describe('Sidebar 视图切换条', () => {
         detectedAgents={[]}
         defaultAgent={null}
         defaultModel={null}
+        defaultEffort={null}
         onChangeDefaultAgent={noop}
         onChangeDefaultModel={noop}
+        onChangeDefaultEffort={noop}
       />
     )
     expect(screen.getByRole('button', { name: /切换成员仓/ })).toBeInTheDocument()

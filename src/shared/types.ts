@@ -4,7 +4,7 @@ import type { SupportedLanguage } from './language'
 import type { Localized } from './localized'
 import type { Appearance } from './appearance'
 import type { EffectiveTheme } from './theme'
-import type { AgentId, AgentModel } from './agents'
+import type { AgentId, AgentModel, EffortLevel } from './agents'
 import type {
   ConstitutionGovernance,
   EffectiveConstitutionRule,
@@ -21,8 +21,10 @@ export interface AppSettings {
   appearance?: Appearance
   /** 默认 agent；缺省表示用户尚未选择（首启 agent 引导信号）。 */
   defaultAgent?: AgentId
-  /** 默认模型（属于 defaultAgent 的模型 id）；缺省表示未选择。 */
+  /** 默认模型（任意非空模型 id / 别名，建议清单仅供 UI 参考）；缺省表示未选择。 */
   defaultModel?: string
+  /** 默认 effort（推理力度，low/medium/high）；缺省表示跟随各 agent CLI 自身默认，不注入参数。 */
+  defaultEffort?: EffortLevel
 }
 
 /** 一个本地已检测到的 agent：标识、展示名、其可选模型清单。 */
@@ -252,8 +254,10 @@ export type AgentInstruction =
 export interface AgentExecConfig {
   /** adapter id，如 claude-code / codex / cursor；空＝跟随全局。 */
   toolId?: string
-  /** 模型标识；空＝跟随全局。 */
+  /** 模型标识（任意非空 id / 别名，不限于建议清单）；空＝跟随全局。 */
   model?: string
+  /** 推理力度（low/medium/high）；空＝跟随全局默认；adapter 按家翻译，不支持的家忽略。 */
+  effort?: EffortLevel
   /** 额外参数（透传给适配层）。 */
   extraArgs?: string
 }
@@ -1246,8 +1250,12 @@ export interface KlaritApi {
   setDefaultAgent: (agentId: AgentId) => Promise<AgentId | null>
   /** 当前默认模型；未选择返回 null。 */
   getDefaultModel: () => Promise<string | null>
-  /** 更新默认模型（须属于当前默认 agent，否则收敛为未选择）；返回写入后的值（未选择为 null）。 */
+  /** 更新默认模型（agent 已选 + 任意非空字符串即放行，空白收敛为未选择）；返回写入后的值（未选择为 null）。 */
   setDefaultModel: (modelId: string) => Promise<string | null>
+  /** 当前默认 effort；未设置返回 null（跟随各 agent 默认）。 */
+  getDefaultEffort: () => Promise<EffortLevel | null>
+  /** 更新默认 effort（枚举外收敛为未设置）；返回写入后的值（未设置为 null）。 */
+  setDefaultEffort: (effort: string | null) => Promise<EffortLevel | null>
   // ── 规则包库 ──
   /** 列出规则包库（轻量摘要，跳过损坏包）。 */
   listRulePacks: () => Promise<RulePackSummary[]>

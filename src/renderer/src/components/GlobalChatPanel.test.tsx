@@ -266,13 +266,13 @@ describe('全局对话入口与面板', () => {
   it('会话头部可选模型（静态 SUPPORTED_AGENTS 驱动），改动持久化到该会话', async () => {
     render(<GlobalChatPanel />)
     await openPanel()
-    // 选项来自静态支持表；默认 agent=claude-code，其模型含 Sonnet 4.6。
+    // 选项来自静态支持表；默认 agent=claude-code，其模型含 Sonnet 5。
     const modelSelect = screen.getByLabelText('选择模型')
     await act(async () => {
-      await userEvent.selectOptions(modelSelect, 'claude-sonnet-4-6')
+      await userEvent.selectOptions(modelSelect, 'claude-sonnet-5')
     })
     // window IPC 签名 (conversationId, agentId, model)。
-    expect(setConversationAgentModel).toHaveBeenCalledWith('conv-1', 'claude-code', 'claude-sonnet-4-6')
+    expect(setConversationAgentModel).toHaveBeenCalledWith('conv-1', 'claude-code', 'claude-sonnet-5')
   })
 
   it('可多开：新建第二条会话、独立切换', async () => {
@@ -323,7 +323,7 @@ describe('全局对话入口与面板', () => {
     const modelSelect = screen.getByLabelText('选择模型') as HTMLSelectElement
     // 先选具体模型
     await act(async () => {
-      await userEvent.selectOptions(modelSelect, 'claude-sonnet-4-6')
+      await userEvent.selectOptions(modelSelect, 'claude-sonnet-5')
     })
     // 再切回「默认模型」（value=""）
     await act(async () => {

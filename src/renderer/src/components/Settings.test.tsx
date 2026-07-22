@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Settings } from './Settings'
 
@@ -20,8 +20,10 @@ function renderSettings(over: Partial<React.ComponentProps<typeof Settings>> = {
       detectedAgents={[]}
       defaultAgent={null}
       defaultModel={null}
+      defaultEffort={null}
       onChangeDefaultAgent={() => {}}
       onChangeDefaultModel={() => {}}
+      onChangeDefaultEffort={() => {}}
       project={null}
       {...over}
     />
@@ -88,18 +90,36 @@ describe('Settings 设置入口', () => {
     expect(onChange).toHaveBeenCalledWith('dark')
   })
 
-  it('通用→默认 agent/模型：检测到 agent 时列出、当前值选中、模型随 agent 联动', async () => {
+  it('通用→默认 agent/模型：检测到 agent 时列出、当前值选中、模型建议随 agent 联动', async () => {
     renderSettings({ detectedAgents: TWO_AGENTS, defaultAgent: 'claude-code', defaultModel: 'claude-opus-4-8' })
     await userEvent.click(screen.getByRole('button', { name: /设置/ }))
     const agentSelect = screen.getByRole('combobox', { name: '默认 agent' })
     expect(agentSelect).toHaveValue('claude-code')
     expect(screen.getByRole('option', { name: 'Claude Code' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument()
-    const modelSelect = screen.getByRole('combobox', { name: '默认模型' })
-    expect(modelSelect).toHaveValue('claude-opus-4-8')
-    // 模型清单为当前 agent（claude-code）的两个模型
-    expect(screen.getByRole('option', { name: 'Opus 4.8' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Sonnet 4.6' })).toBeInTheDocument()
+    // 模型为 combobox（可输可选）：当前值回显；聚焦弹出**完整**建议清单，不因已有值被过滤
+    const modelInput = screen.getByRole('combobox', { name: '默认模型' })
+    expect(modelInput).toHaveValue('claude-opus-4-8')
+    await userEvent.click(modelInput)
+    const listbox = screen.getByRole('listbox', { name: '默认模型' })
+    const ids = within(listbox)
+      .getAllByRole('option')
+      .map((o) => o.getAttribute('data-model-id'))
+    expect(ids).toEqual(['claude-opus-4-8', 'claude-sonnet-4-6'])
+  })
+
+  it('通用→模型建议弹层点选条目即提交', async () => {
+    const onChange = vi.fn()
+    renderSettings({
+      detectedAgents: TWO_AGENTS,
+      defaultAgent: 'claude-code',
+      defaultModel: 'claude-opus-4-8',
+      onChangeDefaultModel: onChange
+    })
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    await userEvent.click(screen.getByRole('combobox', { name: '默认模型' }))
+    await userEvent.click(screen.getByRole('option', { name: /claude-sonnet-4-6/ }))
+    expect(onChange).toHaveBeenCalledWith('claude-sonnet-4-6')
   })
 
   it('通用→切换默认 agent 触发回调', async () => {
@@ -115,7 +135,7 @@ describe('Settings 设置入口', () => {
     expect(onChange).toHaveBeenCalledWith('codex')
   })
 
-  it('通用→切换默认模型触发回调', async () => {
+  it('通用→改默认模型（清单内值）失焦提交触发回调', async () => {
     const onChange = vi.fn()
     renderSettings({
       detectedAgents: TWO_AGENTS,
@@ -124,8 +144,45 @@ describe('Settings 设置入口', () => {
       onChangeDefaultModel: onChange
     })
     await userEvent.click(screen.getByRole('button', { name: /设置/ }))
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: '默认模型' }), 'claude-sonnet-4-6')
+    const input = screen.getByRole('combobox', { name: '默认模型' })
+    await userEvent.clear(input)
+    await userEvent.type(input, 'claude-sonnet-4-6')
+    await userEvent.tab()
     expect(onChange).toHaveBeenCalledWith('claude-sonnet-4-6')
+  })
+
+  it('通用→手输建议清单外的模型 id 回车提交触发回调（不被拒绝）', async () => {
+    const onChange = vi.fn()
+    renderSettings({
+      detectedAgents: TWO_AGENTS,
+      defaultAgent: 'claude-code',
+      defaultModel: 'claude-opus-4-8',
+      onChangeDefaultModel: onChange
+    })
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    const input = screen.getByRole('combobox', { name: '默认模型' })
+    await userEvent.clear(input)
+    await userEvent.type(input, 'claude-fable-6-preview{Enter}')
+    expect(onChange).toHaveBeenCalledWith('claude-fable-6-preview')
+  })
+
+  it('通用→默认 effort：含 xhigh/max 全档与跟随默认、切换触发回调', async () => {
+    const onChange = vi.fn()
+    renderSettings({
+      detectedAgents: TWO_AGENTS,
+      defaultAgent: 'claude-code',
+      defaultEffort: null,
+      onChangeDefaultEffort: onChange
+    })
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    const select = screen.getByRole('combobox', { name: /默认 effort/ })
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('option', { name: /跟随 agent 默认/ })).toBeInTheDocument()
+    // claude 完整档位可选（xhigh/max 不再被砍掉），档位显示 CLI 原文不翻译；含关键词档 ultracode
+    expect(within(select).getByRole('option', { name: 'xhigh' })).toBeInTheDocument()
+    expect(within(select).getByRole('option', { name: 'ultracode' })).toBeInTheDocument()
+    await userEvent.selectOptions(select, 'max')
+    expect(onChange).toHaveBeenCalledWith('max')
   })
 
   it('通用→未检测到 agent 时显示空态、不渲染下拉、不报错', async () => {

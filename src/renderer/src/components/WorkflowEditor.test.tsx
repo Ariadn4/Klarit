@@ -308,7 +308,7 @@ describe('WorkflowEditor 表单编辑', () => {
     expect(within(opSelect).getByRole('option', { name: 'create-branch' })).toBeInTheDocument()
   })
 
-  it('agent 执行配置：工具下拉来自 detectedAgents，模型随工具联动 + 额外参数', async () => {
+  it('agent 执行配置：工具下拉来自 detectedAgents，模型建议随工具联动 + 额外参数', async () => {
     render(
       <WorkflowEditor
         workflowId="wf"
@@ -322,11 +322,26 @@ describe('WorkflowEditor 表单编辑', () => {
     const toolSelect = screen.getByLabelText('执行工具')
     expect(within(toolSelect).getByRole('option', { name: '跟随全局（不声明）' })).toBeInTheDocument()
     expect(within(toolSelect).getByRole('option', { name: 'Claude Code' })).toBeInTheDocument()
-    // 选工具后，模型下拉联动出该工具的模型
+    // 选工具后，模型 combobox 聚焦弹出该工具的完整建议清单（自绘弹层，不按已有值过滤）
     await userEvent.selectOptions(toolSelect, 'claude-code')
-    const modelSelect = screen.getByLabelText('执行模型')
-    expect(within(modelSelect).getByRole('option', { name: 'Opus 4.8' })).toBeInTheDocument()
+    const modelInput = screen.getByLabelText('执行模型')
+    expect(modelInput.tagName).toBe('INPUT')
+    await userEvent.click(modelInput)
+    expect(screen.getByRole('option', { name: /claude-opus-4-8/ })).toBeInTheDocument()
+    // 可手输建议清单外的任意模型 id
+    await userEvent.type(modelInput, 'claude-fable-6-preview')
+    expect(modelInput).toHaveValue('claude-fable-6-preview')
     expect(screen.getByLabelText('额外参数')).toBeInTheDocument()
+  })
+
+  it('agent 执行配置：effort 下拉含跟随全局与全五档，可声明节点覆盖', async () => {
+    renderEditor()
+    await enterNode()
+    const effortSelect = screen.getByLabelText('执行 effort')
+    expect(within(effortSelect).getByRole('option', { name: '跟随全局（不声明）' })).toBeInTheDocument()
+    expect(within(effortSelect).getByRole('option', { name: 'max' })).toBeInTheDocument()
+    await userEvent.selectOptions(effortSelect, 'max')
+    expect(effortSelect).toHaveValue('max')
   })
 
   it('阶段可新增，节点的阶段下拉随之更新', async () => {

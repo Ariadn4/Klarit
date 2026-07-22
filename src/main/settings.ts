@@ -1,7 +1,7 @@
 import type { AppSettings } from '../shared/types'
 import { coerceLanguage, normalizeLocale } from '../shared/language'
 import { coerceAppearance } from '../shared/appearance'
-import { coerceDefaultAgentId, coerceDefaultModel, type AgentId } from '../shared/agents'
+import { coerceDefaultAgentId, coerceDefaultModel, coerceEffort, type AgentId } from '../shared/agents'
 
 /** initSettings 的注入依赖——便于不依赖 electron 单测。 */
 export interface SettingsDeps {
@@ -25,8 +25,8 @@ export function initSettings(deps: SettingsDeps): AppSettings {
       language: coerceLanguage(stored.language),
       appearance: coerceAppearance(stored.appearance),
       defaultAgent,
-      // 模型须属于已收敛的 agent，否则清除——保证 agent 与 model 始终自洽。
-      defaultModel: coerceDefaultModel(defaultAgent, stored.defaultModel)
+      defaultModel: coerceDefaultModel(defaultAgent, stored.defaultModel),
+      defaultEffort: coerceEffort(stored.defaultEffort)
     }
   }
   const language = normalizeLocale(deps.systemLocale())
@@ -59,7 +59,8 @@ export function setLanguage(
 
 /**
  * 更新默认 agent：须为受支持且「已检测到」（在 allowedAgentIds 内）的 agent，否则无副作用
- * （不写非法/不可用值）。切换 agent 时清除不属于新 agent 的旧默认模型，保持二者自洽。
+ * （不写非法/不可用值）。agent 变更时清空旧默认模型（模型标识家际不通用）；effort 不清
+ * （枚举语义家际可移植，由 adapter 各自翻译）。
  */
 export function setDefaultAgent(
   current: AppSettings,
@@ -72,13 +73,13 @@ export function setDefaultAgent(
   const next: AppSettings = {
     ...current,
     defaultAgent: agent,
-    defaultModel: coerceDefaultModel(agent, current.defaultModel)
+    defaultModel: agent === current.defaultAgent ? current.defaultModel : undefined
   }
   deps.write(next)
   return next
 }
 
-/** 更新默认模型：须属于当前默认 agent，否则收敛为未选择。持久化后返回新设置。 */
+/** 更新默认模型：agent 已选 + 任意非空字符串即放行（清单仅供 UI 建议），否则收敛为未选择。 */
 export function setDefaultModel(
   current: AppSettings,
   value: unknown,
@@ -88,6 +89,17 @@ export function setDefaultModel(
     ...current,
     defaultModel: coerceDefaultModel(current.defaultAgent, value)
   }
+  deps.write(next)
+  return next
+}
+
+/** 更新默认 effort：收敛为合法档位（枚举外＝未设置，跟随各 agent 默认）后持久化。 */
+export function setDefaultEffort(
+  current: AppSettings,
+  value: unknown,
+  deps: Pick<SettingsDeps, 'write'>
+): AppSettings {
+  const next: AppSettings = { ...current, defaultEffort: coerceEffort(value) }
   deps.write(next)
   return next
 }

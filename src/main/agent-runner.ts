@@ -5,7 +5,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import type { AgentId } from '../shared/agents'
+import { clampEffortToHigh, type AgentId, type EffortLevel } from '../shared/agents'
 import type { CandidateCard, CardRelation, CardRelationKind } from '../shared/types'
 import { CARD_RELATION_KINDS, isValidProposedName, toProposedName } from '../shared/requirement-card'
 
@@ -14,15 +14,27 @@ export interface HeadlessInvocation {
   args: string[]
 }
 
-/** 各 agent 的无头调用（prompt 走 stdin、stdout 取回复）。模型可空（空＝用 agent 默认）。 */
-export function headlessInvocation(agentId: AgentId, model?: string): HeadlessInvocation {
+/** 各 agent 的无头调用（prompt 走 stdin、stdout 取回复）。模型/effort 可空（空＝用 agent 默认）。 */
+export function headlessInvocation(agentId: AgentId, model?: string, effort?: EffortLevel): HeadlessInvocation {
   const m = model?.trim() ? model.trim() : null
   switch (agentId) {
-    case 'claude-code':
-      return { command: 'claude', args: m ? ['-p', '--model', m] : ['-p'] }
-    case 'codex':
-      return { command: 'codex', args: m ? ['exec', '-m', m, '-'] : ['exec', '-'] }
+    case 'claude-code': {
+      const args = ['-p']
+      if (m) args.push('--model', m)
+      // ultracode 是提示词关键词档，本路径（分解/起草等结构化小任务）不宜编排 → 视同未设置。
+      if (effort && effort !== 'ultracode') args.push('--effort', effort)
+      return { command: 'claude', args }
+    }
+    case 'codex': {
+      const args = ['exec']
+      if (m) args.push('-m', m)
+      // codex 档位止于 high，xhigh/max 收敛（与 adapter 同规则）。
+      if (effort) args.push('-c', `model_reasoning_effort=${clampEffortToHigh(effort)}`)
+      args.push('-')
+      return { command: 'codex', args }
+    }
     case 'cursor':
+      // cursor 无 effort 参数，忽略。
       return { command: 'cursor-agent', args: m ? ['-p', '--model', m] : ['-p'] }
   }
 }

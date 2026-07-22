@@ -101,6 +101,29 @@ describe('agent 节点执行 — 握手分流', () => {
     expect(bp.pendingDecision?.reason).toBe('用 REST 还是 GraphQL？')
   })
 
+  it('prep 解析出的 model/effort 原样转发给运行器（级联在 prepare 侧完成）', async () => {
+    const def = wf([agentNode()])
+    const specs: AgentRunSpec[] = []
+    const runner: AgentRunner = {
+      supportsResume: () => true,
+      start(spec) {
+        specs.push(spec)
+        return { kill: () => {}, done: Promise.resolve({ code: 0, killed: false }) }
+      },
+      resume: () => null
+    }
+    const engine = createEngine({
+      getWorkflow: () => def,
+      store: createMemoryRunStore(),
+      runAgent: runner,
+      prepareAgent: () => ({ prompt: 'P', toolId: 'claude-code', model: 'opus', effort: 'high' }),
+      readHandshake: () => ({ status: 'done' })
+    })
+    await engine.start(REQ).settled
+    expect(specs[0]?.model).toBe('opus')
+    expect(specs[0]?.effort).toBe('high')
+  })
+
   it('握手 repos → 填 upstreamOutputs 供下游收窄', async () => {
     const node = agentNode()
     const def = wf([node])

@@ -37,6 +37,8 @@ import type {
 import type { Localized, RulePack, RulePackItem, RulePackItemRef } from '@shared/rule-pack'
 import { listItemsByKind, resolveLocalized } from '@shared/rule-pack'
 import { checkBranchPairing, ENGINE_OPERATIONS, engineOpCapabilities, isSafeRelativePath, validateWorkflow } from '@shared/workflow'
+import { coerceEffort, EFFORT_LEVELS } from '@shared/agents'
+import { ModelCombobox } from './ui/ModelCombobox'
 import { dedupeProposedName, toProposedName } from '@shared/requirement-card'
 import { CARD_ARCHETYPES } from '@shared/card-type'
 import { setLocalized } from '@shared/localized'
@@ -576,7 +578,7 @@ function ExecutorFields({
     )
   }
 
-  // agent：驱动指令（手写/使用文件）+ 可选执行配置（工具/模型/额外参数，空＝跟随全局）。
+  // agent：驱动指令（手写/使用文件）+ 可选执行配置（工具/模型/effort/额外参数，空＝跟随全局）。
   const instr = executor.instruction
   const setInstr = (next: typeof instr): void => onChange({ ...executor, instruction: next })
   const setExec = (patch: AgentExecConfig): void => {
@@ -584,21 +586,19 @@ function ExecutorFields({
     const exec: AgentExecConfig = {}
     if (merged.toolId) exec.toolId = merged.toolId
     if (merged.model) exec.model = merged.model
+    if (merged.effort) exec.effort = merged.effort
     if (merged.extraArgs) exec.extraArgs = merged.extraArgs
     onChange({ ...executor, exec: Object.keys(exec).length ? exec : undefined })
   }
-  // 工具/模型来自本机检测到的 agent；模型随所选工具联动，切工具时清掉不属于它的旧模型。
+  // 工具来自本机检测到的 agent；模型为可输可选（建议清单随工具联动），切工具时清掉旧模型（模型标识家际不通用）。
   const toolId = executor.exec?.toolId
   const model = executor.exec?.model
   const selectedTool = detectedAgents.find((a) => a.id === toolId)
   const onToolChange = (next: string): void => {
-    const tool = detectedAgents.find((a) => a.id === next)
-    const keepModel = tool?.models.some((m) => m.id === model) ? model : undefined
-    setExec({ toolId: next || undefined, model: keepModel })
+    setExec({ toolId: next || undefined, model: next === toolId ? model : undefined })
   }
   // 已存声明但本机没检测到时仍展示该值（标「未检测到」），避免换机器时静默丢失。
   const toolMissing = toolId !== undefined && !selectedTool
-  const modelMissing = model !== undefined && !selectedTool?.models.some((m) => m.id === model)
 
   return (
     <div className="space-y-2">
@@ -687,21 +687,27 @@ function ExecutorFields({
               <option value={toolId}>{t('workflowEditor.notDetected', { value: toolId })}</option>
             )}
           </select>
+          <ModelCombobox
+            id="workflow-exec-model"
+            ariaLabel={t('workflowEditor.execModel')}
+            value={model ?? ''}
+            suggestions={selectedTool?.models ?? []}
+            placeholder={t('workflowEditor.followGlobal')}
+            allowEmpty
+            onCommit={(next) => setExec({ model: next || undefined })}
+          />
           <select
             className={inputCls}
-            aria-label={t('workflowEditor.execModel')}
-            value={model ?? ''}
-            onChange={(e) => setExec({ model: e.target.value || undefined })}
+            aria-label={t('workflowEditor.execEffort')}
+            value={executor.exec?.effort ?? ''}
+            onChange={(e) => setExec({ effort: coerceEffort(e.target.value) })}
           >
             <option value="">{t('workflowEditor.followGlobal')}</option>
-            {(selectedTool?.models ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
+            {EFFORT_LEVELS.map((lv) => (
+              <option key={lv} value={lv}>
+                {lv}
               </option>
             ))}
-            {modelMissing && model !== undefined && (
-              <option value={model}>{t('workflowEditor.notDetected', { value: model })}</option>
-            )}
           </select>
         </div>
         <input

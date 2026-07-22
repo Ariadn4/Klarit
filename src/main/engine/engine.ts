@@ -29,6 +29,7 @@ import type {
   WorkflowNode
 } from '../../shared/types'
 import { buildArchiveDelegation } from '../../shared/workflow'
+import type { EffortLevel } from '../../shared/agents'
 import type { RulePackItemRef } from '../../shared/rule-pack'
 import { resolveLocalized } from '../../shared/localized'
 import { DEFAULT_LANGUAGE } from '../../shared/language'
@@ -108,6 +109,8 @@ export interface AgentPrep {
   /** 解析后的外壳 id（节点声明 < 全局默认）。 */
   toolId: string
   model?: string
+  /** 解析后的推理力度（节点声明 < 全局默认；未设置＝不注入参数）。 */
+  effort?: EffortLevel
   extraArgs?: string
 }
 
@@ -845,6 +848,7 @@ export function createEngine(deps: EngineDeps): Engine {
       cwd: wt,
       extraDirs,
       model: prep.model,
+      effort: prep.effort,
       extraArgs: prep.extraArgs,
       signal: a.abort.signal,
       // 续接用具体 session id；抓到 id 即存断点（供下次 --resume 精确续接、支持暂停A/暂停B/恢复A）
@@ -1047,6 +1051,7 @@ export function createEngine(deps: EngineDeps): Engine {
       cwd,
       extraDirs: [hsDir],
       model: prep.model,
+      effort: prep.effort,
       extraArgs: prep.extraArgs,
       signal: a.abort.signal,
       sessionId: hr.session,

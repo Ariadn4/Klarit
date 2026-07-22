@@ -47,7 +47,8 @@ import {
   setLanguage as applyLanguage,
   setAppearance as applyAppearance,
   setDefaultAgent as applyDefaultAgent,
-  setDefaultModel as applyDefaultModel
+  setDefaultModel as applyDefaultModel,
+  setDefaultEffort as applyDefaultEffort
 } from './settings'
 import { makeAgentProbe, scanAgents } from './agents'
 import { agentSupportsSubagents } from '../shared/agents'
@@ -329,7 +330,13 @@ function prepareAgentForRun(node: WorkflowNode, bp: RunBreakpoint, ctx: AgentPre
         }
       : undefined
   })
-  return { prompt, toolId, model: model ?? undefined, extraArgs: exec?.extraArgs }
+  return {
+    prompt,
+    toolId,
+    model: model ?? undefined,
+    effort: exec?.effort ?? settings.defaultEffort,
+    extraArgs: exec?.extraArgs
+  }
 }
 
 /**
@@ -385,7 +392,7 @@ function prepareHealAgentForRun(bp: RunBreakpoint, ctx: HealPrepContext): AgentP
         }
       : undefined
   })
-  return { prompt, toolId, model: model ?? undefined }
+  return { prompt, toolId, model: model ?? undefined, effort: settings.defaultEffort }
 }
 
 // 全局覆盖分解 skill：存于 userData/skills/decompose-default.md，可选高级覆盖（优先于自动生成 skill）。
@@ -398,7 +405,7 @@ const globalSkills = createGlobalSkillStore(join(app.getPath('userData'), 'skill
 const decomposeProducer: CandidateProducer = async (prompt, input) => {
   const agentId = settings.defaultAgent
   if (!agentId) return []
-  const inv = headlessInvocation(agentId, settings.defaultModel)
+  const inv = headlessInvocation(agentId, settings.defaultModel, settings.defaultEffort)
   const message = buildDecomposeMessage(prompt, input.description)
   try {
     const out = await runAgentHeadless(inv, message, { timeoutMs: 180_000 })
@@ -515,6 +522,7 @@ const orchestrateProducer = (scope: string, agentId?: string, model?: string): R
     toolId: agentId ?? settings.defaultAgent ?? null,
     cwd: app.getPath('userData'),
     model: model ?? settings.defaultModel,
+    effort: settings.defaultEffort,
     sessions
   })
 }
@@ -934,6 +942,13 @@ function registerIpc(): void {
     return settings.defaultModel ?? null
   })
 
+  ipcMain.handle(IPC.getDefaultEffort, () => settings.defaultEffort ?? null)
+
+  ipcMain.handle(IPC.setDefaultEffort, (_e, value: unknown) => {
+    settings = applyDefaultEffort(settings, value, { write: (s) => writeJson(SETTINGS_FILE, s) })
+    return settings.defaultEffort ?? null
+  })
+
   // ── 工作流库 ──
   // ── 引擎执行：一次性触发 + 观察 + 可取消可恢复 ──
   // start/resume/decide 触发后台运行,只回当前断点(不 await settled——长命令不挂渲染层、关窗不孤儿)。
@@ -1119,7 +1134,7 @@ function registerIpc(): void {
   const draftAgent = (): DraftAgent | null => {
     const agentId = settings.defaultAgent
     if (!agentId) return null
-    const inv = headlessInvocation(agentId, settings.defaultModel)
+    const inv = headlessInvocation(agentId, settings.defaultModel, settings.defaultEffort)
     return (prompt) => runAgentHeadless(inv, prompt, { timeoutMs: 300_000 })
   }
 
@@ -1439,6 +1454,7 @@ function registerIpc(): void {
       toolId: conv?.agentId ?? settings.defaultAgent ?? null,
       cwd: app.getPath('userData'),
       model: conv?.model ?? settings.defaultModel,
+      effort: settings.defaultEffort,
       sessions: cardSessionBridge(cardConversationStore, pid),
       register: (kill) => {
         if (kill) cardConsultKills.set(killKey, kill)

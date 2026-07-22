@@ -6,6 +6,7 @@ import {
   setAppearance,
   setDefaultAgent,
   setDefaultModel,
+  setDefaultEffort,
   type SettingsDeps
 } from './settings'
 
@@ -135,14 +136,19 @@ describe('initSettings 默认 agent / 模型加载', () => {
     expect(settings.defaultAgent).toBeUndefined()
   })
 
-  it('defaultModel 不属于 defaultAgent 时被清除', () => {
+  it('建议清单外的已存 defaultModel 被保留（任意非空字符串合法）', () => {
     const stored = {
       language: 'zh',
-      defaultAgent: 'codex',
-      defaultModel: 'claude-opus-4-8'
+      defaultAgent: 'claude-code',
+      defaultModel: 'claude-fable-6-preview'
     } as AppSettings
     const settings = initSettings(deps({ read: () => stored }))
-    expect(settings.defaultAgent).toBe('codex')
+    expect(settings.defaultModel).toBe('claude-fable-6-preview')
+  })
+
+  it('已存 defaultModel 为空白时收敛为未选择', () => {
+    const stored = { language: 'zh', defaultAgent: 'codex', defaultModel: '  ' } as AppSettings
+    const settings = initSettings(deps({ read: () => stored }))
     expect(settings.defaultModel).toBeUndefined()
   })
 
@@ -177,7 +183,7 @@ describe('setDefaultAgent', () => {
     expect(write).not.toHaveBeenCalled()
   })
 
-  it('切换 agent 后清除不属于新 agent 的旧模型', () => {
+  it('切换 agent 后清空旧模型（模型标识家际不通用）', () => {
     const write = vi.fn()
     const current: AppSettings = {
       language: 'zh',
@@ -189,17 +195,26 @@ describe('setDefaultAgent', () => {
     expect(next.defaultModel).toBeUndefined()
   })
 
-  it('切换 agent 后保留同时属于新 agent 的模型', () => {
+  it('重设同一 agent 时保留模型', () => {
     const write = vi.fn()
-    // claude-sonnet-4-6 同属 claude-code 与 cursor
     const current: AppSettings = {
       language: 'zh',
       defaultAgent: 'claude-code',
-      defaultModel: 'claude-sonnet-4-6'
+      defaultModel: 'opus'
     }
-    const next = setDefaultAgent(current, 'cursor', ['claude-code', 'cursor'], { write })
-    expect(next.defaultAgent).toBe('cursor')
-    expect(next.defaultModel).toBe('claude-sonnet-4-6')
+    const next = setDefaultAgent(current, 'claude-code', ['claude-code'], { write })
+    expect(next.defaultModel).toBe('opus')
+  })
+
+  it('切换 agent 不清空默认 effort（枚举语义家际可移植）', () => {
+    const write = vi.fn()
+    const current: AppSettings = {
+      language: 'zh',
+      defaultAgent: 'claude-code',
+      defaultEffort: 'high'
+    }
+    const next = setDefaultAgent(current, 'codex', ['claude-code', 'codex'], { write })
+    expect(next.defaultEffort).toBe('high')
   })
 })
 
@@ -212,10 +227,18 @@ describe('setDefaultModel', () => {
     expect(write).toHaveBeenCalled()
   })
 
-  it('写入不属于当前 agent 的模型时收敛为未选择', () => {
+  it('写入建议清单外的任意非空模型 id 原样持久化', () => {
+    const write = vi.fn()
+    const current: AppSettings = { language: 'zh', defaultAgent: 'claude-code' }
+    const next = setDefaultModel(current, 'claude-fable-6-preview', { write })
+    expect(next.defaultModel).toBe('claude-fable-6-preview')
+    expect(write).toHaveBeenCalled()
+  })
+
+  it('写入空白模型值收敛为未选择', () => {
     const write = vi.fn()
     const current: AppSettings = { language: 'zh', defaultAgent: 'codex', defaultModel: 'gpt-5' }
-    const next = setDefaultModel(current, 'claude-opus-4-8', { write })
+    const next = setDefaultModel(current, '  ', { write })
     expect(next.defaultModel).toBeUndefined()
   })
 
@@ -223,5 +246,38 @@ describe('setDefaultModel', () => {
     const write = vi.fn()
     const next = setDefaultModel({ language: 'zh' }, 'gpt-5', { write })
     expect(next.defaultModel).toBeUndefined()
+  })
+})
+
+describe('默认 effort 偏好', () => {
+  it('setDefaultEffort 写入合法档位并持久化', () => {
+    const write = vi.fn()
+    const next = setDefaultEffort({ language: 'zh' }, 'high', { write })
+    expect(next.defaultEffort).toBe('high')
+    expect(write).toHaveBeenCalledWith({ language: 'zh', defaultEffort: 'high' })
+  })
+
+  it('setDefaultEffort 枚举外值收敛为未设置', () => {
+    const write = vi.fn()
+    const current: AppSettings = { language: 'zh', defaultEffort: 'high' }
+    const next = setDefaultEffort(current, 'ultra', { write })
+    expect(next.defaultEffort).toBeUndefined()
+  })
+
+  it('initSettings 载入合法 defaultEffort', () => {
+    const stored = { language: 'zh', defaultEffort: 'medium' } as AppSettings
+    const settings = initSettings(deps({ read: () => stored }))
+    expect(settings.defaultEffort).toBe('medium')
+  })
+
+  it('initSettings 对非法 defaultEffort 收敛为未设置', () => {
+    const stored = { language: 'zh', defaultEffort: 'ultra' } as unknown as AppSettings
+    const settings = initSettings(deps({ read: () => stored }))
+    expect(settings.defaultEffort).toBeUndefined()
+  })
+
+  it('首启（read 为 null）defaultEffort 为未设置', () => {
+    const settings = initSettings(deps({ read: () => null }))
+    expect(settings.defaultEffort).toBeUndefined()
   })
 })

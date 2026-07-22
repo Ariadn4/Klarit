@@ -9,6 +9,7 @@ import { parseCardTurn } from '../shared/card-agent'
 import type { CardConsultProducer } from './card-consult-service'
 import type { AgentRunner, AgentRunSpec } from './agent/runner'
 import { launchContinuation } from './agent/continuation'
+import type { EffortLevel } from '../shared/agents'
 
 /** 会话 sessionId 存取（供多轮原生续接）；缺省即每轮全新起。 */
 export interface CardSessionBridge {
@@ -23,6 +24,8 @@ export interface CardConsultProducerConfig {
   /** 只读工作目录（scratch）；不开 worktree。 */
   cwd: string
   model?: string
+  /** 推理力度（全局默认；聊天无会话级覆盖）。 */
+  effort?: EffortLevel
   timeoutMs?: number
   sessions?: CardSessionBridge
   /** 注册当前轮的中止句柄（供按卡打断）：拉起后回传 kill，结束时回传 null 清掉。 */
@@ -38,6 +41,7 @@ export function createCardConsultProducer(cfg: CardConsultProducerConfig): CardC
       toolId: cfg.toolId,
       cwd: cfg.cwd,
       model: cfg.model,
+      effort: cfg.effort,
       onChunk: (stream, chunk) => {
         if (stream === 'stdout') out += chunk
       },

@@ -82,6 +82,8 @@ export const IPC = {
   setDefaultAgent: 'settings:setDefaultAgent',
   getDefaultModel: 'settings:getDefaultModel',
   setDefaultModel: 'settings:setDefaultModel',
+  getDefaultEffort: 'settings:getDefaultEffort',
+  setDefaultEffort: 'settings:setDefaultEffort',
   // ── 规则包库与项目宪法治理 ──
   listRulePacks: 'rulePack:list',
   /** 读全部规则包完整定义（编辑器/工作流引用选择器/宪法派生用）。 */

@@ -29,6 +29,66 @@ describe('claudeAdapter — start argv 翻译', () => {
     expect(inv.args).toContain('--foo')
     expect(inv.args).toContain('bar')
   })
+
+  it('建议清单外的模型值原样翻 --model（不做清单校验）', () => {
+    const inv = claudeAdapter.start('p', { model: 'opus' })
+    expect(inv.args[inv.args.indexOf('--model') + 1]).toBe('opus')
+  })
+})
+
+describe('effort 按家翻译', () => {
+  it('claude：effort 翻成 --effort <level>（start 与 resume 都带）', () => {
+    const inv = claudeAdapter.start('p', { effort: 'high' })
+    expect(inv.args[inv.args.indexOf('--effort') + 1]).toBe('high')
+    const rz = claudeAdapter.resume('续', { sessionId: 'sid', effort: 'low' }) as AgentInvocation
+    expect(rz.args[rz.args.indexOf('--effort') + 1]).toBe('low')
+  })
+
+  it('claude：xhigh/max 全档直传', () => {
+    expect(claudeAdapter.start('p', { effort: 'max' }).args).toContain('max')
+    expect(claudeAdapter.start('p', { effort: 'xhigh' }).args).toContain('xhigh')
+  })
+
+  it('codex：effort 翻成 -c model_reasoning_effort=<level>', () => {
+    const inv = codexAdapter.start('p', { effort: 'high' })
+    const i = inv.args.indexOf('model_reasoning_effort=high')
+    expect(i).toBeGreaterThan(-1)
+    expect(inv.args[i - 1]).toBe('-c')
+  })
+
+  it('codex：xhigh/max/ultracode 收敛为该家最高档 high', () => {
+    expect(codexAdapter.start('p', { effort: 'max' }).args).toContain('model_reasoning_effort=high')
+    expect(codexAdapter.start('p', { effort: 'xhigh' }).args).toContain('model_reasoning_effort=high')
+    expect(codexAdapter.start('p', { effort: 'ultracode' }).args).toContain('model_reasoning_effort=high')
+  })
+
+  it('claude：ultracode 档不传 --effort，改为把关键词注入喂入文本开头（start 与 resume）', () => {
+    const inv = claudeAdapter.start('完整 prompt', { effort: 'ultracode' })
+    expect(inv.args).not.toContain('--effort')
+    expect(inv.input?.startsWith('ultracode')).toBe(true)
+    expect(inv.input).toContain('完整 prompt')
+    const rz = claudeAdapter.resume('续接注入', { sessionId: 'sid', effort: 'ultracode' }) as AgentInvocation
+    expect(rz.args).not.toContain('--effort')
+    expect(rz.input?.startsWith('ultracode')).toBe(true)
+    expect(rz.input).toContain('续接注入')
+  })
+
+  it('cursor：ultracode 同样静默忽略', () => {
+    const inv = cursorAdapter.start('p', { effort: 'ultracode' })
+    expect(inv.args.join(' ')).not.toMatch(/effort|ultracode/i)
+    expect(inv.input).toBe('p')
+  })
+
+  it('cursor：不支持 effort，静默忽略（argv 无 effort 痕迹）', () => {
+    const inv = cursorAdapter.start('p', { effort: 'high' })
+    expect(inv.args.join(' ')).not.toMatch(/effort/i)
+  })
+
+  it('未设置 effort 时三家 argv 均无 effort 参数', () => {
+    for (const a of [claudeAdapter, codexAdapter, cursorAdapter]) {
+      expect(a.start('p', {}).args.join(' ')).not.toMatch(/effort/i)
+    }
+  })
 })
 
 describe('claudeAdapter — resume by session id', () => {

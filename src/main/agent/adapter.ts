@@ -6,7 +6,7 @@
  * codex/cursor 留阶段 B；接口已为多目录（一个 agent 跨仓 `extraDirs`）与续接预留。
  */
 
-import type { AgentId } from '../../shared/agents'
+import { clampEffortToHigh, type AgentId, type EffortLevel } from '../../shared/agents'
 
 /** 一次 agent CLI 启动的调用式（纯数据）。`input` 经 stdin 喂入（完整 prompt / 注入文本），不进 argv（避免长度/转义/注入）。 */
 export interface AgentInvocation {
@@ -15,9 +15,11 @@ export interface AgentInvocation {
   input?: string
 }
 
-/** adapter 翻译所需的可选项：模型、透传参数、跨仓追加目录、续接会话 id。 */
+/** adapter 翻译所需的可选项：模型、effort、透传参数、跨仓追加目录、续接会话 id。 */
 export interface AgentInvokeOpts {
   model?: string
+  /** 推理力度（统一枚举）；未设置＝不注入参数，用各家默认。不支持 effort 的外壳忽略。 */
+  effort?: EffortLevel
   extraArgs?: string
   /** 一个 agent 跨仓时，除 cwd 主目标仓外追加的其余目标仓 worktree 目录。 */
   extraDirs?: string[]
@@ -96,13 +98,20 @@ function splitExtra(extraArgs?: string): string[] {
   return s ? s.split(/\s+/) : []
 }
 
-/** claude 公共参数：无头 print + 流式 NDJSON（供实时展示）+ 跳权限 + 选模型 + 跨仓多目录 + 透传。 */
+/** claude 公共参数：无头 print + 流式 NDJSON（供实时展示）+ 跳权限 + 选模型/effort + 跨仓多目录 + 透传。 */
 function claudeCommon(opts: AgentInvokeOpts): string[] {
   const a = ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions']
   if (opts.model) a.push('--model', opts.model)
+  // 已撞真 CLI 校准：--effort 合法取值 low/medium/high/xhigh/max；ultracode 不是 flag 取值，走 prompt 关键词注入。
+  if (opts.effort && opts.effort !== 'ultracode') a.push('--effort', opts.effort)
   for (const d of opts.extraDirs ?? []) a.push('--add-dir', d)
   a.push(...splitExtra(opts.extraArgs))
   return a
+}
+
+/** ultracode 档：把关键词注入喂入文本开头（Claude Code 检测到即为该轮开多 agent 编排）；其余档原样。 */
+function withUltracode(text: string, opts: AgentInvokeOpts): string {
+  return opts.effort === 'ultracode' ? `ultracode\n\n${text}` : text
 }
 
 /**
@@ -112,11 +121,15 @@ function claudeCommon(opts: AgentInvokeOpts): string[] {
 export const claudeAdapter: AgentAdapter = {
   id: 'claude-code',
   supportsResume: true,
-  start: (prompt, opts) => ({ command: 'claude', args: claudeCommon(opts), input: prompt }),
+  start: (prompt, opts) => ({ command: 'claude', args: claudeCommon(opts), input: withUltracode(prompt, opts) }),
   // 按**具体 session id** 精确续接（--resume <id>）；无 id 则无法原生续接，返回 null（引擎回落历史重建）。
   resume: (inject, opts) =>
     opts.sessionId
-      ? { command: 'claude', args: ['--resume', opts.sessionId, ...claudeCommon(opts)], input: inject }
+      ? {
+          command: 'claude',
+          args: ['--resume', opts.sessionId, ...claudeCommon(opts)],
+          input: withUltracode(inject, opts)
+        }
       : null,
   displayFromStreamLine: claudeStreamLine,
   sessionIdFromStreamLine: claudeSessionId
@@ -126,6 +139,8 @@ export const claudeAdapter: AgentAdapter = {
 function codexCommon(opts: AgentInvokeOpts): string[] {
   const a = ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
   if (opts.model) a.push('-m', opts.model)
+  // 按 codex 文档翻成 config 覆盖（本机未装，B 里程碑撞真 CLI 校准，同 -C 的待遇）；档位止于 high，xhigh/max 收敛。
+  if (opts.effort) a.push('-c', `model_reasoning_effort=${clampEffortToHigh(opts.effort)}`)
   // 多目录（一个 agent 跨仓）：codex 无确认的 --add-dir，暂以 -C 追加（B 里程碑撞真 CLI 校准）。
   for (const d of opts.extraDirs ?? []) a.push('-C', d)
   a.push(...splitExtra(opts.extraArgs))

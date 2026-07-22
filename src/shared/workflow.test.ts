@@ -325,6 +325,25 @@ describe('repairWorkflow', () => {
     expect(checkBranchPairing(def).ok).toBe(true)
   }
 
+  it('agent 执行配置的非法 effort 被剔除（不丢节点，修复后过校验）', () => {
+    const def = workflow({
+      nodes: [
+        node({
+          executor: {
+            kind: 'agent',
+            instruction: { kind: 'inline', text: '做' },
+            exec: { toolId: 'claude-code', effort: 'ultra' as never }
+          }
+        })
+      ]
+    })
+    const repaired = repairWorkflow(def)
+    expectValid(repaired)
+    const ex = repaired.nodes[0].executor
+    expect(ex.kind === 'agent' && ex.exec?.effort).toBeUndefined()
+    expect(ex.kind === 'agent' && ex.exec?.toolId).toBe('claude-code')
+  })
+
   it('合法工作流原样有效（幂等，不破坏已合法定义）', () => {
     const def = createDefaultWorkflow('good')
     const repaired = repairWorkflow(def)
@@ -423,6 +442,42 @@ describe('validateWorkflow', () => {
 
   it('节点 stageId 未引用有效阶段判非法', () => {
     expect(validateWorkflow(workflow({ nodes: [node({ stageId: 'missing' })] })).ok).toBe(false)
+  })
+
+  it('agent 执行配置：声明合法 effort 通过、字段完整保留', () => {
+    const n = node({
+      executor: {
+        kind: 'agent',
+        instruction: { kind: 'inline', text: '做' },
+        exec: { toolId: 'claude-code', model: 'opus', effort: 'high' }
+      }
+    })
+    expect(validateWorkflow(workflow({ nodes: [n] }))).toEqual({ ok: true })
+    expect(n.executor.kind === 'agent' && n.executor.exec?.effort).toBe('high')
+  })
+
+  it('agent 执行配置：effort 枚举外值判非法并给可读原因', () => {
+    const n = node({
+      executor: {
+        kind: 'agent',
+        instruction: { kind: 'inline', text: '做' },
+        exec: { effort: 'ultra' as never }
+      }
+    })
+    const r = validateWorkflow(workflow({ nodes: [n] }))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.reason).toMatch(/effort/)
+  })
+
+  it('agent 执行配置：无 effort 字段（旧定义）仍合法', () => {
+    const n = node({
+      executor: {
+        kind: 'agent',
+        instruction: { kind: 'inline', text: '做' },
+        exec: { toolId: 'claude-code', model: 'gpt' }
+      }
+    })
+    expect(validateWorkflow(workflow({ nodes: [n] }))).toEqual({ ok: true })
   })
 
   it('engine / command / subworkflow 缺驱动指令判非法', () => {

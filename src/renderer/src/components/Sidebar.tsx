@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { DetectedAgent, Project, SidebarViewState } from '@shared/types'
 import type { SupportedLanguage } from '@shared/language'
 import type { Appearance } from '@shared/appearance'
-import type { AgentId } from '@shared/agents'
+import type { AgentId, EffortLevel } from '@shared/agents'
 import { projectRootPath } from '@shared/project'
 import { FileTree } from './FileTree'
 import { MissingNotice } from './RepoGroup'
@@ -41,6 +41,10 @@ interface SidebarProps {
   onChangeDefaultAgent: (agentId: AgentId) => void
   /** 用户切换默认模型时回调。 */
   onChangeDefaultModel: (modelId: string) => void
+  /** 当前默认 effort（未设置为 null）。 */
+  defaultEffort: EffortLevel | null
+  /** 用户切换默认 effort 时回调。 */
+  onChangeDefaultEffort: (effort: EffortLevel | null) => void
   /** 用户在项目工作流选择器激活某工作流后回调（驱动主面板看板列重算）。 */
   onActiveWorkflowChange?: (workflowId: string) => void
   /** 右边缘分隔条的指针事件（拖动逻辑在 App，含 pointer capture）。 */
@@ -69,6 +73,8 @@ export function Sidebar({
   defaultModel,
   onChangeDefaultAgent,
   onChangeDefaultModel,
+  defaultEffort,
+  onChangeDefaultEffort,
   onActiveWorkflowChange,
   onResizeStart,
   onResizeMove,
@@ -153,8 +159,10 @@ export function Sidebar({
           detectedAgents={detectedAgents}
           defaultAgent={defaultAgent}
           defaultModel={defaultModel}
+          defaultEffort={defaultEffort}
           onChangeDefaultAgent={onChangeDefaultAgent}
           onChangeDefaultModel={onChangeDefaultModel}
+          onChangeDefaultEffort={onChangeDefaultEffort}
           onActiveWorkflowChange={onActiveWorkflowChange}
           project={current}
         />

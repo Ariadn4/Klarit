@@ -16,6 +16,7 @@ import type {
   WorkflowValidation
 } from './types'
 import { DEFAULT_CARD_TYPES, validateSuggestedTypes } from './card-type'
+import { coerceEffort } from './agents'
 import { hasAnyLanguage, resolveLocalized } from './localized'
 import type { Localized } from './localized'
 import { DEFAULT_LANGUAGE } from './language'
@@ -325,8 +326,13 @@ function validateExecutor(executor: NodeExecutor, where: string): string | null 
     return `${where}：执行者类型非法（应为 agent / engine / command / subworkflow 之一）`
   }
   switch (executor.kind) {
-    case 'agent':
+    case 'agent': {
+      const effort = executor.exec?.effort
+      if (effort !== undefined && coerceEffort(effort) === undefined) {
+        return `${where}：agent 执行配置 effort 非法（应为 low / medium / high / xhigh / max / ultracode）：${String(effort)}`
+      }
       return validateInstruction(executor.instruction, where)
+    }
     case 'engine':
       return nonEmpty(executor.operation) ? null : `${where}：engine 操作 spec 为空`
     case 'command': {
@@ -830,6 +836,14 @@ function isExecutorValid(ex: unknown): boolean {
   }
 }
 
+/** agent 执行配置的 effort 非法时剔除该字段（repair 不丢节点、只去非法值，视同未声明跟随全局）。 */
+function scrubInvalidEffort(ex: NodeExecutor): NodeExecutor {
+  if (ex.kind !== 'agent' || !ex.exec || ex.exec.effort === undefined) return ex
+  if (coerceEffort(ex.exec.effort) !== undefined) return ex
+  const { effort: _drop, ...rest } = ex.exec
+  return { ...ex, exec: rest }
+}
+
 /** 过滤节点产出为合法子集：目的地 file、路径相对且以 .md 结尾；不合的丢弃（不臆造路径）。 */
 function repairOutputs(outputs: unknown): WorkflowOutput[] {
   if (!Array.isArray(outputs)) return []
@@ -901,7 +915,7 @@ export function repairWorkflow(def: WorkflowDefinition): WorkflowDefinition {
       ...(n as WorkflowNode),
       name: hasAnyLanguage(n.name) ? (n.name as Localized) : { [DEFAULT_LANGUAGE]: (n.id as string) || '节点' },
       stageId,
-      executor: n.executor as NodeExecutor,
+      executor: scrubInvalidEffort(n.executor as NodeExecutor),
       outputs
     }
     if (gate.length) node.gate = gate

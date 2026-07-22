@@ -5,7 +5,8 @@ import { X } from 'lucide-react'
 import type { DetectedAgent, Project } from '@shared/types'
 import { LANGUAGE_LABELS, SUPPORTED_LANGUAGES, type SupportedLanguage } from '@shared/language'
 import { SUPPORTED_APPEARANCES, coerceAppearance, type Appearance } from '@shared/appearance'
-import type { AgentId } from '@shared/agents'
+import { coerceEffort, EFFORT_LEVELS, type AgentId, type EffortLevel } from '@shared/agents'
+import { ModelCombobox } from './ui/ModelCombobox'
 import { WorkflowLibrary } from './WorkflowLibrary'
 import { WorkflowPicker } from './WorkflowPicker'
 import { RuleLibrary } from './RuleLibrary'
@@ -33,6 +34,10 @@ interface SettingsPanelProps {
   onChangeDefaultAgent: (agentId: AgentId) => void
   /** 用户切换默认模型时回调。 */
   onChangeDefaultModel: (modelId: string) => void
+  /** 当前默认 effort（未设置为 null＝跟随各 agent 默认）。 */
+  defaultEffort: EffortLevel | null
+  /** 用户切换默认 effort 时回调（null＝清除，回到跟随 agent 默认）。 */
+  onChangeDefaultEffort: (effort: EffortLevel | null) => void
   /** 用户在项目工作流选择器激活某工作流后回调（驱动主面板看板列重算）。 */
   onActiveWorkflowChange?: (workflowId: string) => void
   /** 当前窗口绑定的项目；null 时项目设置区显示空态。 */
@@ -96,6 +101,8 @@ export function SettingsPanel({
   defaultModel,
   onChangeDefaultAgent,
   onChangeDefaultModel,
+  defaultEffort,
+  onChangeDefaultEffort,
   onActiveWorkflowChange,
   project,
   onClose
@@ -104,7 +111,7 @@ export function SettingsPanel({
   const [section, setSection] = useState<SectionId>('app-general')
   // 顶栏插槽：内部视图（编辑器/详情页）把 返回/保存 传送到与 X 同行。
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
-  // 默认模型下拉随当前默认 agent 联动：取该 agent 的模型清单。
+  // 默认模型建议清单随当前默认 agent 联动；combobox 可输可选（自绘弹层，聚焦展示完整建议）。
   const selectedAgent = detectedAgents.find((a) => a.id === defaultAgent)
   const agentModels = selectedAgent?.models ?? []
 
@@ -241,37 +248,47 @@ export function SettingsPanel({
                       </select>
                     </Field>
 
-                    <Field label={t('settingsPanel.defaultModelLabel')} htmlFor="settings-default-model">
-                      <select
+                    <Field
+                      label={t('settingsPanel.defaultModelLabel')}
+                      htmlFor="settings-default-model"
+                      description={t('settingsPanel.modelComboboxHint')}
+                    >
+                      <ModelCombobox
                         id="settings-default-model"
-                        aria-label={t('settingsPanel.defaultModelLabel')}
-                        className={SELECT_CLS}
+                        ariaLabel={t('settingsPanel.defaultModelLabel')}
                         value={defaultModel ?? ''}
-                        disabled={!selectedAgent || agentModels.length === 0}
+                        suggestions={agentModels}
+                        disabled={!selectedAgent}
+                        placeholder={
+                          selectedAgent
+                            ? t('settingsPanel.selectModelPlaceholder')
+                            : t('settingsPanel.selectAgentFirst')
+                        }
+                        onCommit={onChangeDefaultModel}
+                      />
+                    </Field>
+
+                    <Field
+                      label={t('settingsPanel.defaultEffortLabel')}
+                      htmlFor="settings-default-effort"
+                      description={t('settingsPanel.effortHint')}
+                    >
+                      <select
+                        id="settings-default-effort"
+                        aria-label={t('settingsPanel.defaultEffortLabel')}
+                        className={SELECT_CLS}
+                        value={defaultEffort ?? ''}
                         onChange={(e) => {
-                          if (e.target.value && e.target.value !== defaultModel) {
-                            onChangeDefaultModel(e.target.value)
-                          }
+                          const next = coerceEffort(e.target.value) ?? null
+                          if (next !== defaultEffort) onChangeDefaultEffort(next)
                         }}
                       >
-                        {!selectedAgent ? (
-                          <option value="">{t('settingsPanel.selectAgentFirst')}</option>
-                        ) : agentModels.length === 0 ? (
-                          <option value="">{t('settingsPanel.noModelsAvailable')}</option>
-                        ) : (
-                          <>
-                            {defaultModel === null && (
-                              <option value="" disabled>
-                                {t('settingsPanel.selectModelPlaceholder')}
-                              </option>
-                            )}
-                            {agentModels.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.name}
-                              </option>
-                            ))}
-                          </>
-                        )}
+                        <option value="">{t('settingsPanel.effortFollowDefault')}</option>
+                        {EFFORT_LEVELS.map((lv) => (
+                          <option key={lv} value={lv}>
+                            {lv}
+                          </option>
+                        ))}
                       </select>
                     </Field>
                   </>
