@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { CandidateCard, CandidateIssue } from '@shared/types'
+import type { CandidateCard, CandidateIssue, CardRelation } from '@shared/types'
 import { useCardsStore } from './cards'
 
 /** 新建需求流程的阶段：空闲 → 描述想法 → 建卡中（处理）→ 审阅候选。全程状态由「待办」列「+ 创建」按钮承载（见 CreateRequirementEntry）。 */
@@ -33,6 +33,10 @@ interface NewRequirementState {
   cancel: () => void
   setReviewTitle: (index: number, title: string) => void
   setReviewDescription: (index: number, description: string) => void
+  /** 给某候选卡加一条关系边（详情窗加跨卡依赖门用）；合法性由调用方先过共享边谓词。 */
+  addReviewRelation: (index: number, relation: CardRelation) => void
+  /** 删某候选卡的第 relIndex 条关系边（详情窗删跨卡依赖门用）。 */
+  removeReviewRelation: (index: number, relIndex: number) => void
   /** 创建任务：把（含编辑的）候选经统一创建接缝落库到当前项目（手动新建路），再刷新看板。 */
   createTasks: () => Promise<void>
 }
@@ -98,6 +102,20 @@ export const useNewRequirementStore = create<NewRequirementState>((set, get) => 
 
   setReviewDescription: (index, description) =>
     set((st) => ({ reviewCards: st.reviewCards.map((c, i) => (i === index ? { ...c, description } : c)) })),
+
+  addReviewRelation: (index, relation) =>
+    set((st) => ({
+      reviewCards: st.reviewCards.map((c, i) =>
+        i === index ? { ...c, relations: [...c.relations, relation] } : c
+      )
+    })),
+
+  removeReviewRelation: (index, relIndex) =>
+    set((st) => ({
+      reviewCards: st.reviewCards.map((c, i) =>
+        i === index ? { ...c, relations: c.relations.filter((_, ri) => ri !== relIndex) } : c
+      )
+    })),
 
   // 统一创建接缝：把审阅通过的候选落库到当前项目（与外部分解路共用 cards:create），再刷新看板、收起流程。
   createTasks: async () => {

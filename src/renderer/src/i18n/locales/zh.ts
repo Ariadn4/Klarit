@@ -446,7 +446,17 @@ export const zh = {
     noCandidates: '未产出候选任务（需配置可用的 AI，或由 AI 经 skill 推入候选）',
     unboundNotice: '当前窗口未绑定项目，无处归属需求',
     screenshot: '截图 {{n}}',
-    issuesHint: '有 {{count}} 处问题需修正'
+    issuesHint: '有 {{count}} 处问题需修正',
+    gatesLabel: '跨卡依赖门',
+    gatesEmpty: '无跨卡依赖',
+    gateBlockedBy: '被阻塞于',
+    gateBlocks: '阻塞',
+    gateRemove: '删除依赖',
+    gateAddKind: '依赖类型',
+    gateAddTarget: '依赖目标',
+    gateAddBtn: '添加依赖',
+    gateTargetNew: '本批新建',
+    gateNoTargets: '暂无可依赖的卡'
   },
   globalChat: {
     title: '项目Agent',

@@ -39,17 +39,27 @@ export function headlessInvocation(agentId: AgentId, model?: string, effort?: Ef
   }
 }
 
-/** 组装喂给 agent 的完整消息：分解 skill（prompt）+ 用户描述 + 严格的「只输出 JSON 数组」收尾。 */
-export function buildDecomposeMessage(prompt: string, description: string): string {
-  return [
-    prompt,
-    '',
+/**
+ * 组装喂给 agent 的完整消息：分解 skill（prompt）+ 可选全盘视野 + 用户描述 + 严格的「只输出 JSON 数组」收尾。
+ * 有 `boardContext` 时插入项目全盘视野，供 agent 引用现有卡的 id 建立跨卡依赖（尤其 `blocked_by` 在跑/未完成卡）。
+ */
+export function buildDecomposeMessage(prompt: string, description: string, boardContext?: string): string {
+  const parts: string[] = [prompt, '']
+  if (boardContext && boardContext.trim() !== '') {
+    parts.push(
+      '# 项目全盘视野（关系 target 可引用其中现有卡的 id 建立跨卡依赖，尤其用 blocked_by 挂到在跑/未完成的现有卡）',
+      boardContext.trim(),
+      ''
+    )
+  }
+  parts.push(
     '# 用户的需求描述',
     description,
     '',
     '# 输出要求',
     '严格只输出候选卡 JSON 数组（[{...}]），不要任何解释、前后缀或 markdown 代码围栏。'
-  ].join('\n')
+  )
+  return parts.join('\n')
 }
 
 function stripFences(text: string): string {

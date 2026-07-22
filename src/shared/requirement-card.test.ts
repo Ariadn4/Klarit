@@ -9,8 +9,11 @@ import {
   validateCandidateCard,
   validateRequirementCard,
   newRequirementCard,
-  isTodoCard
+  isTodoCard,
+  isRelationEdgeLegal,
+  type EdgeCardView
 } from './requirement-card'
+import type { CardRelation } from './types'
 import { DEFAULT_CARD_TYPES, typeArchetypeMap } from './card-type'
 
 const REGISTRY = typeArchetypeMap(DEFAULT_CARD_TYPES)
@@ -175,5 +178,82 @@ describe('isTodoCard（破坏性收边的待办门控）', () => {
   it('未知 archetype 按 leaf 保守处理（未开始无运行才算待办）', () => {
     expect(isTodoCard({ status: '未开始' }, undefined)).toBe(true)
     expect(isTodoCard({ status: '已完成' }, undefined)).toBe(false)
+  })
+})
+
+describe('isRelationEdgeLegal（关系边引入期合法性 · 单一来源）', () => {
+  // 构造 universe：现有落库卡 ∪ 本批新卡，统一到 EdgeCardView。
+  const view = (over: Partial<EdgeCardView> = {}): EdgeCardView => ({
+    typeId: 'feature',
+    status: '未开始',
+    relations: [],
+    ...over
+  })
+  const universe = (entries: Record<string, EdgeCardView>): Map<string, EdgeCardView> =>
+    new Map(Object.entries(entries))
+  const edge = (kind: CardRelation['kind'], target: string): CardRelation => ({ kind, target })
+
+  it('目标不存在 → 非法', () => {
+    const u = universe({ me: view() })
+    const v = isRelationEdgeLegal('me', edge('blocked_by', 'ghost'), u, REGISTRY)
+    expect(v.ok).toBe(false)
+    if (!v.ok) expect(v.reason).toMatch(/不存在/)
+  })
+
+  it('自环 → 非法', () => {
+    const u = universe({ me: view() })
+    const v = isRelationEdgeLegal('me', edge('blocked_by', 'me'), u, REGISTRY)
+    expect(v.ok).toBe(false)
+    if (!v.ok) expect(v.reason).toMatch(/自身|自环/)
+  })
+
+  it('blocks 目标在跑（进行中）→ 非法', () => {
+    const u = universe({ me: view(), running: view({ status: '进行中' }) })
+    const v = isRelationEdgeLegal('me', edge('blocks', 'running'), u, REGISTRY)
+    expect(v.ok).toBe(false)
+    if (!v.ok) expect(v.reason).toMatch(/在运行|blocks|前置|飞行/)
+  })
+
+  it('blocks 目标有 activeRunId → 非法', () => {
+    const u = universe({ me: view(), busy: view({ status: '未开始', activeRunId: 'r1' }) })
+    expect(isRelationEdgeLegal('me', edge('blocks', 'busy'), u, REGISTRY).ok).toBe(false)
+  })
+
+  it('blocks 目标未跑 → 合法', () => {
+    const u = universe({ me: view(), idle: view() })
+    expect(isRelationEdgeLegal('me', edge('blocks', 'idle'), u, REGISTRY)).toEqual({ ok: true })
+  })
+
+  it('blocked_by 目标在跑 → 合法（等待端是发起卡自己）', () => {
+    const u = universe({ me: view(), running: view({ status: '进行中', activeRunId: 'r1' }) })
+    expect(isRelationEdgeLegal('me', edge('blocked_by', 'running'), u, REGISTRY)).toEqual({ ok: true })
+  })
+
+  it('目标可为现有落库卡（非本批）→ 存在即通过存在性判据', () => {
+    const u = universe({ me: view(), existing: view({ status: '已完成' }) })
+    expect(isRelationEdgeLegal('me', edge('blocked_by', 'existing'), u, REGISTRY)).toEqual({ ok: true })
+  })
+
+  it('parent 指向非容器 → 非法', () => {
+    const u = universe({ me: view(), leafy: view({ typeId: 'feature' }) })
+    const v = isRelationEdgeLegal('me', edge('parent', 'leafy'), u, REGISTRY)
+    expect(v.ok).toBe(false)
+    if (!v.ok) expect(v.reason).toMatch(/容器|container|父卡/)
+  })
+
+  it('parent 指向容器 → 合法', () => {
+    const u = universe({ me: view(), ep: view({ typeId: 'epic' }) })
+    expect(isRelationEdgeLegal('me', edge('parent', 'ep'), u, REGISTRY)).toEqual({ ok: true })
+  })
+
+  it('成环检测跨「现有 ∪ 本批」合并图 → 非法', () => {
+    // existing-epic 的父是 new-epic（本批）；给 new-epic 加 parent→existing-epic 会成环。
+    const u = universe({
+      'existing-epic': view({ typeId: 'epic', relations: [{ kind: 'parent', target: 'new-epic' }] }),
+      'new-epic': view({ typeId: 'epic', relations: [] })
+    })
+    const v = isRelationEdgeLegal('new-epic', edge('parent', 'existing-epic'), u, REGISTRY)
+    expect(v.ok).toBe(false)
+    if (!v.ok) expect(v.reason).toMatch(/环/)
   })
 })

@@ -2,9 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act } from 'react'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { CandidateCard, DecomposeOutcome, DecomposePromptOutcome } from '@shared/types'
+import type { CandidateCard, DecomposeOutcome, DecomposePromptOutcome, StoredCard } from '@shared/types'
 import { NewRequirementFlow } from './NewRequirementFlow'
 import { useNewRequirementStore } from '../stores/newRequirement'
+import { useCardsStore } from '../stores/cards'
+import { DEFAULT_CARD_TYPES } from '@shared/card-type'
+
+const stored = (over: Partial<StoredCard> = {}): StoredCard => ({
+  proposedName: 'running',
+  title: '在跑卡',
+  description: '',
+  typeId: 'feature',
+  relations: [],
+  status: '进行中',
+  activeRunId: 'r1',
+  createdAt: 1,
+  updatedAt: 1,
+  projectId: 'p1',
+  repos: [],
+  ...over
+})
 
 const card = (over: Partial<CandidateCard> = {}): CandidateCard => ({
   proposedName: 'add-dark-mode',
@@ -241,5 +258,63 @@ describe('审阅候选任务窗', () => {
     await userEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(useNewRequirementStore.getState().phase).toBe('idle')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('审阅窗跨卡依赖门（呈现 / 删除 / 加边校验）', () => {
+  beforeEach(() => {
+    useCardsStore.setState({ cards: [stored()], cardTypes: [...DEFAULT_CARD_TYPES] })
+  })
+
+  it('详情呈现跨卡依赖门与被指向卡的当前状态', async () => {
+    useNewRequirementStore.setState({
+      phase: 'reviewing',
+      windowOpen: true,
+      reviewCards: [card({ relations: [{ kind: 'blocked_by', target: 'running' }] })]
+    })
+    render(<NewRequirementFlow />)
+    await userEvent.click(screen.getByText('增加暗色模式'))
+    expect(screen.getByText('跨卡依赖门')).toBeInTheDocument()
+    // '被阻塞于' 既在依赖门行、也作加边下拉选项，故用 getAllByText。
+    expect(screen.getAllByText('被阻塞于').length).toBeGreaterThan(0)
+    expect(screen.getByText('running')).toBeInTheDocument()
+    // 目标当前状态徽章
+    expect(screen.getByText('进行中')).toBeInTheDocument()
+  })
+
+  it('删除一条依赖门 → 候选卡关系被移除', async () => {
+    useNewRequirementStore.setState({
+      phase: 'reviewing',
+      windowOpen: true,
+      reviewCards: [card({ relations: [{ kind: 'blocked_by', target: 'running' }] })]
+    })
+    render(<NewRequirementFlow />)
+    await userEvent.click(screen.getByText('增加暗色模式'))
+    await userEvent.click(screen.getByRole('button', { name: '删除依赖' }))
+    expect(useNewRequirementStore.getState().reviewCards[0].relations).toEqual([])
+  })
+
+  it('加 blocked_by 指向现有卡 → 写入候选关系', async () => {
+    useCardsStore.setState({ cards: [stored({ proposedName: 'idle-card', title: '空闲卡', status: '未开始', activeRunId: undefined })], cardTypes: [...DEFAULT_CARD_TYPES] })
+    useNewRequirementStore.setState({ phase: 'reviewing', windowOpen: true, reviewCards: [card()] })
+    render(<NewRequirementFlow />)
+    await userEvent.click(screen.getByText('增加暗色模式'))
+    await userEvent.selectOptions(screen.getByLabelText('依赖类型'), 'blocked_by')
+    await userEvent.selectOptions(screen.getByLabelText('依赖目标'), 'idle-card')
+    await userEvent.click(screen.getByRole('button', { name: '添加依赖' }))
+    expect(useNewRequirementStore.getState().reviewCards[0].relations).toEqual([
+      { kind: 'blocked_by', target: 'idle-card' }
+    ])
+  })
+
+  it('加 blocks 指向在跑卡 → 被拒、给出原因、不写入', async () => {
+    useNewRequirementStore.setState({ phase: 'reviewing', windowOpen: true, reviewCards: [card()] })
+    render(<NewRequirementFlow />)
+    await userEvent.click(screen.getByText('增加暗色模式'))
+    await userEvent.selectOptions(screen.getByLabelText('依赖类型'), 'blocks')
+    await userEvent.selectOptions(screen.getByLabelText('依赖目标'), 'running')
+    await userEvent.click(screen.getByRole('button', { name: '添加依赖' }))
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(useNewRequirementStore.getState().reviewCards[0].relations).toEqual([])
   })
 })

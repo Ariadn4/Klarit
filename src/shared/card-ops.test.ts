@@ -184,3 +184,60 @@ describe('validateOps（逐 op 校验 + 破坏性收边）', () => {
     expect(issues[0].reason).toMatch(/待办|已离开|运行/)
   })
 })
+
+describe('validateOps（关系边走共享谓词 · blocks 状态门 + 跨图成环）', () => {
+  const cards = [
+    stored({ proposedName: 'card-a', typeId: 'feature', status: '未开始' }),
+    stored({ proposedName: 'card-b', typeId: 'feature', status: '未开始' }),
+    stored({ proposedName: 'running', typeId: 'feature', status: '进行中', activeRunId: 'r1' }),
+    stored({ proposedName: 'done', typeId: 'feature', status: '已完成' })
+  ]
+  const ctx = { cards, registry: REGISTRY }
+
+  it('relate 加 blocks 指向在跑卡 → issue（补 blocks 状态门）', () => {
+    const ops: CardOp[] = [{ kind: 'relate', op: 'add', from: 'card-a', edge: { kind: 'blocks', target: 'running' } }]
+    const issues = validateOps(ops, ctx).issues
+    expect(issues).toHaveLength(1)
+    expect(issues[0].reason).toMatch(/在运行|blocks|前置|飞行|待办/)
+  })
+
+  it('relate 加 blocks 指向已完成卡 → issue（已离开待办）', () => {
+    const ops: CardOp[] = [{ kind: 'relate', op: 'add', from: 'card-a', edge: { kind: 'blocks', target: 'done' } }]
+    expect(validateOps(ops, ctx).issues).toHaveLength(1)
+  })
+
+  it('relate 加 blocked_by 指向在跑卡 → 合法（等待端是发起卡自己）', () => {
+    const ops: CardOp[] = [{ kind: 'relate', op: 'add', from: 'card-a', edge: { kind: 'blocked_by', target: 'running' } }]
+    expect(validateOps(ops, ctx).issues).toEqual([])
+  })
+
+  it('relate 加 blocks 指向未跑卡 → 合法', () => {
+    const ops: CardOp[] = [{ kind: 'relate', op: 'add', from: 'card-a', edge: { kind: 'blocks', target: 'card-b' } }]
+    expect(validateOps(ops, ctx).issues).toEqual([])
+  })
+
+  it('create 内嵌 blocks 指向在跑卡 → issue', () => {
+    const ops: CardOp[] = [
+      { kind: 'create', card: { proposedName: 'new-y', title: 'Y', description: '', typeId: 'feature', relations: [{ kind: 'blocks', target: 'running' }] } }
+    ]
+    const issues = validateOps(ops, ctx).issues
+    expect(issues.some((i) => /在运行|blocks|前置|飞行|待办/.test(i.reason))).toBe(true)
+  })
+
+  it('create 内嵌 blocked_by 指向在跑卡 → 合法', () => {
+    const ops: CardOp[] = [
+      { kind: 'create', card: { proposedName: 'new-z', title: 'Z', description: '', typeId: 'feature', relations: [{ kind: 'blocked_by', target: 'running' }] } }
+    ]
+    expect(validateOps(ops, ctx).issues).toEqual([])
+  })
+
+  it('parent 成环跨「现有 ∪ 新批」合并图 → issue', () => {
+    // 现有 ex-epic 的父是 new-epic（本批新建）；新建 new-epic 又 parent→ex-epic，闭环。
+    const localCards = [stored({ proposedName: 'ex-epic', typeId: 'epic', relations: [{ kind: 'parent', target: 'new-epic' }] })]
+    const ops: CardOp[] = [
+      { kind: 'create', card: { proposedName: 'new-epic', title: 'NE', description: '', typeId: 'epic', relations: [{ kind: 'parent', target: 'ex-epic' }] } }
+    ]
+    const issues = validateOps(ops, { cards: localCards, registry: REGISTRY }).issues
+    expect(issues.some((i) => /环/.test(i.reason))).toBe(true)
+  })
+})
