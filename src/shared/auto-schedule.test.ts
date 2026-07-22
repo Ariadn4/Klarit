@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import type { EdgeCardView } from './requirement-card'
 import type { StoredCard } from './types'
 import { DEFAULT_CARD_TYPES, typeArchetypeMap } from './card-type'
+import { isRelationEdgeLegal } from './requirement-card'
 import { isAutoEligible, reposUnion, reposOverlap, planFills } from './auto-schedule'
 
 const REGISTRY = typeArchetypeMap(DEFAULT_CARD_TYPES) // feature=leaf, bug=leaf, epic=container
@@ -98,6 +100,35 @@ describe('isAutoEligible —— 自动运行资格的隐式判定', () => {
       ]
     })
     expect(isAutoEligible(c, byId([other, c]), REGISTRY, true)).toBe(true)
+  })
+})
+
+describe('阻塞门与关系边引入期校验一致（不会给在跑卡追加未满足阻塞）', () => {
+  const view = (c: StoredCard): EdgeCardView => ({
+    typeId: c.typeId,
+    status: c.status,
+    activeRunId: c.activeRunId,
+    relations: c.relations
+  })
+
+  it('在跑卡不能作为新 blocks 边的目标（引入期即拦截，硬门无从面对不一致态）', () => {
+    // 一张 leaf 卡已在跑；试图给它凭空加一条会阻塞它的边（X blocks running），引入期就该被拒。
+    const running = card({ proposedName: 'running', status: '进行中', activeRunId: 'r1' })
+    const x = card({ proposedName: 'x' })
+    const universe = new Map([
+      ['x', view(x)],
+      ['running', view(running)]
+    ])
+    const v = isRelationEdgeLegal('x', { kind: 'blocks', target: 'running' }, universe, REGISTRY)
+    expect(v.ok).toBe(false)
+  })
+
+  it('硬门判定口径不变：blocked_by 目标全「已完成」才放行', () => {
+    const done = card({ proposedName: 'done', status: '已完成' })
+    const c = card({ proposedName: 'c', relations: [{ kind: 'blocked_by', target: 'done' }] })
+    expect(isAutoEligible(c, byId([done, c]), REGISTRY, true)).toBe(true)
+    const notDone = card({ proposedName: 'done', status: '进行中' })
+    expect(isAutoEligible(c, byId([notDone, c]), REGISTRY, true)).toBe(false)
   })
 })
 

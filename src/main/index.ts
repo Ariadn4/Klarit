@@ -90,7 +90,7 @@ import { createDecomposeSeam } from './global-agent'
 import type { CandidateProducer, ResolveDeps } from './decompose-service'
 import { buildDecomposeMessage, headlessInvocation, parseCandidateCards, runAgentHeadless } from './agent-runner'
 import { createOrchestrateSeam, type OrchestrateDeps, type OpsProducer } from './orchestrate-service'
-import type { WorkflowChoice } from '../shared/board-context'
+import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { resolveLocalized } from '../shared/localized'
 import { createOpsProducer, type SessionBridge } from './orchestrate-producer'
 import { applyOps as applyOpsToStore, createOpsFromCandidates } from './apply-ops'
@@ -406,7 +406,7 @@ const decomposeProducer: CandidateProducer = async (prompt, input) => {
   const agentId = settings.defaultAgent
   if (!agentId) return []
   const inv = headlessInvocation(agentId, settings.defaultModel, settings.defaultEffort)
-  const message = buildDecomposeMessage(prompt, input.description)
+  const message = buildDecomposeMessage(prompt, input.description, input.boardContext)
   try {
     const out = await runAgentHeadless(inv, message, { timeoutMs: 180_000 })
     return parseCandidateCards(out)
@@ -420,8 +420,21 @@ const makeResolveDeps = (projectId: string | null): ResolveDeps => ({
   getWorkflow: (id) => workflows.get(id),
   readWorkflowSkill: (wfId, rel) => workflows.readSkillFile(wfId, rel),
   getTypes: () => (projectId ? getProjectCardTypes(registry, projectId) : [...DEFAULT_CARD_TYPES]),
-  readOverride: () => globalSkills.readOverride()
+  readOverride: () => globalSkills.readOverride(),
+  // 现有落库卡：候选卡批校验的「引用宇宙」现有卡半边（使候选可跨卡引用现有卡、对标编排路规则）。
+  getCards: () => (projectId ? cardStore.list(projectId) : [])
 })
+
+/** 装配当前项目的全盘视野文本（现有卡活现状 + 关系图），喂给分解 agent 以引用现有卡建跨卡依赖；未绑定给空串。 */
+const assembleDecomposeBoardContext = (projectId: string | null): string => {
+  if (!projectId) return ''
+  return buildBoardContext({
+    cards: cardStore.list(projectId),
+    types: getProjectCardTypes(registry, projectId),
+    goals: '',
+    constitution: []
+  })
+}
 
 // 全局对话持久化（一会话一文件、不入 git；随云同步走）。会话是**应用级全局**——不挂某个项目，
 // 会话**按项目分开**：作用域 = 窗口当前绑定的项目 id；未绑定用独立的 `__unbound__` 作用域。
@@ -1293,7 +1306,9 @@ function registerIpc(): void {
   })
   ipcMain.handle(IPC.decomposeRequirement, (e, input: DecomposeInput): Promise<DecomposeOutcome> => {
     const projectId = currentProjectId(e)
-    return seamFor(projectId).decompose(input, projectId)
+    // 注入本项目全盘视野：让分解 agent 看得到现有卡，能引用它们建跨卡依赖（尤其 blocked_by 在跑卡）。
+    const withBoard: DecomposeInput = { ...input, boardContext: assembleDecomposeBoardContext(projectId) }
+    return seamFor(projectId).decompose(withBoard, projectId)
   })
   ipcMain.handle(
     IPC.submitDecomposedCandidates,

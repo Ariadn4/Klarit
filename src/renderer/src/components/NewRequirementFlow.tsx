@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronLeft, Loader2, Minus, Paperclip, X } from 'lucide-react'
 import Markdown from 'react-markdown'
-import type { CandidateCard } from '@shared/types'
+import type { CandidateCard, CardRelation } from '@shared/types'
+import { isRelationEdgeLegal, type EdgeCardView } from '@shared/requirement-card'
+import { typeArchetypeMap } from '@shared/card-type'
 import { useNewRequirementStore } from '../stores/newRequirement'
+import { useCardsStore } from '../stores/cards'
 
 const inputCls =
   'w-full rounded border border-stone-300 bg-canvas px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-cobalt-500'
@@ -195,16 +198,154 @@ function ProcessingWindow(): React.JSX.Element {
   )
 }
 
+/** 依赖门边类型（有调度硬门、须显式呈现/可编辑）；其余关系（parent/child/coupled_with）在详情里只读。 */
+const GATE_KINDS: ReadonlyArray<CardRelation['kind']> = ['blocked_by', 'blocks']
+
+/**
+ * 候选卡的**跨卡依赖门**呈现与编辑：列出 blocked_by/blocks 边（标被指向卡当前状态）、可删、可加一条
+ * 指向现有卡或本批其它卡的依赖。加/留的边过共享边谓词 `isRelationEdgeLegal`（blocks 指在跑卡被拒）。
+ */
+function CrossCardGates({ index, card }: { index: number; card: CandidateCard }): React.JSX.Element {
+  const { t } = useTranslation()
+  const existing = useCardsStore((s) => s.cards)
+  const cardTypes = useCardsStore((s) => s.cardTypes)
+  const reviewCards = useNewRequirementStore((s) => s.reviewCards)
+  const addRel = useNewRequirementStore((s) => s.addReviewRelation)
+  const removeRel = useNewRequirementStore((s) => s.removeReviewRelation)
+  const [kind, setKind] = useState<'blocked_by' | 'blocks'>('blocked_by')
+  const [target, setTarget] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const registry = useMemo(() => typeArchetypeMap(cardTypes), [cardTypes])
+  // 引用宇宙：现有落库卡 ∪ 本批候选卡（统一到 EdgeCardView），与主进程/校验层同口径。
+  const universe = useMemo(() => {
+    const u = new Map<string, EdgeCardView>()
+    for (const s of existing)
+      u.set(s.proposedName, { typeId: s.typeId, status: s.status, activeRunId: s.activeRunId, relations: s.relations })
+    for (const c of reviewCards)
+      u.set(c.proposedName, { typeId: c.typeId, status: '未开始', relations: c.relations })
+    return u
+  }, [existing, reviewCards])
+
+  const targetOptions = useMemo(() => {
+    const opts: { id: string; label: string; isNew: boolean }[] = []
+    for (const c of reviewCards) if (c.proposedName !== card.proposedName) opts.push({ id: c.proposedName, label: c.title, isNew: true })
+    for (const s of existing) opts.push({ id: s.proposedName, label: s.title, isNew: false })
+    return opts
+  }, [existing, reviewCards, card.proposedName])
+
+  const statusOf = (targetId: string): string => {
+    const s = existing.find((c) => c.proposedName === targetId)
+    if (s) return s.status
+    if (reviewCards.some((c) => c.proposedName === targetId)) return t('newRequirement.gateTargetNew')
+    return '?'
+  }
+
+  const gates = card.relations
+    .map((r, ri) => ({ r, ri }))
+    .filter(({ r }) => GATE_KINDS.includes(r.kind))
+
+  const onAdd = (): void => {
+    if (!target) return
+    const edge: CardRelation = { kind, target }
+    const v = isRelationEdgeLegal(card.proposedName, edge, universe, registry)
+    if (!v.ok) {
+      setError(v.reason)
+      return
+    }
+    setError(null)
+    addRel(index, edge)
+    setTarget('')
+  }
+
+  const selCls =
+    'rounded border border-stone-300 bg-canvas px-1.5 py-1 text-[12px] text-ink outline-none focus:border-cobalt-500'
+
+  return (
+    <div className="space-y-1.5">
+      <span className={labelCls}>{t('newRequirement.gatesLabel')}</span>
+      {gates.length === 0 ? (
+        <p className="text-[12px] text-stone-600">{t('newRequirement.gatesEmpty')}</p>
+      ) : (
+        <ul className="space-y-1">
+          {gates.map(({ r, ri }) => (
+            <li key={ri} className="flex items-center gap-2 text-[12px] text-ink">
+              <span className="text-stone-600">
+                {r.kind === 'blocked_by' ? t('newRequirement.gateBlockedBy') : t('newRequirement.gateBlocks')}
+              </span>
+              <span className="font-mono">{r.target}</span>
+              <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600">{statusOf(r.target)}</span>
+              <button
+                type="button"
+                aria-label={t('newRequirement.gateRemove')}
+                onClick={() => removeRel(index, ri)}
+                className="ml-auto flex h-5 w-5 items-center justify-center rounded text-stone-600 hover:bg-stone-100 hover:text-ink"
+              >
+                <X size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {targetOptions.length === 0 ? (
+        <p className="text-[12px] text-stone-600">{t('newRequirement.gateNoTargets')}</p>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <select
+            aria-label={t('newRequirement.gateAddKind')}
+            value={kind}
+            onChange={(e) => setKind(e.target.value as 'blocked_by' | 'blocks')}
+            className={selCls}
+          >
+            <option value="blocked_by">{t('newRequirement.gateBlockedBy')}</option>
+            <option value="blocks">{t('newRequirement.gateBlocks')}</option>
+          </select>
+          <select
+            aria-label={t('newRequirement.gateAddTarget')}
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            className={`${selCls} min-w-0 flex-1`}
+          >
+            <option value="">—</option>
+            {targetOptions.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+                {o.isNew ? `（${t('newRequirement.gateTargetNew')}）` : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={onAdd}
+            className="rounded border border-stone-300 bg-canvas px-2 py-1 text-[12px] text-ink hover:bg-stone-100"
+          >
+            {t('newRequirement.gateAddBtn')}
+          </button>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="text-[12px] text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function TaskDetail({
+  index,
   card,
   onTitle,
   onDesc
 }: {
+  index: number
   card: CandidateCard
   onTitle: (v: string) => void
   onDesc: (v: string) => void
 }): React.JSX.Element {
   const { t } = useTranslation()
+  // 层级/耦合关系（parent/child/coupled_with）在详情里只读展示；跨卡依赖门另由 CrossCardGates 呈现/编辑。
+  const structural = card.relations.filter((r) => !GATE_KINDS.includes(r.kind))
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -229,9 +370,10 @@ function TaskDetail({
           className={`${inputCls} min-h-32`}
         />
       </label>
-      {card.relations.length > 0 && (
+      <CrossCardGates index={index} card={card} />
+      {structural.length > 0 && (
         <div className="text-[12px] text-stone-600">
-          {card.relations.map((r, i) => (
+          {structural.map((r, i) => (
             <span key={i} className="mr-2 font-mono">
               {r.kind}→{r.target}
             </span>
@@ -278,6 +420,7 @@ function ReviewWindow(): React.JSX.Element {
         <p className="py-8 text-center text-[13px] text-stone-600">{t('newRequirement.noCandidates')}</p>
       ) : detail !== null && cards[detail] ? (
         <TaskDetail
+          index={detail}
           card={cards[detail]}
           onTitle={(v) => setTitle(detail, v)}
           onDesc={(v) => setDesc(detail, v)}

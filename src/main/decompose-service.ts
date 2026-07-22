@@ -6,7 +6,14 @@
  * → 由项目在册类型自动生成的分解 skill（兜底，始终非空）。
  */
 
-import type { CandidateCard, CardTypeDef, DecomposeInput, DecomposeResult, WorkflowDefinition } from '../shared/types'
+import type {
+  CandidateCard,
+  CardTypeDef,
+  DecomposeInput,
+  DecomposeResult,
+  StoredCard,
+  WorkflowDefinition
+} from '../shared/types'
 import { buildDecomposeSkill, normalizeCandidateBatch, validateCandidateBatch } from '../shared/decomposition'
 import { typeArchetypeMap } from '../shared/card-type'
 
@@ -22,6 +29,11 @@ export interface ResolveDeps {
   getTypes: () => CardTypeDef[]
   /** 全局手写/导入的覆盖 skill 内容；无则 null（无覆盖时用自动生成 skill 兜底）。 */
   readOverride: () => string | null
+  /**
+   * 当前项目**现有落库卡**（缺省视为空）：作候选卡批校验的「引用宇宙」现有卡半边，
+   * 使候选关系可指向现有卡、并对标编排路的跨图规则（blocks 目标须未跑、跨图成环）。
+   */
+  getCards?: () => StoredCard[]
 }
 
 /** producer：拿生效 prompt 与输入产出候选卡（外部 AI / agent 运行时）。 */
@@ -60,6 +72,7 @@ export async function runDecompose(
   const prompt = resolveDecomposePrompt(deps)
   const raw = await produce(prompt, input)
   const candidates = normalizeCandidateBatch(raw ?? [])
-  const { issues } = validateCandidateBatch(candidates, typeArchetypeMap(deps.getTypes()))
+  const existing = deps.getCards?.() ?? []
+  const { issues } = validateCandidateBatch(candidates, typeArchetypeMap(deps.getTypes()), existing)
   return { candidates, issues }
 }

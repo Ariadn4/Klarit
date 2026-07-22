@@ -32,7 +32,8 @@ export function createDecomposeSeam(deps: ResolveDeps, produce: CandidateProduce
     async submit(candidates, projectId) {
       if (!projectId) return { unbound: true }
       const normalized = normalizeCandidateBatch(candidates ?? [])
-      const { issues } = validateCandidateBatch(normalized, typeArchetypeMap(deps.getTypes()))
+      const existing = deps.getCards?.() ?? []
+      const { issues } = validateCandidateBatch(normalized, typeArchetypeMap(deps.getTypes()), existing)
       return { candidates: normalized, issues }
     },
 

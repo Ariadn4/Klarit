@@ -551,6 +551,11 @@ export interface CandidateIssue {
 /** 一次分解的输入：用户的一大段自由描述（可夹带粘贴的截图说明/文件路径文本）。 */
 export interface DecomposeInput {
   description: string
+  /**
+   * 可选**全盘视野**文本（本项目现有卡活现状 + 关系图，由主进程装配注入）：喂给分解 agent，
+   * 让它能引用现有卡建立跨卡依赖（尤其 `blocked_by` 在跑/未完成卡）。缺省即退化为纯描述分解。
+   */
+  boardContext?: string
 }
 
 /** 分解结果：结构化候选卡 + 校验问题（不合卡模型/重名/悬挂关系），止于产出（不落库）。 */

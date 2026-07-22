@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import type { CandidateCard } from './types'
-import { validateCandidateBatch, normalizeCandidateBatch } from './decomposition'
+import type { CandidateCard, StoredCard } from './types'
+import { validateCandidateBatch, normalizeCandidateBatch, buildDecomposeSkill } from './decomposition'
 import { DEFAULT_CARD_TYPES, typeArchetypeMap } from './card-type'
 
 const REGISTRY = typeArchetypeMap(DEFAULT_CARD_TYPES)
@@ -12,6 +12,22 @@ function card(over: Partial<CandidateCard> = {}): CandidateCard {
     description: '给界面加暗色主题',
     typeId: 'feature',
     relations: [],
+    ...over
+  }
+}
+
+function stored(over: Partial<StoredCard> = {}): StoredCard {
+  return {
+    proposedName: 'existing-a',
+    title: '现有卡',
+    description: '',
+    typeId: 'feature',
+    relations: [],
+    status: '未开始',
+    createdAt: 1,
+    updatedAt: 1,
+    projectId: 'p1',
+    repos: [],
     ...over
   }
 }
@@ -75,6 +91,51 @@ describe('validateCandidateBatch', () => {
       card({ proposedName: 'mid-epic', typeId: 'epic', relations: [{ kind: 'parent', target: 'big-epic' }] })
     ]
     expect(validateCandidateBatch(batch, REGISTRY)).toEqual({ ok: true, issues: [] })
+  })
+
+  it('关系 target 可引用现有落库卡（引用宇宙 = 现有 ∪ 本批）', () => {
+    const existing = [stored({ proposedName: 'existing-a', status: '未开始' })]
+    const batch = [card({ relations: [{ kind: 'coupled_with', target: 'existing-a' }] })]
+    expect(validateCandidateBatch(batch, REGISTRY, existing)).toEqual({ ok: true, issues: [] })
+  })
+
+  it('候选卡 blocked_by 现有在跑卡 → 通过', () => {
+    const existing = [stored({ proposedName: 'running', status: '进行中', activeRunId: 'r1' })]
+    const batch = [card({ relations: [{ kind: 'blocked_by', target: 'running' }] })]
+    expect(validateCandidateBatch(batch, REGISTRY, existing)).toEqual({ ok: true, issues: [] })
+  })
+
+  it('候选卡 blocks 现有在跑卡 → 进 issue', () => {
+    const existing = [stored({ proposedName: 'running', status: '进行中', activeRunId: 'r1' })]
+    const batch = [card({ relations: [{ kind: 'blocks', target: 'running' }] })]
+    const v = validateCandidateBatch(batch, REGISTRY, existing)
+    expect(v.ok).toBe(false)
+    expect(v.issues.some((i) => /在运行|blocks|前置|飞行|待办/.test(i.reason))).toBe(true)
+  })
+
+  it('未提供现有卡时目标指向库外卡 → 悬挂（向后兼容纯批内）', () => {
+    const batch = [card({ relations: [{ kind: 'blocked_by', target: 'running' }] })]
+    const v = validateCandidateBatch(batch, REGISTRY)
+    expect(v.ok).toBe(false)
+    expect(v.issues.some((i) => /不存在|running/.test(i.reason))).toBe(true)
+  })
+
+  it('本批父子成环 → 检出（分解路也获成环检测）', () => {
+    const batch = [
+      card({ proposedName: 'ep-a', typeId: 'epic', relations: [{ kind: 'parent', target: 'ep-b' }] }),
+      card({ proposedName: 'ep-b', typeId: 'epic', relations: [{ kind: 'parent', target: 'ep-a' }] })
+    ]
+    const v = validateCandidateBatch(batch, REGISTRY)
+    expect(v.ok).toBe(false)
+    expect(v.issues.some((i) => /环/.test(i.reason))).toBe(true)
+  })
+})
+
+describe('buildDecomposeSkill', () => {
+  it('固定模板引导用 blocked_by 引用现有卡建跨卡依赖', () => {
+    const skill = buildDecomposeSkill([...DEFAULT_CARD_TYPES])
+    expect(skill).toMatch(/现有卡/)
+    expect(skill).toMatch(/blocked_by/)
   })
 })
 

@@ -15,7 +15,14 @@ import type {
 } from './types'
 import type { TypeArchetypeMap } from './card-type'
 import { coerceCandidateCard, coerceRelations } from './decomposition'
-import { CARD_RELATION_KINDS, isTodoCard, validateCandidateCard } from './requirement-card'
+import {
+  CARD_RELATION_KINDS,
+  isRelationEdgeLegal,
+  isTodoCard,
+  isValidProposedName,
+  validateCandidateCard,
+  type EdgeCardView
+} from './requirement-card'
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v.trim() : ''
@@ -131,10 +138,39 @@ export function validateOps(ops: CardOp[], ctx: ValidateOpsContext): OpsValidati
     else introduced.add(card.proposedName)
   }
 
+  // 关系边校验的引用宇宙：现有卡（活现状）∪ 本批所有新建卡（create/split/merge 产物，视为未开始）。
+  // 供共享边谓词 isRelationEdgeLegal 判 target 存在、blocks 目标须未跑、跨「现有 ∪ 新批」合并图成环。
+  const universe = new Map<string, EdgeCardView>()
+  for (const c of cards) {
+    universe.set(c.proposedName, {
+      typeId: c.typeId,
+      status: c.status,
+      activeRunId: c.activeRunId,
+      relations: c.relations ?? []
+    })
+  }
+  const addNewToUniverse = (card: CandidateCard): void => {
+    if (card && isValidProposedName(card.proposedName) && !universe.has(card.proposedName)) {
+      universe.set(card.proposedName, { typeId: card.typeId, status: '未开始', relations: card.relations ?? [] })
+    }
+  }
+  for (const op of ops) {
+    if (op.kind === 'create') addNewToUniverse(op.card)
+    else if (op.kind === 'split') op.into.forEach(addNewToUniverse)
+    else if (op.kind === 'merge' && typeof op.into !== 'string') addNewToUniverse(op.into)
+  }
+
   ops.forEach((op, index) => {
     switch (op.kind) {
       case 'create':
         validateNewCard(index, 'create', op.card)
+        // 内嵌关系边过共享边谓词（含 blocks 目标须未跑、跨图成环）；仅在卡预取名合法时校验其边。
+        if (isValidProposedName(op.card.proposedName)) {
+          for (const edge of op.card.relations ?? []) {
+            const ev = isRelationEdgeLegal(op.card.proposedName, edge, universe, registry)
+            if (!ev.ok) push(index, 'create', ev.reason)
+          }
+        }
         break
       case 'adjust': {
         if (!byName.has(op.target)) return push(index, 'adjust', `目标卡「${op.target}」不存在`)
@@ -171,15 +207,16 @@ export function validateOps(ops: CardOp[], ctx: ValidateOpsContext): OpsValidati
       case 'relate': {
         if (!byName.has(op.from)) return push(index, 'relate', `卡「${op.from}」不存在`)
         if (!isTodo(op.from)) return push(index, 'relate', `卡「${op.from}」已离开待办列，不做关系结构修改`)
-        if (!CARD_RELATION_KINDS.includes(op.edge.kind)) return push(index, 'relate', `关系类型「${op.edge.kind}」非法`)
-        if (!op.edge.target) return push(index, 'relate', '关系目标为空')
-        if (op.edge.target === op.from) return push(index, 'relate', '不能对自身建立关系（自环）')
-        if (!byName.has(op.edge.target)) return push(index, 'relate', `关系目标「${op.edge.target}」不存在`)
-        // parent 关系（from 的父是 target）要求 target 是容器；child 关系（from 挂 target 为子）要求 from 是容器。
         if (op.op === 'add') {
-          if (op.edge.kind === 'parent' && archetypeOf(op.edge.target) !== 'container') push(index, 'relate', `父卡「${op.edge.target}」不是容器（container），不能挂子卡`)
-          if (op.edge.kind === 'child' && archetypeOf(op.from) !== 'container') push(index, 'relate', `卡「${op.from}」不是容器（container），不能挂子卡`)
-          if ((op.edge.kind === 'parent' || op.edge.kind === 'child') && wouldCycle(op.from, op.edge, byName)) push(index, 'relate', '该层级关系会形成环')
+          // 加边：过共享边谓词（target 存在、无自环、archetype、跨图成环、blocks 目标须未跑）。
+          const v = isRelationEdgeLegal(op.from, op.edge, universe, registry)
+          if (!v.ok) push(index, 'relate', v.reason)
+        } else {
+          // 删边：仅需基本合法性（kind 合法、target 非空、非自环、目标存在），不判 archetype/成环/blocks 状态门。
+          if (!CARD_RELATION_KINDS.includes(op.edge.kind)) return push(index, 'relate', `关系类型「${op.edge.kind}」非法`)
+          if (!op.edge.target) return push(index, 'relate', '关系目标为空')
+          if (op.edge.target === op.from) return push(index, 'relate', '不能对自身建立关系（自环）')
+          if (!byName.has(op.edge.target)) return push(index, 'relate', `关系目标「${op.edge.target}」不存在`)
         }
         break
       }
@@ -188,29 +225,3 @@ export function validateOps(ops: CardOp[], ctx: ValidateOpsContext): OpsValidati
   return { issues }
 }
 
-/**
- * 层级加边是否成环：把 `relate add parent/child` 归一为一条有向父边 child→parent，
- * 再看 parent 是否已能沿现有父边到达 child（可达即成环）。
- */
-function wouldCycle(from: string, edge: { kind: string; target: string }, byName: Map<string, StoredCard>): boolean {
-  // 归一到 (child, parent)：parent 边＝from 的父是 target；child 边＝from 挂 target 为子（即 target 的父是 from）。
-  const child = edge.kind === 'parent' ? from : edge.target
-  const parent = edge.kind === 'parent' ? edge.target : from
-  if (child === parent) return true
-  // 从 parent 沿现有 parent 边上行，若能到达 child，则新边成环。
-  const seen = new Set<string>()
-  let frontier = [parent]
-  while (frontier.length) {
-    const next: string[] = []
-    for (const name of frontier) {
-      if (name === child) return true
-      if (seen.has(name)) continue
-      seen.add(name)
-      const c = byName.get(name)
-      if (!c) continue
-      for (const r of c.relations) if (r.kind === 'parent') next.push(r.target)
-    }
-    frontier = next
-  }
-  return false
-}

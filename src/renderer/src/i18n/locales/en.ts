@@ -451,7 +451,17 @@ export const en: Dictionary = {
     noCandidates: 'No candidate tasks produced (configure an available AI, or have an AI push candidates via the skill)',
     unboundNotice: 'This window is not bound to a project; there is nowhere to file the requirement',
     screenshot: 'Screenshot {{n}}',
-    issuesHint: '{{count}} issue(s) need fixing'
+    issuesHint: '{{count}} issue(s) need fixing',
+    gatesLabel: 'Cross-card dependencies',
+    gatesEmpty: 'No cross-card dependencies',
+    gateBlockedBy: 'Blocked by',
+    gateBlocks: 'Blocks',
+    gateRemove: 'Remove dependency',
+    gateAddKind: 'Dependency kind',
+    gateAddTarget: 'Dependency target',
+    gateAddBtn: 'Add dependency',
+    gateTargetNew: 'new in this batch',
+    gateNoTargets: 'No cards available to depend on'
   },
   globalChat: {
     title: 'Project Agent',

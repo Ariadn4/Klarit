@@ -4,6 +4,7 @@
 import type {
   CandidateCard,
   CardArchetype,
+  CardRelation,
   CardRelationKind,
   CardStatus,
   RequirementCard,
@@ -137,4 +138,95 @@ export function isTodoCard(
 ): boolean {
   if (archetype === 'container') return true
   return card.status === '未开始' && !card.activeRunId
+}
+
+/**
+ * 关系边校验用的**活现状卡视图**：现有落库卡与本批新卡统一到此形态。
+ * `status`/`activeRunId` 供「blocks 目标须未跑」判定，`relations` 供跨图成环检测，`typeId` 供 archetype 查表。
+ */
+export interface EdgeCardView {
+  typeId: string
+  status: CardStatus
+  activeRunId?: string
+  relations: CardRelation[]
+}
+
+/** 一张卡是否**尚未启动**（状态「未开始」且无关联运行）——`blocks` 边的目标须满足此条件。 */
+function isNotStarted(view: { status: CardStatus; activeRunId?: string }): boolean {
+  return view.status === '未开始' && !view.activeRunId
+}
+
+/**
+ * 层级加边是否成环：把 `parent`/`child` 边归一为一条有向父边 child→parent，
+ * 再看 parent 是否已能沿现有父边到达 child（可达即成环）。图取自 `universe`（现有卡 ∪ 本批新卡），
+ * 故成环检测**跨合并图**、不只本批。
+ */
+export function wouldCycle(
+  from: string,
+  edge: { kind: CardRelationKind; target: string },
+  universe: ReadonlyMap<string, { relations: CardRelation[] }>
+): boolean {
+  // 归一到 (child, parent)：parent 边＝from 的父是 target；child 边＝from 挂 target 为子（即 target 的父是 from）。
+  const child = edge.kind === 'parent' ? from : edge.target
+  const parent = edge.kind === 'parent' ? edge.target : from
+  if (child === parent) return true
+  const seen = new Set<string>()
+  let frontier = [parent]
+  while (frontier.length) {
+    const next: string[] = []
+    for (const name of frontier) {
+      if (name === child) return true
+      if (seen.has(name)) continue
+      seen.add(name)
+      const c = universe.get(name)
+      if (!c) continue
+      for (const r of c.relations ?? []) if (r.kind === 'parent') next.push(r.target)
+    }
+    frontier = next
+  }
+  return false
+}
+
+/**
+ * 单条关系边**在被引入的那一刻**是否合法——分解路（候选卡自带边）与编排路（`create` 内嵌边、`relate` 加边）
+ * **共享的单一来源**。`universe` 为「现有落库卡 ∪ 本批新卡」的 id→视图映射；`from` 为发起卡 id（须在 universe 内）。
+ * 判据：目标存在 · 无自环 · `parent`/`child` 的 archetype 与跨图成环 · **`blocks` 目标须未跑**
+ * （`blocked_by` 不设状态门——等待端是发起卡自己）。只在引入期判定；既有已落库边不由本谓词追溯。
+ */
+export function isRelationEdgeLegal(
+  from: string,
+  edge: CardRelation,
+  universe: ReadonlyMap<string, EdgeCardView>,
+  registry: TypeArchetypeMap | undefined
+): CardValidation {
+  const { kind, target } = edge
+  if (!CARD_RELATION_KINDS.includes(kind)) return { ok: false, reason: `关系类型「${String(kind)}」非法` }
+  if (!nonEmpty(target)) return { ok: false, reason: '关系目标不能为空' }
+  if (target === from) return { ok: false, reason: '不能对自身建立关系（自环）' }
+  const targetView = universe.get(target)
+  if (!targetView) return { ok: false, reason: `关系目标「${target}」不存在（未引用现有卡或本批任何卡）` }
+
+  const archetypeOf = (name: string): CardArchetype | undefined => {
+    const v = universe.get(name)
+    return v ? registry?.get(v.typeId) : undefined
+  }
+
+  // blocks 引入时目标须未跑：不得给飞行中/已离开待办的卡追加前置门。blocked_by 目标不设状态门（放行任意状态）。
+  if (kind === 'blocks' && !isNotStarted(targetView)) {
+    return {
+      ok: false,
+      reason: `「${target}」已在运行或已离开待办，不能作为 blocks 边的目标（不得给飞行中的卡追加前置门）`
+    }
+  }
+  // 层级 archetype：parent（from 的父是 target）要求 target 是容器；child（from 挂 target 为子）要求 from 是容器。
+  if (kind === 'parent' && archetypeOf(target) !== 'container') {
+    return { ok: false, reason: `父卡「${target}」不是容器（container），不能挂子卡` }
+  }
+  if (kind === 'child' && archetypeOf(from) !== 'container') {
+    return { ok: false, reason: `卡「${from}」不是容器（container），不能挂子卡（child 关系）` }
+  }
+  if ((kind === 'parent' || kind === 'child') && wouldCycle(from, edge, universe)) {
+    return { ok: false, reason: '该层级关系会形成环' }
+  }
+  return { ok: true }
 }

@@ -1,7 +1,24 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { CandidateCard, CardTypeDef, WorkflowDefinition } from '../shared/types'
+import type { CandidateCard, CardTypeDef, StoredCard, WorkflowDefinition } from '../shared/types'
 import { resolveDecomposePrompt, runDecompose, type ResolveDeps } from './decompose-service'
 import { DEFAULT_CARD_TYPES } from '../shared/card-type'
+
+function stored(over: Partial<StoredCard> = {}): StoredCard {
+  return {
+    proposedName: 'running',
+    title: '在跑卡',
+    description: '',
+    typeId: 'feature',
+    relations: [],
+    status: '进行中',
+    activeRunId: 'r1',
+    createdAt: 1,
+    updatedAt: 1,
+    projectId: 'p1',
+    repos: [],
+    ...over
+  }
+}
 
 function wf(over: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
   return { id: 'wf', name: { zh: '流程' }, stages: [{ id: 's1', name: { zh: '开发' } }], nodes: [], ...over }
@@ -88,5 +105,21 @@ describe('runDecompose', () => {
     const produce = async (): Promise<CandidateCard[]> => [card({ title: '' })]
     const res = await runDecompose({ description: 'x' }, deps(), produce)
     expect(res.issues.length).toBeGreaterThan(0)
+  })
+
+  it('注入现有卡 → 候选 blocked_by 现有在跑卡通过', async () => {
+    const produce = async (): Promise<CandidateCard[]> => [
+      card({ relations: [{ kind: 'blocked_by', target: 'running' }] })
+    ]
+    const res = await runDecompose({ description: 'x' }, deps({ getCards: () => [stored()] }), produce)
+    expect(res.issues).toEqual([])
+  })
+
+  it('注入现有卡 → 候选 blocks 现有在跑卡进 issue', async () => {
+    const produce = async (): Promise<CandidateCard[]> => [
+      card({ relations: [{ kind: 'blocks', target: 'running' }] })
+    ]
+    const res = await runDecompose({ description: 'x' }, deps({ getCards: () => [stored()] }), produce)
+    expect(res.issues.some((i) => /在运行|blocks|前置|飞行|待办/.test(i.reason))).toBe(true)
   })
 })

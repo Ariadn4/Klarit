@@ -3,10 +3,10 @@
 import type {
   CandidateCard,
   CandidateIssue,
-  CardArchetype,
   CardRelation,
   CardRelationKind,
-  CardTypeDef
+  CardTypeDef,
+  StoredCard
 } from './types'
 import type { TypeArchetypeMap } from './card-type'
 import {
@@ -14,6 +14,8 @@ import {
   dedupeProposedName,
   isValidProposedName,
   toProposedName,
+  isRelationEdgeLegal,
+  type EdgeCardView,
   CARD_RELATION_KINDS
 } from './requirement-card'
 
@@ -65,6 +67,7 @@ const DECOMPOSE_TEMPLATE_HEAD = `# 分解需求 skill
 - 一个点子一张卡；同一点子的细节并进同一张卡，不要拆得过碎。
 - 需要拆成多张子卡的大目标用**容器类型**，其下的具体卡用 \`parent\`/\`child\` 关系挂上去（只有容器类型能挂子卡）。
 - 有先后依赖的用 \`blocked_by\`/\`blocks\`；必须一起发布的用 \`coupled_with\`。
+- **可引用现有卡建立跨卡依赖**：若上下文给了「项目全盘视野」（现有需求卡及其状态），关系 \`target\` 既可指本批候选卡、也可指**现有卡的 id**。尤其当新需求依赖某张**正在跑或未完成**的现有卡时，给新卡加一条 \`blocked_by → 该现有卡 id\`，让它排在其后。注意：\`blocks\` 的目标只能是**尚未启动**的卡，别用 \`blocks\` 去挂一张已经在跑的卡。
 - 标题简短点题；描述用 markdown，把意图、范围、验收要点写清楚（呈现时会渲染，不要写成代码块包整段）。
 - **保留附件路径**：用户描述里若出现附件路径（图片/文件，如 \`C:\\...\\paste-xxx.png\`），把相关附件的**完整路径**原样写进对应候选卡的描述里（例如「参见附件：\`<完整路径>\`」），**不要只写"截图/附件"而丢掉路径**——下游 agent 要靠这个路径打开它才能理解任务。`
 
@@ -90,7 +93,7 @@ const DECOMPOSE_TEMPLATE_TAIL = `## 输出什么结构
 - \`title\`：非空短标题。
 - \`description\`：markdown 文本。
 - \`typeId\`：取自上面「可用类型」列表里的某个 id（不要发明列表外的 typeId）。
-- \`relations\`：零或多条 \`{ kind, target }\`；\`kind\` 取 \`parent\`/\`child\`/\`blocked_by\`/\`blocks\`/\`coupled_with\`，\`target\` 引用本批某张卡的 \`proposedName\`。`
+- \`relations\`：零或多条 \`{ kind, target }\`；\`kind\` 取 \`parent\`/\`child\`/\`blocked_by\`/\`blocks\`/\`coupled_with\`，\`target\` 引用本批某张卡的 \`proposedName\` **或全盘视野里某张现有卡的 id**。\`blocks\` 的目标必须是尚未启动的卡。`
 
 /**
  * 由项目在册类型自动合成「生效分解 skill」：固定拆分模板 + 由各类型 name/description 生成的「可用类型」分类段。
@@ -115,17 +118,32 @@ export interface BatchValidation {
 }
 
 /**
- * 校验一批候选卡：每张过卡模型校验、预取名本批内唯一、关系 target 须引用本批某张候选卡的预取名。
+ * 校验一批候选卡：每张过卡模型校验、预取名本批内唯一、关系边过**共享边谓词** `isRelationEdgeLegal`
+ * （引用宇宙为「现有落库卡 ∪ 本批新卡」——target 可指现有卡；含「blocks 目标须未跑」与跨图成环）。
  * 不抛异常，把每处问题收进 issues（带 index 与可读原因），供审阅界面逐条提示。
+ * `existing` 为当前项目现有落库卡（缺省空数组即退化为纯批内校验，向后兼容）。
  */
-export function validateCandidateBatch(cards: CandidateCard[], registry?: TypeArchetypeMap): BatchValidation {
+export function validateCandidateBatch(
+  cards: CandidateCard[],
+  registry?: TypeArchetypeMap,
+  existing: StoredCard[] = []
+): BatchValidation {
   const issues: CandidateIssue[] = []
   if (!Array.isArray(cards)) return { ok: false, issues: [{ index: -1, proposedName: '', reason: '候选卡批不是数组' }] }
-  const allNames = new Set(cards.map((c) => c?.proposedName))
-  // 按预取名解析某卡的 archetype（跨卡关系合法性用）：找批内同名卡 → 其 typeId → 注册表 archetype。
-  const archetypeOf = (name: string): CardArchetype | undefined => {
-    const target = cards.find((c) => c?.proposedName === name)
-    return target ? registry?.get(target.typeId) : undefined
+  // 引用宇宙：现有落库卡 ∪ 本批新卡（统一到 EdgeCardView）——关系边合法性对标编排路。
+  const universe = new Map<string, EdgeCardView>()
+  for (const s of existing ?? []) {
+    if (s?.proposedName) {
+      universe.set(s.proposedName, {
+        typeId: s.typeId,
+        status: s.status,
+        activeRunId: s.activeRunId,
+        relations: s.relations ?? []
+      })
+    }
+  }
+  for (const c of cards) {
+    if (c?.proposedName) universe.set(c.proposedName, { typeId: c.typeId, status: '未开始', relations: c.relations ?? [] })
   }
   const seen = new Set<string>()
   cards.forEach((c, index) => {
@@ -139,22 +157,8 @@ export function validateCandidateBatch(cards: CandidateCard[], registry?: TypeAr
     }
     seen.add(c.proposedName)
     for (const r of c.relations) {
-      if (!allNames.has(r.target)) {
-        issues.push({
-          index,
-          proposedName: c.proposedName,
-          reason: `关系目标「${r.target}」未引用本批任何候选卡的预取名`
-        })
-        continue
-      }
-      // 跨卡 archetype 规则：`parent` 关系（我的父是 target）要求 target 是容器（只有容器能挂子卡）。
-      if (r.kind === 'parent' && archetypeOf(r.target) === 'leaf') {
-        issues.push({
-          index,
-          proposedName: c.proposedName,
-          reason: `父卡「${r.target}」是子叶（leaf），不能作为父卡挂子卡`
-        })
-      }
+      const ev = isRelationEdgeLegal(c.proposedName, r, universe, registry)
+      if (!ev.ok) issues.push({ index, proposedName: c.proposedName, reason: ev.reason })
     }
   })
   return { ok: issues.length === 0, issues }
