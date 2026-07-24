@@ -103,19 +103,6 @@ export function App(): React.JSX.Element {
     setActiveWorkflow(await window.klarit.getWorkflow(id))
   }, [])
 
-  /**
-   * 新导入项目 → 触发文档确认步（首仓；多仓项目其余成员在设置里继续）。
-   * 只对**新建**项目触发；旧项目（复用/重开）按 spec 在设置里手动扫。
-   */
-  const maybeDocOnboard = useCallback(async (project: Project | null) => {
-    const member = project?.members[0]
-    if (!project || !member) return
-    // projectBound 也会带旧项目进来——只认刚导入的（创建时间在 2 分钟内且尚无登记表）。
-    if (Date.now() - new Date(project.createdAt).getTime() > 120_000) return
-    const reg = await window.klarit.getDocuments(member.id)
-    if (reg.docs.length === 0 && reg.conventionPreamble === '') setDocOnboardMember(member.id)
-  }, [])
-
   useEffect(() => {
     window.klarit.getSidebarCollapsed().then(setCollapsed)
     window.klarit.getSidebarWidth().then(setWidth)
@@ -153,8 +140,6 @@ export function App(): React.JSX.Element {
     const offBound = window.klarit.onProjectBound(() => {
       void refresh()
       void refreshActiveWorkflow()
-      // 从管理项目窗口导入的新项目绑到本窗口 → 同样进文档确认步（旧项目由 maybeDocOnboard 判掉）。
-      void window.klarit.getCurrentProject().then(maybeDocOnboard)
     })
     // 主进程推送：新导入项目落定（管理窗导入，含移除后立刻重导入——窗口已绑定同 id 时不会重触发
     // projectBound，只能靠这条显式推送）→ 立即进文档确认步。
@@ -231,7 +216,7 @@ export function App(): React.JSX.Element {
       offEngine()
       offGitFocus()
     }
-  }, [refresh, refreshActiveWorkflow, maybeDocOnboard])
+  }, [refresh, refreshActiveWorkflow])
 
   const onChangeLanguage = useCallback(async (lang: SupportedLanguage) => {
     const saved = await window.klarit.setLanguage(lang)
@@ -328,9 +313,8 @@ export function App(): React.JSX.Element {
       const outcome = await window.klarit.importProject()
       if (outcome) {
         await refresh()
-        // 本窗口内导入：新建项目**一律**进文档确认步（含移除后重导入——重导入=重新识别）；
-        // 复用既有项目（重复导入/多 worktree）不弹。
-        if (!outcome.reused) setDocOnboardMember(outcome.project.members[0]?.id ?? null)
+        // 首次导入不再无条件弹文档确认步（改需求驱动）——仅当激活含 archive-docs 的工作流、
+        // 主进程推送 documents:onboard 时才进文档确认步。
       }
     } finally {
       setImporting(false)

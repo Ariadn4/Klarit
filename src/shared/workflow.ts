@@ -564,6 +564,17 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidation {
 }
 
 /**
+ * 工作流是否用到 `archive-docs` 引擎操作——纯结构判定：至少一个节点的执行者是 `engine` 且 `operation` 为
+ * `archive-docs`。仅命中**引擎** archive-docs；引用了名为 archive 的**已装技能**的 agent 节点不算。
+ * 空/缺失节点列表安全回落为 false。文档登记表运行时只被此操作消费，故它是「文档扫描需不需要」的需求驱动信号。
+ */
+export function workflowUsesArchiveDocs(def: WorkflowDefinition): boolean {
+  return (def?.nodes ?? []).some(
+    (n) => n.executor?.kind === 'engine' && n.executor.operation === 'archive-docs'
+  )
+}
+
+/**
  * 分支配对语义校验：若有 `create-branch` 节点，则必须至少有一个 `delete-branch-worktree` 节点，
  * 否则分支/worktree 会被泄漏，判为无效。只约束「建了必须删」单一方向，不做顺序/计数/反向校验。
  * 这是与结构校验（validateWorkflow）分离的「可载入但不可用」软标记——无效工作流仍被列出，只是被标记并拦截。

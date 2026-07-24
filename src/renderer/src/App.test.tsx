@@ -275,7 +275,7 @@ describe('App 文档确认步（导入后）', () => {
     conventionApproved: false
   }
 
-  it('新导入项目绑定本窗口（projectBound）→ 弹文档确认步并触发扫描', async () => {
+  it('新导入项目绑定本窗口（projectBound）→ 不再自动弹文档确认步（改需求驱动）', async () => {
     let boundCb: (() => void) | undefined
     const fresh = singleRepoProject('/p')
     fresh.createdAt = new Date().toISOString()
@@ -292,15 +292,15 @@ describe('App 文档确认步（导入后）', () => {
     render(<App />)
     await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
     act(() => boundCb?.())
-    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
-    await waitFor(() => expect(api.analyzeDocuments).toHaveBeenCalledWith('m1'))
-    // 跳过 → 保存当前态并关闭。
-    await userEvent.click(screen.getByRole('button', { name: '跳过' }))
-    await waitFor(() => expect(api.saveDocuments).toHaveBeenCalled())
+    // projectBound 仍刷新项目（getCurrentProject 再被调），但首次导入不再无条件弹文档 onboarding / 跑 analyze。
+    await waitFor(() =>
+      expect((api.getCurrentProject as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2)
+    )
     expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+    expect(api.analyzeDocuments).not.toHaveBeenCalled()
   })
 
-  it('导入进行中显示加载指示，完成后进入文档确认步', async () => {
+  it('导入进行中显示加载指示，完成后不再自动弹文档确认步（改需求驱动）', async () => {
     let resolveImport: ((v: unknown) => void) | undefined
     const fresh = singleRepoProject('/p')
     fresh.createdAt = new Date().toISOString()
@@ -321,9 +321,10 @@ describe('App 文档确认步（导入后）', () => {
     // 导入/识别期间显示加载指示。
     expect(await screen.findByText('正在导入项目…')).toBeInTheDocument()
     act(() => resolveImport?.({ project: fresh, reused: false }))
-    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
-    expect(screen.queryByText('正在导入项目…')).toBeNull()
-    expect(api.analyzeDocuments).toHaveBeenCalledWith('m1')
+    // 加载指示消失，但首次导入不再无条件弹文档 onboarding / 跑 analyze。
+    await waitFor(() => expect(screen.queryByText('正在导入项目…')).toBeNull())
+    expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+    expect(api.analyzeDocuments).not.toHaveBeenCalled()
   })
 
   it('主进程推送 documents:onboard（管理窗导入/移除后立刻重导入）→ 立即弹文档确认步', async () => {

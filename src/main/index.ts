@@ -71,7 +71,7 @@ import {
 import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
 import { createAcceptanceSampleWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
 import { hasAgentHabits } from './agent-habits'
-import { runWorkflowOnboarding, type WorkflowOnboardingDeps } from './workflow-onboarding'
+import { runWorkflowOnboarding, needsDocScanOnActivate, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
 import { createGlobalSkillStore } from './global-skill-store'
@@ -784,6 +784,8 @@ function registerIpc(): void {
     saveRegistry()
     bindOrOpen(win, outcome.project.id)
     broadcastProjectsChanged()
+    // 首次导入（非 reused）完成 → 触发工作流 onboarding（author 先占默认 agent，不再等文档分析返回）。
+    if (!outcome.reused) void runWorkflowOnboarding(outcome.project, workflowOnboardingDeps)
     return outcome
   })
 
@@ -812,9 +814,9 @@ function registerIpc(): void {
     manager.openOrFocus(outcome.project.id)
     closeManageWindow()
     broadcastProjectsChanged()
-    // 新建项目（含移除后立刻重导入——项目 id 复用成员 UUID，目标窗口可能已绑定同 id、
-    // openOrFocus 只聚焦不重 bind）→ 直接推「进文档确认步」，不依赖绑定事件。
-    if (!outcome.reused) notifyDocumentsOnboard(outcome.project)
+    // 首次导入（非 reused）完成 → 触发工作流 onboarding；文档扫描改需求驱动（激活含 archive-docs 工作流时才扫），
+    // 不再在导入时无条件推文档 onboarding。
+    if (!outcome.reused) void runWorkflowOnboarding(outcome.project, workflowOnboardingDeps)
     return outcome
   })
 
@@ -1158,19 +1160,27 @@ function registerIpc(): void {
     }
   }
 
+  /**
+   * 激活工作流的单一收口（所有激活路径共用）：设活动工作流 → 幂等播种其建议 leaf 类型 → **需求驱动文档扫描**。
+   * 扫描只在「被激活的工作流含 `archive-docs` 引擎节点、且首仓尚无登记表」时触发（方案 A：激活即扫）——含
+   * archive-docs 才需要登记表，无表才需扫。不含 archive-docs（兜底本地直合）或已有表 → 免扫。首仓缺失时视作
+   * 「有表」不触发。**不在此内 saveRegistry**——落盘交各调用点，保持既有行为。
+   */
+  const activateWorkflow = (project: Project, workflowId: string | null, now: string): void => {
+    setActiveWorkflowCore(registry, project.id, workflowId, now)
+    if (workflowId) seedProjectCardTypes(registry, project.id, workflows.get(workflowId)?.suggestedTypes, now)
+    const def = workflowId ? workflows.get(workflowId) : null
+    const firstMember = project.members[0]?.id
+    if (needsDocScanOnActivate(def, !firstMember || documentStore.has(firstMember))) {
+      notifyDocumentsOnboard(project)
+    }
+  }
+
   /** 全注册表范围找成员仓（窗口可能尚未绑定项目——onboarding 导入后立即扫）。 */
   const findMember = (memberId: string): { rootPath: string } | null => {
     for (const p of registry.projects) {
       const m = p.members.find((mm) => mm.id === memberId)
       if (m) return m
-    }
-    return null
-  }
-
-  /** 全注册表范围按成员仓 id 找其所属项目（文档分析返回后触发工作流 onboarding 用）。 */
-  const findProjectByMember = (memberId: string): Project | null => {
-    for (const p of registry.projects) {
-      if (p.members.some((mm) => mm.id === memberId)) return p
     }
     return null
   }
@@ -1223,12 +1233,7 @@ function registerIpc(): void {
     async (_e, memberId: string): Promise<{ registry: DocRegistry; error: string | null } | null> => {
       const member = findMember(memberId)
       if (!member) return null
-      const result = await analyzeForMember(memberId, member.rootPath)
-      // 触发时机 = 文档分析返回那一刻（默认 agent 已腾出档期，author 与分析不并发抢 agent）。
-      // 非阻塞后台跑、每项目至多一次（判据核 hasActiveWorkflow guard），不等用户在 onboarding dialog 点保存。
-      const project = findProjectByMember(memberId)
-      if (project) void runWorkflowOnboarding(project, workflowOnboardingDeps)
-      return result
+      return analyzeForMember(memberId, member.rootPath)
     }
   )
 
@@ -1327,10 +1332,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.setActiveWorkflow, (e, workflowId: string | null) => {
     const projectId = currentProjectId(e)
     if (!projectId) return
+    const project = findProjectById(registry, projectId)
+    if (!project) return
     const now = new Date().toISOString()
-    setActiveWorkflowCore(registry, projectId, workflowId, now)
-    // 激活工作流时把其建议 leaf 类型幂等播种进**该项目**的类型集（已存在跳过、不覆盖；停用不删类型）。
-    if (workflowId) seedProjectCardTypes(registry, projectId, workflows.get(workflowId)?.suggestedTypes, now)
+    // 单一收口：设活动工作流 + 幂等播种建议类型 + 需求驱动扫描（激活含 archive-docs 工作流且无登记表才扫）。
+    activateWorkflow(project, workflowId, now)
     saveRegistry()
   })
 
@@ -1429,8 +1435,8 @@ function registerIpc(): void {
     assignDefault: (project) => {
       const now = new Date().toISOString()
       const id = seedDefaultLocalMergeWorkflow(workflows)
-      setActiveWorkflowCore(registry, project.id, id, now)
-      seedProjectCardTypes(registry, project.id, workflows.get(id)?.suggestedTypes, now)
+      // 默认本地直合不含 archive-docs → activateWorkflow 的需求驱动扫描不触发（免扫，常见路径）。
+      activateWorkflow(project, id, now)
       saveRegistry()
     },
     authorWorkflow: authorWorkflowForProject,
@@ -1558,10 +1564,9 @@ function registerIpc(): void {
       const outcome = importProject(registry, chosen, serviceDeps)
       const pid = outcome.project.id
       // 激活 agent 选定的工作流并播种其建议类型——新项目由此拿到对应类型集（卡的 typeId 据此校验）。
+      // 走单一收口 activateWorkflow：若选定工作流含 archive-docs 且无登记表，一并触发需求驱动文档扫描。
       if (workflowId && workflows.get(workflowId)) {
-        const now = new Date().toISOString()
-        setActiveWorkflowCore(registry, pid, workflowId, now)
-        seedProjectCardTypes(registry, pid, workflows.get(workflowId)?.suggestedTypes, now)
+        activateWorkflow(outcome.project, workflowId, new Date().toISOString())
       }
       saveRegistry()
       bindOrOpen(win, pid)

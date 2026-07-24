@@ -18,7 +18,8 @@ import {
   engineOpCapabilities,
   buildAuthorWorkflowSkill,
   buildArchiveDelegation,
-  repairWorkflow
+  repairWorkflow,
+  workflowUsesArchiveDocs
 } from './workflow'
 
 function node(over: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -41,6 +42,41 @@ function workflow(over: Partial<WorkflowDefinition> = {}): WorkflowDefinition {
     ...over
   }
 }
+
+describe('workflowUsesArchiveDocs', () => {
+  it('含 engine archive-docs 节点 → true', () => {
+    const def = workflow({
+      nodes: [
+        node({ id: 'impl' }),
+        node({ id: 'arch', executor: { kind: 'engine', operation: 'archive-docs' } })
+      ]
+    })
+    expect(workflowUsesArchiveDocs(def)).toBe(true)
+  })
+
+  it('有 engine 节点但无 archive-docs → false', () => {
+    const def = workflow({
+      nodes: [
+        node({ id: 'cb', executor: { kind: 'engine', operation: 'create-branch' } }),
+        node({ id: 'mb', executor: { kind: 'engine', operation: 'merge-branch' } })
+      ]
+    })
+    expect(workflowUsesArchiveDocs(def)).toBe(false)
+  })
+
+  it('仅有 agent 节点引用已装 archive 技能（非引擎 archive-docs）→ false', () => {
+    const def = workflow({
+      nodes: [node({ id: 'arch', executor: { kind: 'agent', instruction: { kind: 'installed', name: 'opsx:archive' } } })]
+    })
+    expect(workflowUsesArchiveDocs(def)).toBe(false)
+  })
+
+  it('空 / 缺失节点列表 → false', () => {
+    expect(workflowUsesArchiveDocs(workflow({ nodes: [] }))).toBe(false)
+    expect(workflowUsesArchiveDocs({ id: 'x', name: { zh: '无节点' }, stages: [] } as unknown as WorkflowDefinition)).toBe(false)
+    expect(workflowUsesArchiveDocs(undefined as unknown as WorkflowDefinition)).toBe(false)
+  })
+})
 
 describe('isSafeRelativePath', () => {
   it('接受合规相对路径', () => {

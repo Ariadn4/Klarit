@@ -5,7 +5,7 @@
  * 任何时刻项目不停在「无工作流」态。所有副作用经注入 deps（fs/registry/Electron 都在外），此核纯可单测。
  */
 
-import { ensureApprovalBeforeFinalization, lintWorkflow } from '../shared/workflow'
+import { ensureApprovalBeforeFinalization, lintWorkflow, workflowUsesArchiveDocs } from '../shared/workflow'
 import type { Localized } from '../shared/localized'
 import type { Project, WorkflowDefinition, WorkflowGenPhase, WorkflowProposal } from '../shared/types'
 import type { AuthorWorkflowResult } from './orchestrate-service'
@@ -60,6 +60,18 @@ export interface WorkflowOnboardingLogRecord {
   revisionPasses?: number
   /** 最终投递版的残留 lint 告警（仅 proposed 时给；空=已改到不再告警，非空=达上界仍带警告投递）。 */
   lintWarnings?: string[]
+}
+
+/**
+ * 需求驱动文档扫描的**触发判据**（方案 A：激活即扫，纯函数便于单测）：一个含 `archive-docs` 引擎节点的
+ * 工作流成为项目活动工作流、且该项目**尚无登记表**时，才需要扫描去 populate。不含 archive-docs（如兜底本地
+ * 直合、opsx:archive agent 节点）或已有登记表 → 免扫。null/undefined def 安全回落 false。
+ */
+export function needsDocScanOnActivate(
+  def: WorkflowDefinition | null | undefined,
+  hasRegistry: boolean
+): boolean {
+  return !!def && workflowUsesArchiveDocs(def) && !hasRegistry
 }
 
 /** 从项目取调试记录用的项目引用（id + 显示名）。 */

@@ -2,12 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   runWorkflowOnboarding,
   buildWorkflowRevisionIntent,
+  needsDocScanOnActivate,
   WORKFLOW_ONBOARDING_INTENT,
   type WorkflowOnboardingDeps,
   type WorkflowNodeOverview
 } from './workflow-onboarding'
 import type { AuthorWorkflowResult } from './orchestrate-service'
-import type { Project, WorkflowProposal } from '../shared/types'
+import type { Project, WorkflowDefinition, WorkflowProposal } from '../shared/types'
 import { lintWorkflow } from '../shared/workflow'
 
 /** 最小合法 Project（成员仓根供 hasHabits，其余字段判据核不看）。 */
@@ -423,6 +424,57 @@ describe('runWorkflowOnboarding 有界自动重试（设计决策 #11：失败�
     expect(authorWorkflow).toHaveBeenCalledTimes(2)
     expect(logProposal).toHaveBeenCalledTimes(1)
     expect(logProposal.mock.calls[0][0].outcome).toBe('unusable')
+  })
+})
+
+describe('needsDocScanOnActivate（需求驱动扫描判据，纯可单测）', () => {
+  /** 含 engine/archive-docs 节点的工作流定义。 */
+  const withArchiveDocs = (): WorkflowDefinition => ({
+    id: 'wf-arch',
+    name: { zh: '带归档' },
+    stages: [{ id: 's1', name: { zh: '阶段' } }],
+    nodes: [
+      {
+        id: 'n-arch',
+        name: { zh: '归档文档' },
+        stageId: 's1',
+        executor: { kind: 'engine', operation: 'archive-docs' },
+        outputs: []
+      }
+    ]
+  })
+
+  /** 不含 archive-docs 的工作流定义（引擎 merge-branch）。 */
+  const withoutArchiveDocs = (): WorkflowDefinition => ({
+    id: 'wf-plain',
+    name: { zh: '直合' },
+    stages: [{ id: 's1', name: { zh: '阶段' } }],
+    nodes: [
+      {
+        id: 'n-merge',
+        name: { zh: '合并分支' },
+        stageId: 's1',
+        executor: { kind: 'engine', operation: 'merge-branch' },
+        outputs: []
+      }
+    ]
+  })
+
+  it('含 archive-docs + 无登记表 → true', () => {
+    expect(needsDocScanOnActivate(withArchiveDocs(), false)).toBe(true)
+  })
+
+  it('含 archive-docs + 已有登记表 → false', () => {
+    expect(needsDocScanOnActivate(withArchiveDocs(), true)).toBe(false)
+  })
+
+  it('不含 archive-docs → false（即便无登记表）', () => {
+    expect(needsDocScanOnActivate(withoutArchiveDocs(), false)).toBe(false)
+  })
+
+  it('null / undefined def → false', () => {
+    expect(needsDocScanOnActivate(null, false)).toBe(false)
+    expect(needsDocScanOnActivate(undefined, false)).toBe(false)
   })
 })
 
