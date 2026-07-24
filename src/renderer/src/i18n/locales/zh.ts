@@ -143,6 +143,7 @@ export const zh = {
     newAria: '新建工作流',
     empty: '还没有工作流，点上方新建或导入。',
     invalid: '（无效）',
+    advisory: '（建议）',
     editAria: '编辑 {{name}}',
     cloneAria: '克隆 {{name}}',
     deleteAria: '删除 {{name}}'
@@ -151,7 +152,8 @@ export const zh = {
     title: '工作流',
     description: '为当前项目指定激活哪一个工作流（仅选择，不编辑）。',
     empty: '还没有工作流，去应用设置新建。',
-    invalid: '（无效）'
+    invalid: '（无效）',
+    advisory: '（建议）'
   },
   ruleLibrary: {
     backToLibrary: '返回规则库',
@@ -329,6 +331,7 @@ export const zh = {
     cannotSaveTitle: '无法保存工作流',
     gotIt: '知道了',
     backToList: '返回列表',
+    advisoryTitle: '建议（不阻断保存）',
     backToNodes: '返回节点列表',
     editNode: '编辑节点 {{name}}',
     saved: '已保存',
@@ -345,7 +348,11 @@ export const zh = {
     nodes: '节点',
     nodesHint: '顺序即执行顺序',
     addNode: '加节点',
-    newNode: '新节点'
+    newNode: '新节点',
+    gateBadgeGroup: '门检查点',
+    gateBadgeManual: '需人工评审',
+    gateBadgeAuto: '自动校验门',
+    gateBadgeExternal: '外部门'
   },
   fileViewer: {
     binaryNotPreviewable: '无法以文本预览（二进制文件）',
@@ -495,6 +502,8 @@ export const zh = {
     confirmBody: '将合并/拆分并删除：{{targets}}。此操作会删卡，确认继续？',
     confirmApply: '确认应用',
     workflowProposalTitle: '工作流提案',
+    workflowGenStatus: '正在为本项目生成工作流…',
+    workflowGenFailed: '未能生成定制工作流，已用默认工作流',
     workflowPreview: '预览草稿',
     workflowClose: '关闭',
     workflowSaveFormal: '保存为正式工作流',

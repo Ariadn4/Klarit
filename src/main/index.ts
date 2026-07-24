@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AgentInstruction,
@@ -14,6 +14,8 @@ import type {
   CardValidation,
   Conversation,
   OrchestrationOutcome,
+  OrchestrationProposal,
+  WorkflowProposal,
   StoredCard,
   DecisionResponse,
   DecomposeInput,
@@ -66,8 +68,10 @@ import {
   setProjectCardTypes,
   unlinkMember as unlinkMemberCore
 } from './registry-core'
-import { createWorkflowStore } from './workflow-store'
-import { createAcceptanceSampleWorkflow, createDefaultWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
+import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
+import { createAcceptanceSampleWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
+import { hasAgentHabits } from './agent-habits'
+import { runWorkflowOnboarding, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
 import { createGlobalSkillStore } from './global-skill-store'
@@ -89,7 +93,13 @@ import { createOutputBuffer } from './engine/output-buffer'
 import { createDecomposeSeam } from './global-agent'
 import type { CandidateProducer, ResolveDeps } from './decompose-service'
 import { buildDecomposeMessage, headlessInvocation, parseCandidateCards, runAgentHeadless } from './agent-runner'
-import { createOrchestrateSeam, type OrchestrateDeps, type OpsProducer } from './orchestrate-service'
+import {
+  authorWorkflow,
+  createOrchestrateSeam,
+  type AuthorWorkflowResult,
+  type OrchestrateDeps,
+  type OpsProducer
+} from './orchestrate-service'
 import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { resolveLocalized } from '../shared/localized'
 import { createOpsProducer, type SessionBridge } from './orchestrate-producer'
@@ -133,6 +143,9 @@ import { WindowManager } from './windows'
 const REGISTRY_FILE = join(app.getPath('userData'), 'registry.json')
 const SESSION_FILE = join(app.getPath('userData'), 'session.json')
 const SETTINGS_FILE = join(app.getPath('userData'), 'settings.json')
+/** 自动 author 提案的开发者调试日志（JSONL 追加，落 Electron 日志目录，不打扰普通用户）。 */
+const WORKFLOW_ONBOARDING_LOG_DIR = app.getPath('logs')
+const WORKFLOW_ONBOARDING_LOG_FILE = join(WORKFLOW_ONBOARDING_LOG_DIR, 'workflow-onboarding.log')
 
 const registry: RegistryData = normalizeRegistry(readJson<unknown>(REGISTRY_FILE, null))
 
@@ -523,7 +536,14 @@ const E2E_WORKFLOW_PRODUCER: OpsProducer | null =
 
 // 真实 ops producer：只读姿态、脱 worktree（cwd 用 userData scratch，agent 写代码我们也不消费）。
 // 会话 sessionId 桥接到**本作用域**会话库，供多轮原生续接。agent/模型按会话选型覆盖全局默认（未选回落默认）。
-const orchestrateProducer = (scope: string, agentId?: string, model?: string): ReturnType<typeof createOpsProducer> => {
+// addDirs（可选）：额外挂给 agent 的可访问目录（→ CLI `--add-dir`）。聊天路径不带（cwd scratch，只编排卡）；
+// 自动 author 路带项目成员仓真实路径，让 agent 能实际读到项目文件推断习惯（设计决策 #10）。
+const orchestrateProducer = (
+  scope: string,
+  agentId?: string,
+  model?: string,
+  addDirs?: string[]
+): ReturnType<typeof createOpsProducer> => {
   const sessions: SessionBridge = {
     get: (cid) => (cid ? conversationStore.get(scope, cid)?.sessionId : undefined),
     set: (cid, sessionId) => {
@@ -536,6 +556,7 @@ const orchestrateProducer = (scope: string, agentId?: string, model?: string): R
     cwd: app.getPath('userData'),
     model: model ?? settings.defaultModel,
     effort: settings.defaultEffort,
+    addDirs,
     sessions
   })
 }
@@ -801,6 +822,9 @@ function registerIpc(): void {
     // 移除就是移除：连各成员仓的文档登记表一并删——之后重导入即白纸重新识别。
     const removed = findProjectById(registry, projectId)
     for (const m of removed?.members ?? []) documentStore.remove(m.id)
+    // 连带清该项目按 projectId 作用域的对话历史（全局对话 + 卡对话），防孤儿会话数据留存。
+    conversationStore.removeScope(projectId)
+    cardConversationStore.removeScope(projectId)
     removeProjectCore(registry, projectId)
     saveRegistry()
     // 广播给所有窗口：切换器子菜单/绑定状态即时反映移除，不需要重启。
@@ -1143,6 +1167,14 @@ function registerIpc(): void {
     return null
   }
 
+  /** 全注册表范围按成员仓 id 找其所属项目（文档分析返回后触发工作流 onboarding 用）。 */
+  const findProjectByMember = (memberId: string): Project | null => {
+    for (const p of registry.projects) {
+      if (p.members.some((mm) => mm.id === memberId)) return p
+    }
+    return null
+  }
+
   /** 起草 agent 接缝：未选默认 agent 给 null（跳过起草，登记表照常生成）。超时放宽到 5 分钟（大仓样本多）。 */
   const draftAgent = (): DraftAgent | null => {
     const agentId = settings.defaultAgent
@@ -1165,32 +1197,38 @@ function registerIpc(): void {
    * （既有条目按 location 保留用户改判/审批）。无 agent → 启发式兜底 + 'no-agent'；
    * agent 失败 → 启发式兜底 + 具体错误摘要（绝不把失败误报成「未配置 agent」）。
    */
+  /** 语义分析本体（无 agent/失败回落启发式）——抽出以便分析返回后再挂工作流 onboarding 触发。 */
+  const analyzeForMember = async (
+    memberId: string,
+    rootPath: string
+  ): Promise<{ registry: DocRegistry; error: string | null }> => {
+    const existing = documentStore.get(memberId)
+    const agent = draftAgent()
+    if (!agent) {
+      return { registry: mergeScan(existing, scanDocuments(rootPath)), error: 'no-agent' }
+    }
+    const analyzed = await analyzeDocuments(scanCandidates(rootPath), sampleReaderFor(rootPath), agent)
+    if (analyzed.error) {
+      return { registry: mergeScan(existing, scanDocuments(rootPath)), error: analyzed.error }
+    }
+    const merged = mergeScan(existing, analyzed.docs)
+    return {
+      registry: { ...merged, conventionPreamble: merged.conventionPreamble || analyzed.conventionPreamble },
+      error: null
+    }
+  }
+
   ipcMain.handle(
     IPC.documentsAnalyze,
     async (_e, memberId: string): Promise<{ registry: DocRegistry; error: string | null } | null> => {
       const member = findMember(memberId)
       if (!member) return null
-      const existing = documentStore.get(memberId)
-      const agent = draftAgent()
-      if (!agent) {
-        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: 'no-agent' }
-      }
-      const analyzed = await analyzeDocuments(
-        scanCandidates(member.rootPath),
-        sampleReaderFor(member.rootPath),
-        agent
-      )
-      if (analyzed.error) {
-        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: analyzed.error }
-      }
-      const merged = mergeScan(existing, analyzed.docs)
-      return {
-        registry: {
-          ...merged,
-          conventionPreamble: merged.conventionPreamble || analyzed.conventionPreamble
-        },
-        error: null
-      }
+      const result = await analyzeForMember(memberId, member.rootPath)
+      // 触发时机 = 文档分析返回那一刻（默认 agent 已腾出档期，author 与分析不并发抢 agent）。
+      // 非阻塞后台跑、每项目至多一次（判据核 hasActiveWorkflow guard），不等用户在 onboarding dialog 点保存。
+      const project = findProjectByMember(memberId)
+      if (project) void runWorkflowOnboarding(project, workflowOnboardingDeps)
+      return result
     }
   )
 
@@ -1324,7 +1362,105 @@ function registerIpc(): void {
   const applyRegistryFor = (pid: string): TypeArchetypeMap => typeArchetypeMap(getProjectCardTypes(registry, pid))
   const reposFor = (pid: string): string[] => findProjectById(registry, pid)?.members.map((m) => m.id) ?? []
 
-  // 跑一轮编排：可选先落用户消息 → 按会话选型跑 → 落 agent 回复/提案（空回复不再塞占位）。
+  // 无头编排核：建 producer（E2E 钩子优先）+ deps + seam 跑一轮，返回完整 outcome。**不绑发送者事件、不追加会话。**
+  // 聊天入口（runOrchestrateTurn）与无头写工作流入口（authorWorkflowForProject）共用同一套装配。
+  const orchestrateForProject = (
+    pid: string | null,
+    intent: string,
+    opts?: { conversationId?: string; agentId?: string; model?: string }
+  ): Promise<OrchestrationOutcome> => {
+    // e2e 钩子（同 KLARIT_E2E_IMPORT_DIRS 先例）：跳过真实 agent CLI，注入一个**故意缺 delete-branch** 的
+    // 工作流产出——既走通「意图→工作流提案→预览→存库」全链路，又验证编排核的 repairWorkflow 会补上删分支使之合法。
+    const produce = E2E_WORKFLOW_PRODUCER ?? orchestrateProducer(pid ?? UNBOUND_SCOPE, opts?.agentId, opts?.model)
+    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), produce)
+    return seam.orchestrate({ intent, conversationId: opts?.conversationId }, pid)
+  }
+
+  // 无头写工作流入口：显式 projectId + 系统合成意图 → 工作流提案（无则 null）。**不绑发送者事件、不追加用户会话**，
+  // 供后台任务（导入后自动派工作流）复用；机器装配与 runOrchestrateTurn 同（orchestrateProducer + orchestrateDepsFor）。
+  // 根因修复（设计决策 #10）：把项目各成员仓**真实路径**作 `--add-dir` 传给 producer，让 author agent 能
+  // 实际查看 `.claude/`/`CLAUDE.md`/`.cursor`/`git log` 推断习惯（否则 cwd 是 userData scratch，对项目零文件访问、
+  // 只能靠 prompt 上下文猜）。仅自动 author 路带（聊天写工作流路不带，见 orchestrateProducer 注释）。只读探查由
+  // WORKFLOW_ONBOARDING_INTENT 硬约束。
+  const authorWorkflowForProject = (projectId: string, intent: string): Promise<AuthorWorkflowResult> => {
+    const addDirs = (findProjectById(registry, projectId)?.members ?? [])
+      .map((m) => m.rootPath)
+      .filter((p): p is string => !!p)
+    return authorWorkflow(
+      orchestrateDepsFor(projectId),
+      orchestrateProducer(projectId, undefined, undefined, addDirs),
+      projectId,
+      intent
+    )
+  }
+
+  // ── 导入后自动派工作流：判据核 deps 装配（fs/registry/Electron 副作用都在这层，判据核纯可测）──
+  /**
+   * 把后台产出的可用提案投递进本项目全局对话：取最近会话（无则新建）→ 作一条 role:'agent' 消息追加
+   * （提案包成 OrchestrationProposal，其 `.workflow` = 该 WorkflowProposal，渲染层复用 WorkflowProposalReview
+   * + 反馈改写回路）→ 推送 `workflowProposalReady{projectId,conversationId}` 驱动渲染层打开并重取该会话
+   * （后台追加消息无 conversationChanged 广播，故须此推送）。
+   */
+  function deliverProposal(project: Project, proposal: WorkflowProposal): void {
+    const scope = project.id
+    const existing = conversationStore.list(scope)
+    const conv = existing.length > 0 ? existing[0] : conversationStore.create(scope, randomUUID(), Date.now())
+    const reply = '已按本项目习惯生成一份工作流草稿，想改哪里直接说，我就着这份改。'
+    const wrapped: OrchestrationProposal = { ops: [], issues: [], reply, workflow: proposal }
+    conversationStore.appendMessage(scope, conv.id, {
+      role: 'agent',
+      text: reply,
+      proposal: wrapped,
+      at: Date.now()
+    })
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
+        win.webContents.send(IPC.workflowProposalReady, { projectId: project.id, conversationId: conv.id })
+      }
+    }
+  }
+
+  const workflowOnboardingDeps: WorkflowOnboardingDeps = {
+    hasActiveWorkflow: (project) => !!getActiveWorkflowCore(registry, project.id),
+    hasHabits: (project) => hasAgentHabits(project.members.map((m) => m.rootPath)),
+    hasRunnableAgent: () =>
+      !!settings.defaultAgent && detectedAgents.some((a) => a.id === settings.defaultAgent),
+    // 立即派内置默认（本地直合）作占位/兜底：按稳定 id 幂等种子 → 设为活动工作流 → 幂等播种其建议类型。
+    assignDefault: (project) => {
+      const now = new Date().toISOString()
+      const id = seedDefaultLocalMergeWorkflow(workflows)
+      setActiveWorkflowCore(registry, project.id, id, now)
+      seedProjectCardTypes(registry, project.id, workflows.get(id)?.suggestedTypes, now)
+      saveRegistry()
+    },
+    authorWorkflow: authorWorkflowForProject,
+    deliverProposal,
+    // 后台生成进度推给该项目绑定的窗口（底栏显/隐指示；比照 deliverProposal 的窗口路由）。
+    reportStatus: (project, phase) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
+          win.webContents.send(IPC.workflowGenStatus, phase)
+        }
+      }
+    },
+    log: (message) => console.warn(message),
+    // 结构化调试记录：JSONL 追加到 Electron 日志目录 + 结构化 console（开发者可读，不弹 UI、绝不抛）。
+    logProposal: (record) => {
+      console.warn('[workflow-onboarding]', JSON.stringify(record))
+      try {
+        mkdirSync(WORKFLOW_ONBOARDING_LOG_DIR, { recursive: true })
+        appendFileSync(
+          WORKFLOW_ONBOARDING_LOG_FILE,
+          JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n',
+          'utf8'
+        )
+      } catch (err) {
+        console.warn('workflow-onboarding: 写调试日志失败', err)
+      }
+    }
+  }
+
+  // 跑一轮编排：可选先落用户消息 → 按会话选型跑（委托无头核）→ 落 agent 回复/提案（空回复不再塞占位）。
   const runOrchestrateTurn = async (
     e: Electron.IpcMainInvokeEvent,
     conversationId: string | undefined,
@@ -1337,11 +1473,11 @@ function registerIpc(): void {
       conversationStore.appendMessage(scope, conversationId, { role: 'user', text: intent, at: Date.now() })
     }
     const conv = conversationId ? conversationStore.get(scope, conversationId) : null
-    // e2e 钩子（同 KLARIT_E2E_IMPORT_DIRS 先例）：跳过真实 agent CLI，注入一个**故意缺 delete-branch** 的
-    // 工作流产出——既走通「意图→工作流提案→预览→存库」全链路，又验证编排核的 repairWorkflow 会补上删分支使之合法。
-    const produce = E2E_WORKFLOW_PRODUCER ?? orchestrateProducer(scope, conv?.agentId, conv?.model)
-    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), produce)
-    const outcome = await seam.orchestrate({ intent, conversationId }, pid)
+    const outcome = await orchestrateForProject(pid, intent, {
+      conversationId,
+      agentId: conv?.agentId,
+      model: conv?.model
+    })
     if (conversationId && !('unbound' in outcome)) {
       // 空回复不塞占位（历史里没输出的轮次不留占位；用户可重试）。
       conversationStore.appendMessage(scope, conversationId, {
@@ -1727,12 +1863,13 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = settings.appearance ?? DEFAULT_APPEARANCE
   // 系统明暗变化时（仅「跟随系统」会改变 shouldUseDarkColors）广播新生效主题。
   nativeTheme.on('updated', broadcastTheme)
-  // 库为空时种入三个内置默认工作流（本地直合 + PR 模式 + 真 PR）。
+  // 库为空时种入 PR 模式 + 真 PR 两个内置默认工作流；本地直合走下面的稳定 id 种入，避免重复。
   if (workflows.list().length === 0) {
-    workflows.save(createDefaultWorkflow(randomUUID()))
     workflows.save(createDefaultWorkflowPr(randomUUID()))
     workflows.save(createRealPrWorkflow(randomUUID()))
   }
+  // 内置主默认（本地直合）按稳定 id 幂等种入（空库/非空库都种，且只此一份）——供导入后自动派工作流的默认/兜底支指名激活。
+  seedDefaultLocalMergeWorkflow(workflows)
   // 「验收样例」按稳定 id 幂等种入（库非空也补，便于随时验收）。
   const ACCEPTANCE_WF_ID = 'acceptance-sample-multicmd'
   if (!workflows.get(ACCEPTANCE_WF_ID)) workflows.save(createAcceptanceSampleWorkflow(ACCEPTANCE_WF_ID))

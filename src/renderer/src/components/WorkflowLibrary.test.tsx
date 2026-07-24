@@ -86,6 +86,18 @@ describe('WorkflowLibrary 工作流库（应用级）', () => {
     expect(window.klarit.getWorkflow).toHaveBeenCalledWith('a')
   })
 
+  it('带软校验告警的工作流：标「（建议）」但仍可编辑（非阻断）', async () => {
+    items = [{ id: 'b', name: { zh: '流程B' }, warnings: ['固化步骤前缺人工验收'] }]
+    installKlarit()
+    render(<WorkflowLibrary />)
+    await screen.findByText('流程B')
+    expect(screen.getByText('（建议）')).toBeInTheDocument()
+    // 无隐患 severity 不禁用任何入口
+    expect(screen.getByRole('button', { name: '编辑 流程B' })).toBeEnabled()
+    // 告警不是硬无效标记
+    expect(screen.queryByText('（无效）')).not.toBeInTheDocument()
+  })
+
   it('无效工作流标（无效），编辑/克隆/删除入口仍可用', async () => {
     items = [{ id: 'b', name: { zh: '流程B' }, invalidReason: '建了分支却没有删分支' }]
     installKlarit()

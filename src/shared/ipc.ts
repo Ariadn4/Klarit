@@ -221,6 +221,14 @@ export const IPC = {
   documentsSave: 'documents:save',
   /** main → renderer：新导入项目落定，请该项目的窗口立即进入文档确认步（载荷为 memberId）。 */
   documentsOnboard: 'documents:onboard',
+  /**
+   * main → renderer：导入后自动派工作流命中支——后台 author 产出的可用提案已作 agent 消息追加进本项目全局对话，
+   * 请渲染层打开/聚焦对话面板、选中并重取承载该提案的会话（后台追加消息无自动刷新，故须此推送驱动）。
+   * 载荷为 `{ projectId, conversationId }`。
+   */
+  workflowProposalReady: 'workflow:proposalReady',
+  /** main → renderer：导入后自动派工作流的后台生成进度（载荷为 WorkflowGenPhase：generating/done/failed），底栏显/隐指示。 */
+  workflowGenStatus: 'workflow:genStatus',
   /** 程序化聚焦：把侧边栏切到 git 视图并定位到指定（成员仓, 分支）的 worktree。 */
   gitViewFocus: 'gitView:focus',
   /** main → renderer：请求渲染层把 git 视图聚焦到某（成员仓, 分支）。 */

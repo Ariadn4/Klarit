@@ -36,7 +36,7 @@ import type {
 } from '@shared/types'
 import type { Localized, RulePack, RulePackItem, RulePackItemRef } from '@shared/rule-pack'
 import { listItemsByKind, resolveLocalized } from '@shared/rule-pack'
-import { checkBranchPairing, ENGINE_OPERATIONS, engineOpCapabilities, isSafeRelativePath, validateWorkflow } from '@shared/workflow'
+import { checkBranchPairing, ENGINE_OPERATIONS, engineOpCapabilities, isSafeRelativePath, lintWorkflow, validateWorkflow } from '@shared/workflow'
 import { coerceEffort, EFFORT_LEVELS } from '@shared/agents'
 import { ModelCombobox } from './ui/ModelCombobox'
 import { dedupeProposedName, toProposedName } from '@shared/requirement-card'
@@ -1461,7 +1461,14 @@ function NodeDetail({
   )
 }
 
-/** 节点列表行（只读摘要，可拖拽排序）：拖拽柄 · 名称 · 阶段（只读）· 编辑 · 删除。点击编辑进入详情。 */
+/** 门徽标按门类的语义令牌配色（深浅两套靠令牌覆盖；manual=cobalt 强调 / auto=stone 中性 / external=info 蓝）。 */
+const GATE_BADGE_STYLES: Record<WorkflowGateItem['kind'], string> = {
+  manual: 'border-cobalt-300/50 bg-cobalt-50 text-cobalt-700',
+  auto: 'border-stone-300 bg-stone-100 text-stone-600',
+  external: 'border-info/40 bg-info/10 text-info'
+}
+
+/** 节点列表行（只读摘要，可拖拽排序）：行1=拖拽柄·名称·阶段·编辑·删除；行2（仅有门时）=门徽标另起一行缩进。点击编辑进入详情。 */
 function SortableNodeRow({
   node,
   stageName,
@@ -1477,31 +1484,52 @@ function SortableNodeRow({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const nodeName = resolveLocalized(node.name, lang)
+  // 派生本节点挂的门类（按首次出现去重，有几类显示几类）——纯展示，不改数据模型。
+  const gateKinds = Array.from(new Set((node.gate ?? []).map((g) => g.kind)))
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 border-b border-stone-100 px-1 py-1.5 hover:bg-stone-100/45"
+      className="border-b border-stone-100 px-1 py-2 hover:bg-stone-100/45"
       data-node-id={node.id}
     >
-      <DragHandle
-        label={t('workflowEditor.dragToReorder')}
-        attributes={attributes as unknown as Record<string, unknown>}
-        listeners={listeners as unknown as Record<string, unknown>}
-      />
-      {/* 双信息行：主=节点名(13/ink)，次=阶段名(12/stone-600)，只读。顺序由拖拽柄表达，不显序号。 */}
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate text-[13px] font-medium text-ink">{nodeName || t('workflowEditor.newNode')}</span>
-        <span className="shrink-0 text-[12px] text-stone-600">{stageName}</span>
+      {/* 行1（干净）：拖拽柄 · 节点名(13/ink) · 阶段名(12/stone-600) · 编辑 · 删除。顺序由拖拽柄表达，不显序号。 */}
+      <div className="flex items-center gap-2">
+        <DragHandle
+          label={t('workflowEditor.dragToReorder')}
+          attributes={attributes as unknown as Record<string, unknown>}
+          listeners={listeners as unknown as Record<string, unknown>}
+        />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-[13px] font-medium text-ink">{nodeName || t('workflowEditor.newNode')}</span>
+          <span className="shrink-0 text-[12px] text-stone-600">{stageName}</span>
+        </div>
+        <IconButton label={t('workflowEditor.editNode', { name: nodeName })} onClick={onEdit}>
+          <Pencil size={15} />
+        </IconButton>
+        <IconButton label={t('workflowEditor.deleteNode', { name: nodeName })} danger onClick={onDelete}>
+          <Trash2 size={15} />
+        </IconButton>
       </div>
-      <IconButton label={t('workflowEditor.editNode', { name: nodeName })} onClick={onEdit}>
-        <Pencil size={15} />
-      </IconButton>
-      <IconButton label={t('workflowEditor.deleteNode', { name: nodeName })} danger onClick={onDelete}>
-        <Trash2 size={15} />
-      </IconButton>
+      {/* 行2（仅有门时）：门徽标另起一行，缩进对齐到节点名下方，避免行1拥挤。 */}
+      {gateKinds.length > 0 && (
+        // 门徽标：区分 manual(cobalt 强调，需人拍板) / auto(stone 中性) / external(info 蓝)；小而不喧、不可交互。
+        <span
+          className="mt-1.5 flex flex-wrap items-center gap-1 pl-7"
+          aria-label={t('workflowEditor.gateBadgeGroup')}
+        >
+          {gateKinds.map((kind) => (
+            <span
+              key={kind}
+              className={`rounded-sm border px-1 py-px text-[10px] font-medium leading-none ${GATE_BADGE_STYLES[kind]}`}
+            >
+              {t(`workflowEditor.gateBadge${kind === 'manual' ? 'Manual' : kind === 'auto' ? 'Auto' : 'External'}`)}
+            </span>
+          ))}
+        </span>
+      )}
     </div>
   )
 }
@@ -1751,6 +1779,9 @@ export function WorkflowEditor({
   // 可选语言 = 受支持语言 ∪ 定义里已带的语言（去重）。
   const langs = [...new Set<string>([...SUPPORTED_LANGUAGES, ...presentWfLangs(def)])]
 
+  // 软校验告警：随编辑实时重算的**非阻断**提示（与 error 硬错误分开——warnings 永不禁用/拦截保存）。
+  const lintWarnings = lintWorkflow(def)
+
   const save = async (): Promise<boolean> => {
     const cleaned = cleanForSave(def)
     const v = validateWorkflow(cleaned)
@@ -1845,6 +1876,18 @@ export function WorkflowEditor({
           <p role="alert" className="rounded border border-danger/30 bg-signal-50 px-3 py-2 text-[12px] text-danger">
             {error}
           </p>
+        )}
+
+        {/* 软校验告警：非阻断的「可用但有隐患」提示（amber warning 令牌，区别于 danger 硬错误）；永不禁用保存。 */}
+        {lintWarnings.length > 0 && (
+          <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-[12px]">
+            <span className="font-semibold text-warning">{t('workflowEditor.advisoryTitle')}</span>
+            <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-ink">
+              {lintWarnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <label className="block">

@@ -68,6 +68,22 @@ describe('WorkflowPicker 项目激活工作流', () => {
     expect(invalid).toHaveAttribute('aria-checked', 'false')
   })
 
+  it('带软校验告警的工作流：标「（建议）」但仍可选中激活（非阻断）', async () => {
+    items = [
+      { id: 'a', name: { zh: '流程A' } },
+      { id: 'b', name: { zh: '流程B' }, warnings: ['固化步骤前缺人工验收'] }
+    ]
+    active = 'a'
+    installKlarit()
+    render(<WorkflowPicker />)
+    const advisory = await screen.findByRole('radio', { name: /流程B/ })
+    // 有告警 ≠ 无效：不禁用、可点击激活
+    expect(advisory).toBeEnabled()
+    expect(within(advisory).getByText('（建议）')).toBeInTheDocument()
+    await userEvent.click(advisory)
+    expect(window.klarit.setActiveWorkflow).toHaveBeenCalledWith('b')
+  })
+
   it('激活某工作流后回调 onActiveChange(id)', async () => {
     const onActiveChange = vi.fn()
     render(<WorkflowPicker onActiveChange={onActiveChange} />)

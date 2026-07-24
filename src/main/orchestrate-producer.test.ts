@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import type { AgentLaunch, AgentRunner } from './agent/runner'
+import type { AgentLaunch, AgentRunner, AgentRunSpec } from './agent/runner'
 import { createOpsProducer, parseOpsReply } from './orchestrate-producer'
+import { claudeAdapter } from './agent/adapter'
 
 /** 桩 runner：start 时把预设 stdout 分块喂回 onChunk，再以 code 0 结束。 */
 function stubRunner(stdout: string, opts: { supportsResume?: boolean; failStart?: boolean } = {}): AgentRunner {
@@ -148,6 +149,56 @@ describe('createOpsProducer（桩 runner）', () => {
     const runner = stubRunner('', { failStart: true, supportsResume: false })
     const produce = createOpsProducer({ runner, toolId: 'unknown', cwd: '/ro' })
     await expect(produce('PROMPT', ctx)).rejects.toThrow()
+  })
+
+  // 根因修复（设计决策 #10）：自动 author 须能读到项目文件——producer 收到 addDirs 时把项目成员仓真实路径
+  // 作为可访问目录（--add-dir）交给 runner，author agent 才能实际查看 .claude/、CLAUDE.md、git log 推断习惯。
+  it('addDirs → runner spec.extraDirs（项目成员仓真实路径的只读访问）', async () => {
+    let captured: string[] | undefined
+    const base = stubRunner('{ "ops": [] }')
+    const runner: AgentRunner = {
+      ...base,
+      start: (spec: AgentRunSpec & { prompt: string }) => {
+        captured = spec.extraDirs
+        return base.start(spec)
+      }
+    }
+    const produce = createOpsProducer({ runner, toolId: 'claude-code', cwd: '/scratch', addDirs: ['/repo/api', '/repo/web'] })
+    await produce('PROMPT', ctx)
+    expect(captured).toEqual(['/repo/api', '/repo/web'])
+  })
+
+  it('addDirs 经真实 adapter 翻成 CLI --add-dir（读到项目文件）', async () => {
+    let captured: string[] | undefined
+    const base = stubRunner('{ "ops": [] }')
+    const runner: AgentRunner = {
+      ...base,
+      start: (spec: AgentRunSpec & { prompt: string }) => {
+        captured = spec.extraDirs
+        return base.start(spec)
+      }
+    }
+    const produce = createOpsProducer({ runner, toolId: 'claude-code', cwd: '/scratch', addDirs: ['/repo/api'] })
+    await produce('PROMPT', ctx)
+    // 用真实 CLI-arg 构建器（claudeAdapter）验证捕获到的目录落成 --add-dir 参数（不触真 CLI）。
+    const inv = claudeAdapter.start('p', { extraDirs: captured })
+    const dirs = inv.args.reduce<string[]>((acc, a, i) => (inv.args[i - 1] === '--add-dir' ? [...acc, a] : acc), [])
+    expect(dirs).toEqual(['/repo/api'])
+  })
+
+  it('未给 addDirs → spec.extraDirs 不带（聊天路径不回归）', async () => {
+    let captured: string[] | undefined = ['sentinel']
+    const base = stubRunner('{ "ops": [] }')
+    const runner: AgentRunner = {
+      ...base,
+      start: (spec: AgentRunSpec & { prompt: string }) => {
+        captured = spec.extraDirs
+        return base.start(spec)
+      }
+    }
+    const produce = createOpsProducer({ runner, toolId: 'claude-code', cwd: '/scratch' })
+    await produce('PROMPT', ctx)
+    expect(captured).toBeUndefined()
   })
 
   it('有 sessionId 且支持续接 → 走 resume', async () => {

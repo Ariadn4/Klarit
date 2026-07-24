@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { EngineProgressEvent, FileTreeChange, KlaritApi } from '../shared/types'
+import type {
+  EngineProgressEvent,
+  FileTreeChange,
+  KlaritApi,
+  WorkflowGenPhase
+} from '../shared/types'
 import type { EffectiveTheme } from '../shared/theme'
 
 const api: KlaritApi = {
@@ -175,6 +180,17 @@ const api: KlaritApi = {
     const listener = (_e: unknown, memberId: string): void => handler(memberId)
     ipcRenderer.on(IPC.documentsOnboard, listener)
     return () => ipcRenderer.removeListener(IPC.documentsOnboard, listener)
+  },
+  onWorkflowProposalReady: (handler) => {
+    const listener = (_e: unknown, payload: { projectId: string; conversationId: string }): void =>
+      handler(payload)
+    ipcRenderer.on(IPC.workflowProposalReady, listener)
+    return () => ipcRenderer.removeListener(IPC.workflowProposalReady, listener)
+  },
+  onWorkflowGenStatus: (handler) => {
+    const listener = (_e: unknown, phase: WorkflowGenPhase): void => handler(phase)
+    ipcRenderer.on(IPC.workflowGenStatus, listener)
+    return () => ipcRenderer.removeListener(IPC.workflowGenStatus, listener)
   },
   onProjectsChanged: (handler) => {
     const listener = (): void => handler()

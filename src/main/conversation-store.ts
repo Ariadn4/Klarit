@@ -27,6 +27,8 @@ export interface ConversationStore {
   /** 清空会话消息 + 断原生续接（清 sessionId），保留会话本身与 agent/模型/标题；会话不存在返回 null。 */
   clearMessages(projectId: string, id: string): Conversation | null
   remove(projectId: string, id: string): void
+  /** 整删某项目作用域的全部会话（移除项目时清对话历史，防孤儿）；无此项目为安全 no-op。 */
+  removeScope(projectId: string): void
 }
 
 interface Backend {
@@ -34,6 +36,7 @@ interface Backend {
   write(c: Conversation): void
   listProject(projectId: string): Conversation[]
   del(projectId: string, id: string): void
+  delScope(projectId: string): void
 }
 
 const DEFAULT_TITLE = '新对话'
@@ -110,7 +113,8 @@ function makeStore(b: Backend): ConversationStore {
     truncateMessages,
     markInterventionApplied,
     clearMessages,
-    remove: (projectId, id) => b.del(projectId, id)
+    remove: (projectId, id) => b.del(projectId, id),
+    removeScope: (projectId) => b.delScope(projectId)
   }
 }
 
@@ -146,6 +150,9 @@ function fileBackend(baseDir: string): Backend {
     },
     del(p, id) {
       rmSync(file(p, id), { force: true })
+    },
+    delScope(p) {
+      rmSync(join(baseDir, p), { recursive: true, force: true })
     }
   }
 }
@@ -166,6 +173,9 @@ function memoryBackend(): Backend {
     listProject: (p) => [...map.values()].filter((c) => c.projectId === p).map(clone),
     del: (p, id) => {
       map.delete(key(p, id))
+    },
+    delScope: (p) => {
+      for (const c of [...map.values()]) if (c.projectId === p) map.delete(key(c.projectId, c.id))
     }
   }
 }

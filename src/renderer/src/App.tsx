@@ -11,13 +11,17 @@ import { Topbar } from './components/Topbar'
 import { Sidebar } from './components/Sidebar'
 import { FileViewer } from './components/FileViewer'
 import { NewRequirementFlow } from './components/NewRequirementFlow'
-import GlobalChatPanel, { GlobalChatEntry } from './components/GlobalChatPanel'
+import GlobalChatPanel, { GlobalChatEntry, WorkflowPreviewModal } from './components/GlobalChatPanel'
 import { KanbanBoard } from './components/KanbanBoard'
 import { AgentOnboardingDialog } from './components/AgentOnboardingDialog'
 import { DocumentOnboardingDialog } from './components/DocumentOnboardingDialog'
 import { DocumentScanStatus } from './components/DocumentScanStatus'
+import { WorkflowGenStatus } from './components/WorkflowGenStatus'
 import { RequirementCardDetail } from './components/RequirementCardDetail'
 import { useCardsStore } from './stores/cards'
+import { useGlobalChatStore } from './stores/globalChat'
+import { useModalQueue } from './stores/modalQueue'
+import { useWorkflowGenStore } from './stores/workflowGen'
 import i18n from './i18n'
 
 export function App(): React.JSX.Element {
@@ -158,6 +162,18 @@ export function App(): React.JSX.Element {
       void refresh()
       setDocOnboardMember(memberId)
     })
+    // 主进程主动推送：导入后无头 author 产出的可用提案已作 agent 消息追加进本项目全局对话 → 经全局模态协调器
+    // 排队打开对话面板并选中承载该提案的会话（复用会话里的 WorkflowProposalReview + 反馈改写回路）。若此刻有全局
+    // 模态在开（如文档 onboarding），则排队待其关闭再打开，绝不叠加；无模态在开则立即打开、选中并滚到该消息。
+    const offWorkflowProposal = window.klarit.onWorkflowProposalReady(({ conversationId }) => {
+      useModalQueue.getState().requestPopup(() =>
+        useGlobalChatStore.getState().openConversation(conversationId)
+      )
+    })
+    // 主进程主动推送：导入后自动派工作流的后台生成进度 → 底栏显/隐生成指示（不打断用户）。
+    const offWorkflowGen = window.klarit.onWorkflowGenStatus((phase) => {
+      useWorkflowGenStore.getState().setStatus(phase)
+    })
     // 注册表变更广播（管理窗移除/导入等）→ 刷新项目列表与绑定状态：被移除项目从切换器消失、
     // 当前项目被移除则窗口回空态；激活工作流随绑定状态一并重读。
     const offProjects = window.klarit.onProjectsChanged(() => {
@@ -207,6 +223,8 @@ export function App(): React.JSX.Element {
       offTheme()
       offBound()
       offDocsOnboard()
+      offWorkflowProposal()
+      offWorkflowGen()
       offProjects()
       offCards()
       offTree()
@@ -398,15 +416,19 @@ export function App(): React.JSX.Element {
             {/* 全局对话：常驻入口「项目Agent」+ 无蒙层面板；限看板区，不漂到详情抽屉上。 */}
             <GlobalChatEntry />
             <GlobalChatPanel />
-            {/* 底栏左侧状态位：文档扫描进度——只告知不可交互，故整条 pointer-events-none 让点击穿透。 */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[61] flex h-7 items-center px-2">
+            {/* 底栏左侧状态位：文档扫描 + 工作流生成进度——均只告知不可交互，故整条 pointer-events-none 让点击穿透。 */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[61] flex h-7 items-center gap-3 px-2">
               <DocumentScanStatus />
+              <WorkflowGenStatus />
             </div>
           </div>
           {/* 需求卡详情：右侧推挤式侧抽屉（含底部询问 Agent 抽屉）；关闭时 null 不占宽。 */}
           <RequirementCardDetail />
         </main>
       </div>
+      {/* 工作流预览浮层：App 级常驻一处（portal 挂 body）——聊天面板内「预览草稿」与导入后主动推送的
+          提案预览共用它；面板开合不影响其渲染，也不会双开。 */}
+      <WorkflowPreviewModal />
       {onboarding && (
         <AgentOnboardingDialog
           agents={detectedAgents}

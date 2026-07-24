@@ -147,6 +147,7 @@ export const en: Dictionary = {
     newAria: 'New workflow',
     empty: 'No workflows yet — create or import above.',
     invalid: '(invalid)',
+    advisory: '(advisory)',
     editAria: 'Edit {{name}}',
     cloneAria: 'Clone {{name}}',
     deleteAria: 'Delete {{name}}'
@@ -155,7 +156,8 @@ export const en: Dictionary = {
     title: 'Workflow',
     description: 'Choose which workflow is active for the current project (selection only, no editing).',
     empty: 'No workflows yet — create one in App settings.',
-    invalid: '(invalid)'
+    invalid: '(invalid)',
+    advisory: '(advisory)'
   },
   ruleLibrary: {
     backToLibrary: 'Back to rule library',
@@ -333,6 +335,7 @@ export const en: Dictionary = {
     cannotSaveTitle: 'Cannot save workflow',
     gotIt: 'Got it',
     backToList: 'Back to list',
+    advisoryTitle: 'Advisory (does not block saving)',
     backToNodes: 'Back to nodes',
     editNode: 'Edit node {{name}}',
     saved: 'Saved',
@@ -349,7 +352,11 @@ export const en: Dictionary = {
     nodes: 'Nodes',
     nodesHint: 'Order is execution order',
     addNode: 'Add node',
-    newNode: 'New node'
+    newNode: 'New node',
+    gateBadgeGroup: 'Gate checkpoints',
+    gateBadgeManual: 'Needs review',
+    gateBadgeAuto: 'Auto check',
+    gateBadgeExternal: 'External gate'
   },
   fileViewer: {
     binaryNotPreviewable: 'Cannot preview as text (binary file)',
@@ -500,6 +507,8 @@ export const en: Dictionary = {
     confirmBody: 'Will merge/split and delete: {{targets}}. This removes cards — continue?',
     confirmApply: 'Confirm & apply',
     workflowProposalTitle: 'Workflow proposal',
+    workflowGenStatus: 'Generating a workflow for this project…',
+    workflowGenFailed: 'Couldn’t generate a custom workflow; using the default one',
     workflowPreview: 'Preview draft',
     workflowClose: 'Close',
     workflowSaveFormal: 'Save as workflow',

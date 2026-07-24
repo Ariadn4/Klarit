@@ -430,6 +430,11 @@ export interface WorkflowSummary {
   name: Localized
   /** 分支配对等语义校验未过时的原因；缺省＝有效。UI 据此标「（无效）」并禁用选择。 */
   invalidReason?: string
+  /**
+   * 软校验（结构可判反模式）的非阻断告警，缺省/空＝无隐患。与 `invalidReason` 严重度不同：
+   * 后者是「可载入但不可用」、拦选择；warnings 只是「可用但有隐患」，供 UI 提示而不阻断存库/加载。
+   */
+  warnings?: string[]
 }
 
 /** 校验/保存结果（失败带可读原因）。 */
@@ -629,6 +634,12 @@ export interface WorkflowProposal {
   issues: string[]
 }
 
+/**
+ * 导入后自动派工作流的后台生成进度相位（main → renderer 底栏状态用）：
+ * `generating` 开始（author 起跑）→ `done`/`failed` 结束（清掉底栏指示）。
+ */
+export type WorkflowGenPhase = 'generating' | 'done' | 'failed'
+
 /** 编排核产物：成套卡操作 + 逐 op 校验问题 + 自然语言答复 + （可选）新项目提议 + （可选）工作流提案。 */
 export interface OrchestrationProposal {
   ops: CardOp[]
@@ -638,6 +649,11 @@ export interface OrchestrationProposal {
   suggestedProject?: SuggestedProject
   /** 意图属写/改工作流时给出：审阅界面渲染工作流只读预览 + 存库；与 ops 互斥（工作流轮 ops 为空）。 */
   workflow?: WorkflowProposal
+  /**
+   * producer（agent 调用）抛错时置真：供无头 author 区分「agent 调用失败/未配置」与「跑通但无产出」两类
+   * 失败（否则二者都塌成 workflow=undefined，无从分辨）。可选、加性——聊天路径不设、渲染层不看。
+   */
+  producerFailed?: boolean
 }
 
 /** 编排接缝产物：编排提案，或当前窗口未绑定项目的空态（无处归属需求）。 */
@@ -1382,6 +1398,15 @@ export interface KlaritApi {
   saveDocuments: (registry: DocRegistry) => Promise<void>
   /** 订阅「新导入项目 → 进文档确认步」推送（管理窗导入等窗口外入口）；返回取消订阅函数。 */
   onDocumentsOnboard: (handler: (memberId: string) => void) => () => void
+  /**
+   * 订阅「导入后自动派工作流」的提案就绪推送——提案已作 agent 消息追加进本项目全局对话，收到即
+   * 打开/聚焦对话面板、选中并重取承载它的会话（后台追加消息无自动刷新）；返回取消订阅函数。
+   */
+  onWorkflowProposalReady: (
+    handler: (payload: { projectId: string; conversationId: string }) => void
+  ) => () => void
+  /** 订阅「导入后自动派工作流」的后台生成进度——底栏据此显/隐生成指示；返回取消订阅函数。 */
+  onWorkflowGenStatus: (handler: (phase: WorkflowGenPhase) => void) => () => void
   /** 订阅项目注册表变更广播（管理窗移除/导入等）——收到即刷新项目列表与绑定状态；返回取消订阅函数。 */
   onProjectsChanged: (handler: () => void) => () => void
 }

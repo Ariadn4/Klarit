@@ -3,7 +3,7 @@ import { act } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { CardOp, Conversation, ConversationMessage, OrchestrationProposal } from '@shared/types'
-import GlobalChatPanel, { GlobalChatEntry, messageToText } from './GlobalChatPanel'
+import GlobalChatPanel, { GlobalChatEntry, WorkflowPreviewModal, messageToText } from './GlobalChatPanel'
 import { useGlobalChatStore } from '../stores/globalChat'
 
 /** 内存会话状态，模拟主进程：orchestrate 追加用户+agent 消息、getConversation 读回。 */
@@ -434,7 +434,12 @@ describe('工作流提案审阅', () => {
 
   it('板子只留「工作流提案」+「预览草稿」；点开进编辑器、底部「保存为正式工作流」入库并标记已存（不关闭）', async () => {
     nextProposal = wfProposal()
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('帮我做个带评审门的 PR 工作流')
@@ -464,7 +469,12 @@ describe('工作流提案审阅', () => {
 
   it('改写提案（带 baseId）：编辑器草稿 def.id 强制为 baseId → 保存覆盖那个包', async () => {
     nextProposal = wfProposal({ baseId: 'existing-flow' })
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('在我的流里加个门')
@@ -484,7 +494,12 @@ describe('工作流提案审阅', () => {
     nextProposal = wfProposal()
     const setActiveWorkflow = vi.fn(async (_id: string) => {})
     installKlarit({ setActiveWorkflow })
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('做个 PR 流')
@@ -522,7 +537,12 @@ describe('工作流提案审阅', () => {
       nodes: [{ id: 'n1', name: { zh: '推送主干' }, stageId: 's1', executor: { kind: 'engine', operation: 'push-branch' }, outputs: [] }]
     }))
     installKlarit({ getWorkflow })
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('做个 PR 流')

@@ -204,6 +204,19 @@ export function buildOrchestratePrompt(
   return [head + board, '', OPS_CONTRACT, authoringSection, '', '# 用户这轮说', intent].join('\n')
 }
 
+/**
+ * 从会话历史里取「最后一条 agent 消息携带的未存工作流草稿定义」——即 proposal.workflow.workflow。
+ * 只看**末条** agent 消息（迭代改写场景下它正是刚产出的草稿）：命中则返回其定义，未带草稿或无 agent 消息则 null。
+ */
+function lastDraftWorkflow(history: ConversationMessage[]): WorkflowDefinition | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]
+    if (m.role !== 'agent') continue
+    return m.proposal?.workflow?.workflow ?? null
+  }
+  return null
+}
+
 export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProducer): OrchestrateSeam {
   return {
     async orchestrate({ intent, conversationId }, projectId) {
@@ -216,10 +229,15 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         workflows: deps.getWorkflows?.() ?? [],
         budgetChars: deps.budgetChars
       })
-      // 写工作流上下文：可改写工作流摘要（恒带）+ 活动工作流完整定义（改写默认基准）。缺省 provider 时为空态。
+      const history = deps.getHistory?.(conversationId) ?? []
+      // 改写基准：会话末条 agent 消息若带一份**未存库的工作流草稿**（proposal.workflow.workflow），
+      // 以该草稿定义作基准（让用户就着刚产出的草稿改），覆盖默认的「库里活动工作流」；无草稿则回落活动工作流。
+      // 草稿不落库（无库 id → baseId 由 producer 留空，整体替换新建，合「无 diff」契约），只在会话里滚动。
+      const draftBase = lastDraftWorkflow(history)
+      // 写工作流上下文：可改写工作流摘要（恒带）+ 基准完整定义（草稿优先，否则活动工作流）。缺省 provider 时为空态。
       const authoring: AuthoringContext = {
         summaries: deps.getWorkflowSummaries?.() ?? [],
-        activeWorkflow: deps.getActiveWorkflow?.() ?? null,
+        activeWorkflow: draftBase ?? deps.getActiveWorkflow?.() ?? null,
         repos: deps.getProjectRepos?.() ?? []
       }
       const prompt = buildOrchestratePrompt(board, intent, deps.getTypes(), !projectId, authoring)
@@ -228,10 +246,17 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         produced = await produce(prompt, {
           intent,
           conversationId,
-          history: deps.getHistory?.(conversationId) ?? []
+          history
         })
       } catch {
-        return { ops: [], issues: [], reply: '（未能产出提案：agent 调用失败或未配置默认 agent）' }
+        // producerFailed 标记「agent 调用抛错」，供无头 author 区分它与「跑通无产出」（见设计决策 #11）。
+        // 加性/可选，聊天路径（runOrchestrateTurn）不受影响。
+        return {
+          ops: [],
+          issues: [],
+          reply: '（未能产出提案：agent 调用失败或未配置默认 agent）',
+          producerFailed: true
+        }
       }
       const rawOps = Array.isArray(produced?.ops) ? produced.ops : []
       // 新项目的卡将落进一个**全新项目**（默认类型、空看板）——按默认类型+空卡校验（否则会拿当前项目
@@ -265,6 +290,43 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
       return { ops, issues, reply: produced?.reply, suggestedProject: produced?.suggestedProject, workflow }
     }
   }
+}
+
+/**
+ * 无头 author 的富结果：区分**成功**与三类**失败**，供调用方按种类记日志/有界重试/失败轻提示（设计决策 #11）——
+ * 不再把不同失败一律抹成 `null`。
+ * - `proposal` 存在 + `failure` 缺省 → 成功（issues 空、可存库）。
+ * - `proposal` 存在 + `failure==='invalid'` → 校验不过（issues 非空，仍带出提案供调用方决定）。
+ * - `proposal` 为 null + `failure==='threw'` → agent 调用抛错/未配置（seam `reply` 上浮到 `reply`）。
+ * - `proposal` 为 null + `failure==='empty'` → 跑通但无工作流产出。
+ */
+export interface AuthorWorkflowResult {
+  proposal: WorkflowProposal | null
+  /** seam 的自然语言答复（失败原因上浮用）。 */
+  reply?: string
+  failure?: 'threw' | 'empty' | 'invalid'
+}
+
+/**
+ * 无头写工作流核：以**显式 projectId** + **系统合成意图**跑编排 seam，抽出工作流提案并**区分失败种类**。
+ * 不绑发送者事件、不追加任何用户会话——聊天路径之外、供后台任务（如导入后自动派工作流）复用的可注入核。
+ * 复用同一 `createOrchestrateSeam` → `buildWorkflowProposal`（repairWorkflow + 两闸校验），不重复实现修复/校验，
+ * 也**不丢弃** seam 能区分失败的信息（producerFailed / reply / issues）。producer 抛错经 seam 内部优雅降级，此处不抛。
+ */
+export async function authorWorkflow(
+  deps: OrchestrateDeps,
+  produce: OpsProducer,
+  projectId: string,
+  intent: string
+): Promise<AuthorWorkflowResult> {
+  const outcome = await createOrchestrateSeam(deps, produce).orchestrate({ intent }, projectId)
+  if ('unbound' in outcome) return { proposal: null, failure: 'empty' }
+  const proposal = outcome.workflow ?? null
+  if (proposal) {
+    return { proposal, reply: outcome.reply, failure: proposal.issues.length > 0 ? 'invalid' : undefined }
+  }
+  if (outcome.producerFailed) return { proposal: null, reply: outcome.reply, failure: 'threw' }
+  return { proposal: null, reply: outcome.reply, failure: 'empty' }
 }
 
 /**

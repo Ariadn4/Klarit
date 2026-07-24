@@ -39,6 +39,8 @@ interface GlobalChatState {
   defaultModel: string | null
 
   openPanel: () => Promise<void>
+  /** 打开/聚焦对话面板并选中某会话（主进程后台追加消息后推送驱动：加载列表 + 重取该会话）。 */
+  openConversation: (conversationId: string) => Promise<void>
   closePanel: () => void
   setInput: (text: string) => void
   loadConversations: () => Promise<void>
@@ -100,6 +102,14 @@ export const useGlobalChatStore = create<GlobalChatState>((set, get) => ({
     const { conversations } = get()
     if (conversations.length === 0) await get().newConversation()
     else await get().selectConversation(conversations[0].id)
+  },
+
+  openConversation: async (conversationId) => {
+    // 主进程后台把提案追加进该会话，渲染层无自动刷新——打开面板、重取会话列表、选中并拉取指定会话。
+    set({ open: true, notice: null })
+    await get().loadAgentOptions()
+    await get().loadConversations()
+    await get().selectConversation(conversationId)
   },
 
   closePanel: () => set({ open: false }),

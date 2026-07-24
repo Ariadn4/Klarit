@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { CardOp, CardTypeDef, StoredCard, WorkflowDefinition } from '../shared/types'
+import type { CardOp, CardTypeDef, ConversationMessage, StoredCard, WorkflowDefinition } from '../shared/types'
 import { createDefaultWorkflow, workflowSummary } from '../shared/workflow'
 import { createOrchestrateSeam, buildOrchestratePrompt, type OpsProducer, type OrchestrateDeps } from './orchestrate-service'
 
@@ -242,5 +242,53 @@ describe('createOrchestrateSeam', () => {
     if ('unbound' in out) throw new Error('unexpected unbound')
     expect(out.workflow).toBeUndefined()
     expect(out.ops).toHaveLength(1)
+  })
+
+  it('改写基准：会话末条 agent 带未存草稿 → 注入草稿定义为基准（覆盖活动工作流）', async () => {
+    const active = createDefaultWorkflow('active-flow')
+    const draft = createDefaultWorkflow('draft-flow')
+    let captured = ''
+    const produce: OpsProducer = async (prompt) => {
+      captured = prompt
+      return { ops: [], reply: 'ok' }
+    }
+    const history: ConversationMessage[] = [
+      { role: 'user', text: '给我写个流', at: 1 },
+      { role: 'agent', text: '这是草稿', at: 2, proposal: { ops: [], issues: [], workflow: { workflow: draft, issues: [] } } }
+    ]
+    const d: OrchestrateDeps = {
+      ...deps([card({ proposedName: 'a' })]),
+      getActiveWorkflow: () => active,
+      getWorkflowSummaries: () => [workflowSummary(active)],
+      getHistory: () => history
+    }
+    const seam = createOrchestrateSeam(d, produce)
+    await seam.orchestrate({ intent: '加一道人工验收 manual 门', conversationId: 'c1' }, 'p1')
+    // 注入的基准定义是草稿（JSON 形态），而非活动工作流
+    expect(captured).toContain('"id":"draft-flow"')
+    expect(captured).not.toContain('"id":"active-flow"')
+  })
+
+  it('改写基准：会话无未存草稿 → 基准回落活动工作流（原行为不变）', async () => {
+    const active = createDefaultWorkflow('active-flow')
+    let captured = ''
+    const produce: OpsProducer = async (prompt) => {
+      captured = prompt
+      return { ops: [], reply: 'ok' }
+    }
+    // 末条 agent 消息只是聊天，无 proposal.workflow 草稿
+    const history: ConversationMessage[] = [
+      { role: 'user', text: '聊聊', at: 1 },
+      { role: 'agent', text: '好啊', at: 2 }
+    ]
+    const d: OrchestrateDeps = {
+      ...deps([card({ proposedName: 'a' })]),
+      getActiveWorkflow: () => active,
+      getWorkflowSummaries: () => [workflowSummary(active)],
+      getHistory: () => history
+    }
+    const seam = createOrchestrateSeam(d, produce)
+    await seam.orchestrate({ intent: '在我的流里加个门', conversationId: 'c1' }, 'p1')
+    expect(captured).toContain('"id":"active-flow"')
   })
 })

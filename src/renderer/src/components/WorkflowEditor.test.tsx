@@ -519,3 +519,148 @@ describe('查看完整 prompt 预览', () => {
     expect(preview).toHaveBeenCalled()
   })
 })
+
+/** 固化操作（merge-branch）在前、其前无任何 manual 门的工作流 —— 触发首条软校验。 */
+function finalizeFixture(): WorkflowDefinition {
+  return {
+    id: 'wf',
+    name: { zh: '流程A' },
+    description: {},
+    stages: [
+      { id: 's1', name: { zh: '开发' } },
+      { id: 's2', name: { zh: '交付' } }
+    ],
+    nodes: [
+      {
+        id: 'n1',
+        name: { zh: '写代码' },
+        stageId: 's1',
+        executor: { kind: 'agent', instruction: { kind: 'inline', text: 'do it' } },
+        outputs: []
+      },
+      {
+        id: 'merge',
+        name: { zh: '合并' },
+        stageId: 's2',
+        executor: { kind: 'engine', operation: 'merge-branch' },
+        outputs: []
+      }
+    ]
+  }
+}
+
+/** 三个节点：manual 门 / auto+manual 门 / 无门 —— 用于节点列表门徽标展示。 */
+function gateBadgeFixture(): WorkflowDefinition {
+  return {
+    id: 'wf',
+    name: { zh: '流程A' },
+    description: {},
+    stages: [{ id: 's1', name: { zh: '开发' } }],
+    nodes: [
+      {
+        id: 'n1',
+        name: { zh: '人工评审' },
+        stageId: 's1',
+        executor: { kind: 'agent', instruction: { kind: 'inline', text: 'do it' } },
+        outputs: [],
+        gate: [{ kind: 'manual' }]
+      },
+      {
+        id: 'n2',
+        name: { zh: '双门' },
+        stageId: 's1',
+        executor: { kind: 'agent', instruction: { kind: 'inline', text: 'do it' } },
+        outputs: [],
+        gate: [{ kind: 'auto', check: { kind: 'inline', command: 'npm test' } }, { kind: 'manual' }]
+      },
+      {
+        id: 'n3',
+        name: { zh: '无门' },
+        stageId: 's1',
+        executor: { kind: 'agent', instruction: { kind: 'inline', text: 'do it' } },
+        outputs: []
+      }
+    ]
+  }
+}
+
+/** 取节点列表某行的容器（按 data-node-id）。 */
+function nodeRow(id: string): HTMLElement {
+  const row = document.querySelector(`[data-node-id="${id}"]`)
+  if (!row) throw new Error(`no node row ${id}`)
+  return row as HTMLElement
+}
+
+describe('WorkflowEditor 节点列表门徽标', () => {
+  it('挂了 manual 门的节点行显示 manual 徽标（展开文案）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => gateBadgeFixture()) })
+    renderEditor()
+    await screen.findByRole('button', { name: '编辑节点 人工评审' })
+    const row = within(nodeRow('n1'))
+    expect(row.getByText('需人工评审')).toBeInTheDocument()
+    expect(row.queryByText('自动校验门')).not.toBeInTheDocument()
+    expect(row.queryByText('外部门')).not.toBeInTheDocument()
+  })
+
+  it('同时挂 auto + manual → 两类徽标都标出（展开文案）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => gateBadgeFixture()) })
+    renderEditor()
+    await screen.findByRole('button', { name: '编辑节点 双门' })
+    const row = within(nodeRow('n2'))
+    expect(row.getByText('自动校验门')).toBeInTheDocument()
+    expect(row.getByText('需人工评审')).toBeInTheDocument()
+  })
+
+  it('有门节点渲染徽标行（按 group aria-label 可定位）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => gateBadgeFixture()) })
+    renderEditor()
+    await screen.findByRole('button', { name: '编辑节点 人工评审' })
+    const row = within(nodeRow('n1'))
+    expect(row.getByLabelText('门检查点')).toBeInTheDocument()
+  })
+
+  it('无门节点行不显示任何门徽标（无徽标行）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => gateBadgeFixture()) })
+    renderEditor()
+    await screen.findByRole('button', { name: '编辑节点 无门' })
+    const row = within(nodeRow('n3'))
+    expect(row.queryByText('需人工评审')).not.toBeInTheDocument()
+    expect(row.queryByText('自动校验门')).not.toBeInTheDocument()
+    expect(row.queryByText('外部门')).not.toBeInTheDocument()
+    expect(row.queryByLabelText('门检查点')).not.toBeInTheDocument()
+  })
+})
+
+describe('WorkflowEditor 软校验告警（非阻断）', () => {
+  it('固化步骤前无人工门 → 显示告警「固化步骤前缺人工验收」', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => finalizeFixture()) })
+    renderEditor()
+    expect(await screen.findByText('固化步骤前缺人工验收')).toBeInTheDocument()
+    // 告警不是硬错误 alert（硬错误才用 role=alert）
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('在固化步骤前的节点上加一道人工门 → 告警清除（随编辑实时重算）', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => finalizeFixture()) })
+    renderEditor()
+    expect(await screen.findByText('固化步骤前缺人工验收')).toBeInTheDocument()
+    // 进 merge 之前的节点，加一个检查项并切为人工评审
+    await enterNode('写代码')
+    await userEvent.click(screen.getByRole('button', { name: '加检查项' }))
+    await userEvent.selectOptions(screen.getByLabelText('检查项类型 1'), 'manual')
+    await backToNodes()
+    // 现在固化前有人工门 → 告警消失
+    await waitFor(() => expect(screen.queryByText('固化步骤前缺人工验收')).not.toBeInTheDocument())
+  })
+
+  it('告警只是提示、绝不禁用/拦截保存', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => finalizeFixture()) })
+    renderEditor()
+    await screen.findByText('固化步骤前缺人工验收')
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    expect(saveBtn).toBeEnabled()
+    await userEvent.click(saveBtn)
+    // 有告警仍照常写盘（告警非阻断）
+    expect(window.klarit.saveWorkflow).toHaveBeenCalled()
+  })
+})

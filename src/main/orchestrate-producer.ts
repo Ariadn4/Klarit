@@ -27,6 +27,12 @@ export interface OpsProducerConfig {
   model?: string
   /** 推理力度（全局默认；聊天无会话级覆盖）。 */
   effort?: EffortLevel
+  /**
+   * 额外可访问目录（映射为 agent CLI 的目录访问 flag——claude/cursor `--add-dir`、codex `-C` 尽力而为）。
+   * 供自动 author 把项目各成员仓真实路径传入，使 agent 能实际读到 `.claude/`/`CLAUDE.md`/`git log` 推断习惯
+   * （设计决策 #10 的根因修复：cwd 是 scratch，无此则 agent 对项目零文件系统访问）。只读探查由系统意图硬约束。
+   */
+  addDirs?: string[]
   timeoutMs?: number
   sessions?: SessionBridge
 }
@@ -123,6 +129,8 @@ export function createOpsProducer(cfg: OpsProducerConfig): OpsProducer {
       cwd: cfg.cwd,
       model: cfg.model,
       effort: cfg.effort,
+      // 复用 runner/adapter 既有的 extraDirs → CLI 目录访问 flag 链路（claude/cursor `--add-dir`、codex `-C`）。
+      extraDirs: cfg.addDirs,
       onChunk: (stream, chunk) => {
         if (stream === 'stdout') out += chunk
       },

@@ -26,18 +26,23 @@ function projectWithFeature(): { repo: string; bare: string } {
 }
 
 describe('默认工作流端到端 smoke', () => {
-  it('本地直合：建分支→开worktree→关联→〔实现占位跳过〕→合并→push main→删worktree→删分支', async () => {
+  it('本地直合：建分支→开worktree→关联→〔实现占位跳过〕→合并前人工审批门→合并→push main→删worktree→删分支', async () => {
     const { repo, bare } = projectWithFeature()
     const def = createDefaultWorkflow('local')
     const wt = trash.track(join(repo, '..', `wt-local-${Date.now()}`))
     const engine = createEngine({ getWorkflow: () => def, store: createRunStore(trash.track(mkdtempSync(join(tmpdir(), 'runs-')))) })
-    const bp = await engine.start({
+    // 合并前停在人工审批门（重大步骤须人拍板：默认工作流不再无人值守跑到底）。
+    const paused = await engine.start({
       workflowId: 'local',
       repoPath: repo,
       branch: 'feature',
       worktreePath: wt,
       baseBranch: 'main'
     }).settled
+    expect(paused.state).toBe('waiting-decision')
+    expect(paused.pendingDecision!.source.endsWith(':manual-gate')).toBe(true)
+    // 审批通过 → 继续合并、推送、清理跑完。
+    const bp = await engine.decide(paused.runId, { optionId: 'pass' }).settled
     expect(bp.state).toBe('done')
     expect(git(repo, 'log', '--oneline').includes('feature work')).toBe(true) // 已合并
     expect(git(bare, 'rev-parse', 'main')).toBe(git(repo, 'rev-parse', 'main')) // 主干已推
