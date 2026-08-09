@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { FileText, Pencil, Trash2, X } from 'lucide-react'
 import type {
   AgentExecConfig,
+  ArchiveDocEntry,
   CardColorKey,
   CardTypeDef,
   DetectedAgent,
@@ -64,18 +65,16 @@ interface WorkflowEditorProps {
    * 缺省 = 设置里的常规态（顶栏返回+保存，渲染进设置头部插槽）。
    */
   chromeless?: boolean
-  /** chromeless 底部横栏的文案（关闭 / 首次保存 / 已存后更新 / 设为本项目工作流 / 二次确认体）；仅 chromeless 用。 */
-  footerLabels?: { close: string; save: string; update: string; setActive: string; setActiveConfirm: string }
-  /** chromeless：该工作流此前是否已入库（决定保存按钮显「保存」还是「更新」；再次打开时为真）。 */
-  alreadySaved?: boolean
+  /** chromeless 底部横栏的文案（关闭 / 首次保存 / 已存后更新 / 保存并设为本项目工作流一键）；仅 chromeless 用。 */
+  footerLabels?: { close: string; save: string; update: string; saveAndActive: string }
   /**
    * 优先从库读：为真时先按 id 从库读（含上次编辑），读不到（如已被删）**回落到 `initialDef` 草稿**——
    * 避免已删工作流再次预览时卡「加载中」。缺省 = 有 initialDef 就用它、否则从库读。
    */
   libraryFirst?: boolean
-  /** chromeless：「设置为本项目工作流」——二次确认后调用（先保存入库，再由此激活到当前项目）。缺省则不显该按钮。 */
+  /** chromeless：激活到当前项目——「保存并设为本项目工作流」一键里调用（先保存入库，再由此激活）。缺省则主按钮退化为仅保存。 */
   onSetActive?: (workflowId: string) => Promise<void> | void
-  /** chromeless：这份工作流是否已是当前项目的激活工作流（是则**不显**「设置为本项目工作流」——已无意义）。 */
+  /** chromeless：这份工作流是否已是当前项目的激活工作流（是则主按钮显「更新工作流」仅保存，否则显「保存并设为本项目工作流」一键保存并激活）。 */
   isActive?: boolean
   /** 库内其它工作流（subworkflow 选择用，不含自己）。 */
   others: WorkflowSummary[]
@@ -1255,6 +1254,68 @@ function GateEditor({
   )
 }
 
+/**
+ * archive-docs 归档文档清单编辑：一行一条 `{ path, kind }`——路径输入 + 动态/快照选择 + 删除，末行「加文档」。
+ * 空时给空态提示（回落文档扫描登记表）。仅 archive-docs 引擎节点渲染（显隐由父详情判断）。
+ */
+function ArchiveDocsEditor({
+  entries,
+  onChange
+}: {
+  entries: ArchiveDocEntry[]
+  onChange: (next: ArchiveDocEntry[]) => void
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const patch = (i: number, p: Partial<ArchiveDocEntry>): void =>
+    onChange(entries.map((e, j) => (j === i ? { ...e, ...p } : e)))
+  return (
+    <FieldGroup
+      title={t('workflowEditor.archiveDocsTitle')}
+      hint={t('workflowEditor.archiveDocsHint')}
+      count={entries.length}
+      addLabel={t('workflowEditor.archiveDocsAdd')}
+      onAdd={() => onChange([...entries, { path: '', kind: 'dynamic' }])}
+    >
+      {entries.length === 0 ? (
+        <p className="px-1 py-2 text-[12px] leading-normal text-stone-600">{t('workflowEditor.archiveDocsEmpty')}</p>
+      ) : (
+        <div>
+          {entries.map((e, i) => (
+            <ListRow key={i} ordinal={i + 1}>
+              <input
+                className={`${inputCls} flex-1 font-mono ${
+                  e.path.trim() !== '' && !isSafeRelativePath(e.path) ? 'border-danger focus:border-danger' : ''
+                }`}
+                value={e.path}
+                aria-label={t('workflowEditor.archiveDocsPath', { n: i + 1 })}
+                aria-invalid={e.path.trim() !== '' && !isSafeRelativePath(e.path)}
+                placeholder={t('workflowEditor.archiveDocsPathPlaceholder')}
+                onChange={(ev) => patch(i, { path: ev.target.value })}
+              />
+              <select
+                className={selectCls}
+                value={e.kind}
+                aria-label={t('workflowEditor.archiveDocsKind', { n: i + 1 })}
+                onChange={(ev) => patch(i, { kind: ev.target.value as ArchiveDocEntry['kind'] })}
+              >
+                <option value="dynamic">{t('workflowEditor.archiveDocsKindDynamic')}</option>
+                <option value="snapshot">{t('workflowEditor.archiveDocsKindSnapshot')}</option>
+              </select>
+              <IconButton
+                label={t('workflowEditor.archiveDocsDelete', { n: i + 1 })}
+                danger
+                onClick={() => onChange(entries.filter((_, j) => j !== i))}
+              >
+                <Trash2 size={15} />
+              </IconButton>
+            </ListRow>
+          ))}
+        </div>
+      )}
+    </FieldGroup>
+  )
+}
+
 /** 节点详情视图：进入后编辑该节点全部字段；顶部「返回节点列表」。字段组在此为第一级。 */
 function NodeDetail({
   node,
@@ -1402,6 +1463,14 @@ function NodeDetail({
               />
             )}
           </Field>
+        )}
+
+        {/* 归档文档清单：仅引擎操作 archive-docs 节点显示（author 产出/用户手改的归档配置可见可改）。 */}
+        {node.executor.kind === 'engine' && node.executor.operation === 'archive-docs' && (
+          <ArchiveDocsEditor
+            entries={node.executor.archiveDocs ?? []}
+            onChange={(archiveDocs) => onChange({ ...node, executor: { kind: 'engine', operation: 'archive-docs', archiveDocs } })}
+          />
         )}
 
         {sections.writableScope && (
@@ -1683,7 +1752,6 @@ export function WorkflowEditor({
   initialDef,
   chromeless = false,
   footerLabels,
-  alreadySaved = false,
   libraryFirst = false,
   onSetActive,
   isActive = false,
@@ -1698,8 +1766,6 @@ export function WorkflowEditor({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [branchDialog, setBranchDialog] = useState<string | null>(null)
-  // 「设置为本项目工作流」二次确认中（浮层预览态）。
-  const [confirmingSetActive, setConfirmingSetActive] = useState(false)
   // 当前编辑语言（默认＝界面语言）；顶栏下拉切换，各可翻字段单栏编辑该语言。
   const [editLang, setEditLang] = useState<string>(() => coerceLanguage(i18n.language))
   // 正在编辑的节点 id / 建议类型下标（非空时显示对应详情视图，替换工作流表单）。列表行只读、行尾「编辑」进入。
@@ -1806,9 +1872,8 @@ export function WorkflowEditor({
     return false
   }
 
-  // 「设置为本项目工作流」：二次确认 → 先保存（确保入库）→ 激活为本项目工作流。仅浮层预览态（onSetActive 提供）用。
-  const confirmSetActive = async (): Promise<void> => {
-    setConfirmingSetActive(false)
+  // 「保存并设为本项目工作流」一键：先保存（确保入库、被校验拦下则不激活）→ 激活为本项目工作流。仅浮层预览态（onSetActive 提供）用。
+  const saveAndActivate = async (): Promise<void> => {
     if (await save()) await onSetActive?.(def.id)
   }
 
@@ -2023,55 +2088,35 @@ export function WorkflowEditor({
       </div>
 
       {chromeless && footerLabels && (
-        // 固定底部横栏（不随内容滚动）：关闭 + 保存/更新 +（可选）设为本项目工作流。已存过显「更新工作流」。
+        // 固定底部横栏（不随内容滚动）：关闭 + 一个主按钮。未激活 → 「保存并设为本项目工作流」（一键保存并激活）；
+        // 已是本项目活动工作流 → 「更新工作流」（仅保存）。
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-stone-200 bg-paper px-4 py-2.5">
           {error && <span className="mr-auto truncate text-[12px] text-danger">{error}</span>}
-          {confirmingSetActive ? (
-            // 二次确认（内联，替换按钮行）：说明影响 + 确认/取消。
-            <>
-              <span className="mr-auto text-[12px] text-stone-600">{footerLabels.setActiveConfirm}</span>
-              <button
-                type="button"
-                onClick={() => setConfirmingSetActive(false)}
-                className="rounded border border-stone-300 px-3.5 py-1.5 text-[13px] text-ink hover:border-cobalt-500"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmSetActive()}
-                className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
-              >
-                {t('common.confirm')}
-              </button>
-            </>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-stone-300 px-3.5 py-1.5 text-[13px] text-ink hover:border-cobalt-500"
+          >
+            {footerLabels.close}
+          </button>
+          {onSetActive && !isActive ? (
+            // 未激活：一键保存入库并设为本项目工作流（点击即人确认，无二次确认步骤）。
+            <button
+              type="button"
+              onClick={() => void saveAndActivate()}
+              className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
+            >
+              {footerLabels.saveAndActive}
+            </button>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded border border-stone-300 px-3.5 py-1.5 text-[13px] text-ink hover:border-cobalt-500"
-              >
-                {footerLabels.close}
-              </button>
-              <button
-                type="button"
-                onClick={() => void save()}
-                className="rounded border border-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-cobalt-600 hover:bg-cobalt-50"
-              >
-                {saved || alreadySaved ? footerLabels.update : footerLabels.save}
-              </button>
-              {/* 「设置为本项目工作流」仅在已保存为正式（本次保存 or 已入库）后出现；已是激活工作流则不显。 */}
-              {onSetActive && (saved || alreadySaved) && !isActive && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingSetActive(true)}
-                  className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
-                >
-                  {footerLabels.setActive}
-                </button>
-              )}
-            </>
+            // 已是活动工作流（或无激活能力）：主按钮仅保存/更新。
+            <button
+              type="button"
+              onClick={() => void save()}
+              className="rounded bg-cobalt-500 px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-cobalt-600"
+            >
+              {footerLabels.update}
+            </button>
           )}
         </div>
       )}

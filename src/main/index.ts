@@ -71,7 +71,7 @@ import {
 import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
 import { createAcceptanceSampleWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
 import { hasAgentHabits } from './agent-habits'
-import { runWorkflowOnboarding, needsDocScanOnActivate, type WorkflowOnboardingDeps } from './workflow-onboarding'
+import { runWorkflowOnboarding, formatDocEnumForIntent, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
 import { createGlobalSkillStore } from './global-skill-store'
@@ -1149,31 +1149,15 @@ function registerIpc(): void {
 
   // ── 文档登记表：扫描 / 读 / 写 / 补起草（per-成员仓）──
 
-  /** 把「新导入项目 → 进文档确认步」推给该项目当前绑定的所有窗口（首仓）。 */
-  function notifyDocumentsOnboard(project: Project): void {
-    const memberId = project.members[0]?.id
-    if (!memberId) return
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
-        win.webContents.send(IPC.documentsOnboard, memberId)
-      }
-    }
-  }
-
   /**
-   * 激活工作流的单一收口（所有激活路径共用）：设活动工作流 → 幂等播种其建议 leaf 类型 → **需求驱动文档扫描**。
-   * 扫描只在「被激活的工作流含 `archive-docs` 引擎节点、且首仓尚无登记表」时触发（方案 A：激活即扫）——含
-   * archive-docs 才需要登记表，无表才需扫。不含 archive-docs（兜底本地直合）或已有表 → 免扫。首仓缺失时视作
-   * 「有表」不触发。**不在此内 saveRegistry**——落盘交各调用点，保持既有行为。
+   * 激活工作流的单一收口（所有激活路径共用）：设活动工作流 → 幂等播种其建议 leaf 类型。
+   * **不在此内 saveRegistry**——落盘交各调用点，保持既有行为。
+   * 注：自动流的 archive-docs 归档配置现由 author 直接产出（据喂入的文档枚举分类），激活**不再触发**任何
+   * 文档扫描/onboarding（原 `needsDocScanOnActivate` 钩子已移除）。手搭工作流仍可回落文档登记表（设置里手动重扫）。
    */
   const activateWorkflow = (project: Project, workflowId: string | null, now: string): void => {
     setActiveWorkflowCore(registry, project.id, workflowId, now)
     if (workflowId) seedProjectCardTypes(registry, project.id, workflows.get(workflowId)?.suggestedTypes, now)
-    const def = workflowId ? workflows.get(workflowId) : null
-    const firstMember = project.members[0]?.id
-    if (needsDocScanOnActivate(def, !firstMember || documentStore.has(firstMember))) {
-      notifyDocumentsOnboard(project)
-    }
   }
 
   /** 全注册表范围找成员仓（窗口可能尚未绑定项目——onboarding 导入后立即扫）。 */
@@ -1335,7 +1319,7 @@ function registerIpc(): void {
     const project = findProjectById(registry, projectId)
     if (!project) return
     const now = new Date().toISOString()
-    // 单一收口：设活动工作流 + 幂等播种建议类型 + 需求驱动扫描（激活含 archive-docs 工作流且无登记表才扫）。
+    // 单一收口：设活动工作流 + 幂等播种建议类型（激活不再触发任何文档扫描/onboarding）。
     activateWorkflow(project, workflowId, now)
     saveRegistry()
   })
@@ -1392,11 +1376,17 @@ function registerIpc(): void {
     const addDirs = (findProjectById(registry, projectId)?.members ?? [])
       .map((m) => m.rootPath)
       .filter((p): p is string => !!p)
+    // 6.3-feed：廉价文档枚举（scanDocuments = 扫候选 + classify + **collapse 折叠**、走 .gitignore、**无 agent**）
+    // 追加进 author 意图——让 author 自己据此填 archive-docs 归档配置（剔项目自有归档已覆盖的、剩余分动态/快照），
+    // 免得它靠 --add-dir 自行发现文档（不可靠）。fs 调用留此处，格式化交纯函数 formatDocEnumForIntent。
+    // collapse 后是十几条紧凑文档（openspec/ 等折成一条），而非全项目数百文件——喂全量会撑爆/拖死 agent 调用。
+    const docPaths = addDirs.flatMap((root) => scanDocuments(root).map((d) => d.location)).slice(0, 80)
+    const intentWithDocs = intent + formatDocEnumForIntent(docPaths)
     return authorWorkflow(
       orchestrateDepsFor(projectId),
       orchestrateProducer(projectId, undefined, undefined, addDirs),
       projectId,
-      intent
+      intentWithDocs
     )
   }
 
@@ -1435,7 +1425,6 @@ function registerIpc(): void {
     assignDefault: (project) => {
       const now = new Date().toISOString()
       const id = seedDefaultLocalMergeWorkflow(workflows)
-      // 默认本地直合不含 archive-docs → activateWorkflow 的需求驱动扫描不触发（免扫，常见路径）。
       activateWorkflow(project, id, now)
       saveRegistry()
     },
@@ -1564,7 +1553,7 @@ function registerIpc(): void {
       const outcome = importProject(registry, chosen, serviceDeps)
       const pid = outcome.project.id
       // 激活 agent 选定的工作流并播种其建议类型——新项目由此拿到对应类型集（卡的 typeId 据此校验）。
-      // 走单一收口 activateWorkflow：若选定工作流含 archive-docs 且无登记表，一并触发需求驱动文档扫描。
+      // 走单一收口 activateWorkflow（激活不再触发文档扫描；archive-docs 归档配置由 author 产出）。
       if (workflowId && workflows.get(workflowId)) {
         activateWorkflow(outcome.project, workflowId, new Date().toISOString())
       }

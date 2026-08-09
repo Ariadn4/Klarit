@@ -5,7 +5,7 @@
  * 任何时刻项目不停在「无工作流」态。所有副作用经注入 deps（fs/registry/Electron 都在外），此核纯可单测。
  */
 
-import { ensureApprovalBeforeFinalization, lintWorkflow, workflowUsesArchiveDocs } from '../shared/workflow'
+import { ensureApprovalBeforeFinalization, lintWorkflow } from '../shared/workflow'
 import type { Localized } from '../shared/localized'
 import type { Project, WorkflowDefinition, WorkflowGenPhase, WorkflowProposal } from '../shared/types'
 import type { AuthorWorkflowResult } from './orchestrate-service'
@@ -29,6 +29,8 @@ export interface WorkflowNodeOverview {
   engineOperation?: string
   /** 该节点各门把种类（`auto`/`manual`/`external`），按序。 */
   gateKinds: string[]
+  /** `archive-docs` 引擎节点的归档文档配置（author 产出的 `{path,kind}` 清单），便于读日志核对产没产出。 */
+  archiveDocs?: { path: string; kind: string }[]
 }
 
 /** 工作流定义的紧凑概览：id/name + 节点数 + 逐节点执行者/门概览。 */
@@ -63,15 +65,19 @@ export interface WorkflowOnboardingLogRecord {
 }
 
 /**
- * 需求驱动文档扫描的**触发判据**（方案 A：激活即扫，纯函数便于单测）：一个含 `archive-docs` 引擎节点的
- * 工作流成为项目活动工作流、且该项目**尚无登记表**时，才需要扫描去 populate。不含 archive-docs（如兜底本地
- * 直合、opsx:archive agent 节点）或已有登记表 → 免扫。null/undefined def 安全回落 false。
+ * 廉价文档枚举 → 注入自动 author 意图（6.3-feed，纯函数便于单测）：把 `scanCandidates`（无 agent 的文件遍历）
+ * 列出的项目文档相对路径压成一段紧凑「项目文档清单」追加到 author 意图后——让 author 直接据此填 archive-docs
+ * 归档配置（剔除项目自有归档已覆盖的、剩余分 dynamic/snapshot），无需自己发现文档。去重、滤空白；全空→返回
+ * 空串（不追加任何段，保持原意图不变）。fs 调用留在 index.ts，本函数只做纯格式化。
  */
-export function needsDocScanOnActivate(
-  def: WorkflowDefinition | null | undefined,
-  hasRegistry: boolean
-): boolean {
-  return !!def && workflowUsesArchiveDocs(def) && !hasRegistry
+export function formatDocEnumForIntent(paths: string[]): string {
+  const unique = Array.from(new Set(paths.map((p) => p.trim()).filter((p) => p !== '')))
+  if (unique.length === 0) return ''
+  return [
+    '',
+    '项目文档清单（相对各成员仓根，供你据此填 archive-docs 归档配置，无需自己发现文档）：',
+    ...unique.map((p) => `- ${p}`)
+  ].join('\n')
 }
 
 /** 从项目取调试记录用的项目引用（id + 显示名）。 */
@@ -92,7 +98,12 @@ function buildOverview(def: WorkflowDefinition): WorkflowDefinitionOverview {
         executorKind: node.executor.kind,
         gateKinds: (node.gate ?? []).map((g) => g.kind)
       }
-      if (node.executor.kind === 'engine') overview.engineOperation = node.executor.operation
+      if (node.executor.kind === 'engine') {
+        overview.engineOperation = node.executor.operation
+        if (node.executor.operation === 'archive-docs' && node.executor.archiveDocs?.length) {
+          overview.archiveDocs = node.executor.archiveDocs.map((d) => ({ path: d.path, kind: d.kind }))
+        }
+      }
       return overview
     })
   }

@@ -5,6 +5,7 @@
  */
 
 import type {
+  ArchiveDocEntry,
   CardOp,
   CardTypeDef,
   ConversationMessage,
@@ -18,7 +19,7 @@ import type {
 import { validateOps } from '../shared/card-ops'
 import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { typeArchetypeMap, coerceToRegisteredType, DEFAULT_CARD_TYPES } from '../shared/card-type'
-import { buildAuthorWorkflowSkill, validateWorkflow, checkBranchPairing, repairWorkflow } from '../shared/workflow'
+import { buildAuthorWorkflowSkill, validateWorkflow, checkBranchPairing, repairWorkflow, buildScaffoldedWorkflow } from '../shared/workflow'
 import { resolveLocalized } from '../shared/localized'
 import { DEFAULT_LANGUAGE } from '../shared/language'
 
@@ -248,13 +249,15 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
           conversationId,
           history
         })
-      } catch {
+      } catch (e) {
         // producerFailed 标记「agent 调用抛错」，供无头 author 区分它与「跑通无产出」（见设计决策 #11）。
         // 加性/可选，聊天路径（runOrchestrateTurn）不受影响。
+        const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+        console.error('[orchestrate] produce 抛错:', e)
         return {
           ops: [],
           issues: [],
-          reply: '（未能产出提案：agent 调用失败或未配置默认 agent）',
+          reply: `（未能产出提案：agent 调用失败——${detail}）`,
           producerFailed: true
         }
       }
@@ -323,10 +326,56 @@ export async function authorWorkflow(
   if ('unbound' in outcome) return { proposal: null, failure: 'empty' }
   const proposal = outcome.workflow ?? null
   if (proposal) {
-    return { proposal, reply: outcome.reply, failure: proposal.issues.length > 0 ? 'invalid' : undefined }
+    // **固定脚手架规整**（仅自动路）：author 照旧产整份，此处确定性把它套到固定脚手架上——干活节点作
+    // 中间，脊柱/验收门/归档由 buildScaffoldedWorkflow 丢弃并以固定头/尾替换（顺序钉死：中间→验收门→归档
+    // →合并→清理），从结构上消灭脊柱排序问题（见 workflow-authoring）。聊天路（seam 直用）不经此，不受影响。
+    const normalized = normalizeOntoScaffold(proposal)
+    return { proposal: normalized, reply: outcome.reply, failure: normalized.issues.length > 0 ? 'invalid' : undefined }
   }
   if (outcome.producerFailed) return { proposal: null, reply: outcome.reply, failure: 'threw' }
   return { proposal: null, reply: outcome.reply, failure: 'empty' }
+}
+
+/**
+ * 推断脚手架变体：author 产出里含引擎 `open-pr` 操作 → `'pr'`（推分支 + 开 PR，合并在平台上发生），
+ * 否则 `'local-merge'`（本地直合）。纯结构判定，空/缺节点安全回落 `local-merge`。
+ */
+export function inferScaffoldVariant(def: WorkflowDefinition): 'local-merge' | 'pr' {
+  const hasOpenPr = (def?.nodes ?? []).some(
+    (n) => n.executor?.kind === 'engine' && n.executor.operation === 'open-pr'
+  )
+  return hasOpenPr ? 'pr' : 'local-merge'
+}
+
+/**
+ * 从 author 产出抽出**分类归档配置**：取**第一个**引擎 `archive-docs` 节点的 `executor.archiveDocs`
+ * （每条 `{ path, kind }`，缺省空数组）。规整时把它带进脚手架固定归档节点；无 archive-docs 节点或无配置
+ * → `[]`（运行期回落扫描登记表兜底）。纯函数。
+ */
+export function extractArchiveDocs(def: WorkflowDefinition): ArchiveDocEntry[] {
+  for (const n of def?.nodes ?? []) {
+    if (n.executor?.kind === 'engine' && n.executor.operation === 'archive-docs') {
+      return n.executor.archiveDocs ?? []
+    }
+  }
+  return []
+}
+
+/**
+ * 把 author 的整份产出**规整到固定脚手架**：推断变体、抽归档清单，将 author 的节点作 middle 喂给
+ * `buildScaffoldedWorkflow`（丢弃脊柱/验收门/归档、以固定头/尾替换），再经 `buildWorkflowProposal`
+ * （repairWorkflow + 两闸校验）重建提案。透传原 baseId。规整不可能产出 undefined（脚手架恒有骨架），
+ * 但兜底回原提案以防御。
+ */
+function normalizeOntoScaffold(proposal: WorkflowProposal): WorkflowProposal {
+  const authorDef = proposal.workflow
+  const normalizedDef = buildScaffoldedWorkflow(
+    inferScaffoldVariant(authorDef),
+    authorDef.nodes,
+    extractArchiveDocs(authorDef),
+    { id: authorDef.id, name: authorDef.name, suggestedTypes: authorDef.suggestedTypes }
+  )
+  return buildWorkflowProposal({ workflow: normalizedDef, baseId: proposal.baseId }) ?? proposal
 }
 
 /**

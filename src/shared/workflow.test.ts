@@ -19,7 +19,8 @@ import {
   buildAuthorWorkflowSkill,
   buildArchiveDelegation,
   repairWorkflow,
-  workflowUsesArchiveDocs
+  workflowUsesArchiveDocs,
+  buildScaffoldedWorkflow
 } from './workflow'
 
 function node(over: Partial<WorkflowNode> = {}): WorkflowNode {
@@ -342,6 +343,73 @@ describe('buildAuthorWorkflowSkill —— 不可逆固化前必有人工审批�
   it('这条以正向讲原因表达，不以负向禁止为主句式', () => {
     expect(skill).not.toContain('不要固化')
     expect(skill).not.toContain('禁止无人值守')
+  })
+})
+
+describe('buildAuthorWorkflowSkill —— 归档规范（正向、通用不点名）', () => {
+  const skill = buildAuthorWorkflowSkill()
+
+  it('教「尽量只一个文档归档节点」并讲清原因（集中一处、归档范围一目了然）', () => {
+    // 归档尽量收拢到单个归档节点，别散在多处。
+    expect(skill).toMatch(/一个文档归档节点|单个归档节点|尽量.*一个.*归档/)
+    // 讲原因：散多处难看清/易重复扫描，集中一处清晰。
+    expect(skill).toMatch(/集中|一目了然|散.*多处/)
+  })
+
+  it('教「优先用项目自己的归档/沉淀方式」并讲清原因', () => {
+    // 优先用项目自带的归档约定。
+    expect(skill).toMatch(/项目.*自己的归档|自己的归档|自己的.*沉淀/)
+    expect(skill).toMatch(/优先/)
+    // 讲原因：项目自带的最懂自己文档、比另起一套稳。
+    expect(skill).toMatch(/最懂|比另起.*稳|另起一套/)
+  })
+
+  it('措辞通用、绝不点名某个具体归档技能名', () => {
+    // 不写死具体技能名（如 opsx:archive 这类硬编技能调用名）。
+    expect(skill).not.toContain('opsx:archive')
+    expect(skill).not.toContain('archive-change')
+    // 用「项目自己的归档方式」这类通用措辞承载「优先项目自带」。
+    expect(skill).toMatch(/项目.*自己的归档方式|自己的归档 ?\/ ?沉淀|项目自带/)
+  })
+
+  it('教「项目归档没覆盖的文档，在 archive-docs 配置里列出」（免二次扫描）', () => {
+    expect(skill).toContain('archive-docs')
+    // 节点的文档配置字段。
+    expect(skill).toContain('archiveDocs')
+    // 没覆盖到的文档才列进配置。
+    expect(skill).toMatch(/没覆盖|未覆盖|覆盖不到/)
+    expect(skill).toMatch(/清单|列进|路径列|配置/)
+    // 讲原因：照配置直接归、省一次扫描。
+    expect(skill).toMatch(/二次|再扫描|免.*扫描|省.*扫描/)
+  })
+
+  it('教「据注入的项目文档枚举、剔除项目自有归档覆盖的、剩余分动态/快照，写进 archive-docs 分类配置」', () => {
+    // 用注入的项目文档枚举，无需自行发现文档。
+    expect(skill).toMatch(/文档枚举|项目文档.*列|给出.*文档.*清单|已给.*文档/)
+    // 剔除项目自有归档已覆盖的。
+    expect(skill).toMatch(/剔除|剩下|剩余/)
+    // 每条分动态/快照（分类配置 {path,kind}）。
+    expect(skill).toContain('dynamic')
+    expect(skill).toContain('snapshot')
+    expect(skill).toMatch(/就地更新|最新现状/)
+    expect(skill).toMatch(/冻结|追加/)
+    // 分类配置形状 {path, kind}。
+    expect(skill).toMatch(/path.*kind|\{ ?path/)
+    // 仍不点名具体归档技能。
+    expect(skill).not.toContain('opsx:archive')
+  })
+
+  it('教「归档不必自己挂门」并讲清原因（已在人工验收之后、可回退）', () => {
+    expect(skill).toMatch(/归档.*不.*挂门|归档.*不设门|不必.*为.*归档.*门|归档.*无需.*门/)
+    // 原因：已排在人工验收之后 / 提交到分支可回退。
+    expect(skill).toMatch(/验收.*之后|人工验收之后|排在.*验收后/)
+    expect(skill).toMatch(/可回退|随分支丢弃/)
+  })
+
+  it('这段以正向讲原因表达，不以负向禁止为主句式', () => {
+    expect(skill).not.toContain('不要用项目')
+    expect(skill).not.toContain('禁止多个归档')
+    expect(skill).not.toContain('禁止给归档挂门')
   })
 })
 
@@ -1324,5 +1392,150 @@ describe('migrateWorkflowShape', () => {
     const migrated = migrateWorkflowShape(old)
     expect(migrated.nodes[0].executor).toEqual({ kind: 'agent', instruction: { kind: 'inline', text: 'x' } })
     expect(validateWorkflow(migrated)).toEqual({ ok: true })
+  })
+})
+
+describe('buildScaffoldedWorkflow', () => {
+  const agent = (id: string): WorkflowNode => ({
+    id,
+    name: { zh: id },
+    stageId: 'whatever',
+    executor: { kind: 'agent', instruction: { kind: 'inline', text: `do ${id}` } },
+    outputs: []
+  })
+  const engineOp = (n: WorkflowNode): string | null =>
+    n.executor.kind === 'engine' ? n.executor.operation : null
+  const idx = (def: WorkflowDefinition, op: string): number =>
+    def.nodes.findIndex((n) => engineOp(n) === op)
+  const archiveNode = (def: WorkflowDefinition): WorkflowNode | undefined =>
+    def.nodes.find((n) => engineOp(n) === 'archive-docs')
+  const archiveDocs = (
+    n: WorkflowNode | undefined
+  ): { path: string; kind: 'dynamic' | 'snapshot' }[] | undefined =>
+    n && n.executor.kind === 'engine' ? n.executor.archiveDocs : undefined
+
+  it('local-merge：固定头 → middle → 验收门 → archive-docs(带分类配置) → 合并→推送→清理', () => {
+    const def = buildScaffoldedWorkflow('local-merge', [agent('spec'), agent('impl')], [
+      { path: 'README.md', kind: 'dynamic' },
+      { path: 'docs/adr.md', kind: 'snapshot' }
+    ])
+    // 固定头
+    expect(engineOp(def.nodes[0])).toBe('create-branch')
+    expect(engineOp(def.nodes[1])).toBe('open-worktree')
+    expect(engineOp(def.nodes[2])).toBe('link-env')
+    expect(def.nodes[0].stageId).toBe('prepare')
+    // middle 紧随头，归入实现段
+    expect(def.nodes[3].id).toBe('spec')
+    expect(def.nodes[4].id).toBe('impl')
+    expect(def.nodes[3].stageId).toBe('build')
+    expect(def.nodes[4].stageId).toBe('build')
+
+    // 验收门：command + manual，在 middle 之后、archive-docs 之前
+    const approvalIdx = def.nodes.findIndex((n) => (n.gate ?? []).some((g) => g.kind === 'manual'))
+    const archiveIdx = idx(def, 'archive-docs')
+    expect(approvalIdx).toBe(5)
+    expect(def.nodes[approvalIdx].executor.kind).toBe('command')
+
+    // 顺序钉死：middle → 验收门 → 归档 → 合并 → 清理
+    expect(approvalIdx).toBeLessThan(archiveIdx)
+    expect(archiveIdx).toBeLessThan(idx(def, 'merge-branch'))
+    expect(idx(def, 'merge-branch')).toBeLessThan(idx(def, 'remove-worktree'))
+    expect(idx(def, 'remove-worktree')).toBeLessThan(idx(def, 'delete-branch'))
+
+    // archive-docs 携带 author 产出的分类文档配置
+    expect(archiveDocs(archiveNode(def))).toEqual([
+      { path: 'README.md', kind: 'dynamic' },
+      { path: 'docs/adr.md', kind: 'snapshot' }
+    ])
+
+    // 两闸校验 + lint 干净
+    expect(validateWorkflow(def)).toEqual({ ok: true })
+    expect(checkBranchPairing(def)).toEqual({ ok: true })
+    expect(lintWorkflow(def)).toEqual([])
+
+    // 节点 id 唯一
+    const ids = def.nodes.map((n) => n.id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('pr 变体：push 需求分支(+人工评审) → open-pr(external pr-merged) → 清理，过两闸', () => {
+    const def = buildScaffoldedWorkflow('pr', [agent('impl')], [{ path: 'docs/a.md', kind: 'dynamic' }])
+    // PR 尾：有 push-branch 与 open-pr，无本地 merge-branch
+    expect(idx(def, 'open-pr')).toBeGreaterThanOrEqual(0)
+    expect(idx(def, 'merge-branch')).toBe(-1)
+    // open-pr 挂外部门 pr-merged
+    const pr = def.nodes.find((n) => engineOp(n) === 'open-pr')
+    expect(pr?.gate).toEqual([{ kind: 'external', verify: 'pr-merged' }])
+    // 归档在 push-branch(第一个固化)之前
+    expect(idx(def, 'archive-docs')).toBeLessThan(idx(def, 'push-branch'))
+    expect(idx(def, 'push-branch')).toBeLessThan(idx(def, 'open-pr'))
+    expect(idx(def, 'open-pr')).toBeLessThan(idx(def, 'remove-worktree'))
+
+    expect(validateWorkflow(def)).toEqual({ ok: true })
+    expect(checkBranchPairing(def)).toEqual({ ok: true })
+    expect(lintWorkflow(def)).toEqual([])
+  })
+
+  it('middle 混入脊柱节点（merge-branch）→ 装配丢弃，只保留尾部那一个', () => {
+    const stray: WorkflowNode = {
+      id: 'stray-merge',
+      name: { zh: 'stray' },
+      stageId: 'x',
+      executor: { kind: 'engine', operation: 'merge-branch' },
+      outputs: []
+    }
+    const def = buildScaffoldedWorkflow('local-merge', [agent('impl'), stray], [{ path: 'a.md', kind: 'dynamic' }])
+    const merges = def.nodes.filter((n) => engineOp(n) === 'merge-branch')
+    expect(merges.length).toBe(1) // 仅脚手架尾的那个
+    expect(def.nodes.some((n) => n.id === 'stray-merge')).toBe(false)
+    expect(validateWorkflow(def)).toEqual({ ok: true })
+  })
+
+  it('middle 混入带人工门的节点 → 丢弃（验收门属脚手架）', () => {
+    const strayGate: WorkflowNode = {
+      id: 'stray-review',
+      name: { zh: 'review' },
+      stageId: 'x',
+      executor: { kind: 'command', commands: [{ command: 'echo hi' }] },
+      outputs: [],
+      gate: [{ kind: 'manual', actions: [{ label: '看', command: 'git diff' }] }]
+    }
+    const def = buildScaffoldedWorkflow('local-merge', [agent('impl'), strayGate], [])
+    expect(def.nodes.some((n) => n.id === 'stray-review')).toBe(false)
+  })
+
+  it('variant 缺省 → 本地直合；archiveDocs 空 → archive-docs 节点无配置（回落兜底）', () => {
+    const def = buildScaffoldedWorkflow(undefined, [agent('impl')], [])
+    // 缺省本地直合：有 merge-branch、无 open-pr
+    expect(idx(def, 'merge-branch')).toBeGreaterThanOrEqual(0)
+    expect(idx(def, 'open-pr')).toBe(-1)
+    // archive-docs 节点存在但不带配置
+    const arch = archiveNode(def)
+    expect(arch).toBeDefined()
+    expect(archiveDocs(arch) ?? []).toEqual([])
+    expect(validateWorkflow(def)).toEqual({ ok: true })
+    expect(checkBranchPairing(def)).toEqual({ ok: true })
+    expect(lintWorkflow(def)).toEqual([])
+  })
+
+  it('middle 节点 id 与脚手架冲突 → 重命名保唯一', () => {
+    const def = buildScaffoldedWorkflow('local-merge', [agent('create-branch'), agent('archive-docs')], [])
+    const ids = def.nodes.map((n) => n.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    // 脊柱头/尾的对应引擎节点仍在
+    expect(idx(def, 'create-branch')).toBe(0)
+    expect(validateWorkflow(def)).toEqual({ ok: true })
+  })
+
+  it('meta 覆盖 id/name；缺省给合理值', () => {
+    const withMeta = buildScaffoldedWorkflow('local-merge', [agent('impl')], [], {
+      id: 'my-flow',
+      name: { zh: '我的流' }
+    })
+    expect(withMeta.id).toBe('my-flow')
+    expect(withMeta.name).toEqual({ zh: '我的流' })
+    const noMeta = buildScaffoldedWorkflow('local-merge', [agent('impl')], [])
+    expect(noMeta.id.length).toBeGreaterThan(0)
+    expect(validateWorkflow(noMeta)).toEqual({ ok: true })
   })
 })

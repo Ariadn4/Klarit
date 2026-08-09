@@ -290,10 +290,32 @@ export interface CommandSpec {
   timeoutSec?: number
 }
 
+/**
+ * `archive-docs` 节点携带的一条**分类文档配置**：文档路径 + 归档 kind——沿用 `ManagedDoc.kind` 语义
+ * （`dynamic`＝就地更新到最新现状、只留现状；`snapshot`＝冻结、只追加一条记录）。author 生成工作流时
+ * 据注入的项目文档枚举产出，替代原先「先扫描登记表再决定归哪些」的二次动作。
+ */
+export interface ArchiveDocEntry {
+  /** 待归档文档的相对分支目录路径。 */
+  path: string
+  /** 归档方式：`dynamic` 就地更新现状 / `snapshot` 冻结追加。 */
+  kind: 'dynamic' | 'snapshot'
+}
+
 /** 节点执行者（判别联合，每个节点恰一种）。 */
 export type NodeExecutor =
   | { kind: 'agent'; instruction: AgentInstruction; exec?: AgentExecConfig; structuredOutput?: AgentStructuredOutput }
-  | { kind: 'engine'; operation: string }
+  | {
+      kind: 'engine'
+      operation: string
+      /**
+       * 仅对 `archive-docs` 操作有意义：author 生成工作流时产出的、该由本节点归档的**分类文档配置**
+       * （每条 `{ path, kind }`，`path` 为相对分支目录路径、`kind` 为动态/快照）。带配置时
+       * `runArchiveDocsNode` **按此配置归档**（按 kind 路由动态就地更新 / 快照追加）、不读文档扫描登记表；
+       * 无此字段（或空）时回落到既有行为（读 `demand-driven-doc-scan` 登记表兜底）。见 document-archive。
+       */
+      archiveDocs?: ArchiveDocEntry[]
+    }
   | {
       kind: 'command'
       /** 一条或多条命令；引擎并发跑全部，各自分桶/检查/超时/detach/中止。至少一条（见校验）。 */

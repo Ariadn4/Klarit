@@ -123,30 +123,22 @@ UI MUST 遵 `docs/brand`：仅用语义令牌（`bg-canvas`/`bg-paper`/`text-ink
 
 ### Requirement: 文档扫描/onboarding 改为需求驱动(含 archive-docs 的工作流激活才扫)
 
-因文档登记表运行时**只被 `archive-docs` 引擎操作消费**,系统 SHALL 把文档扫描/onboarding 的触发改为**需求驱动**:MUST NOT 在首次导入时无条件跑扫描/弹 onboarding;而在**一个含 `archive-docs` 节点的工作流成为项目活动工作流**、且该项目**尚无文档登记表**时,SHALL 触发文档扫描/onboarding 去 populate 登记表。判「工作流是否含 archive-docs」为纯结构(存在 `executor.kind==='engine' && operation==='archive-docs'` 的节点)。所有工作流激活路径(采纳自动提案 / 聊天产出 / 设置选定 / 兜底默认)SHALL 走同一收口(`setActiveWorkflow`)统一判定。兜底默认(本地直合)不含 archive-docs,故常见路径**免扫**。用户仍可经设置**手动重扫**(不受需求驱动限制)。
+因自动 author 现**在生成工作流时直接产出 `archive-docs` 的分类文档配置**(见 `workflow-authoring`「自动 author 被喂项目文档枚举、产出 archive-docs 分类配置」),自动流的 archive-docs 节点**恒带配置、按配置归档**,故**激活时不再触发任何文档扫描/分析 agent**——系统 SHALL **移除**激活工作流时的 demand-driven 文档扫描触发(`activateWorkflow` 里的扫描钩子)。首次导入仍不无条件扫(既有)。
 
-#### Scenario: 激活含 archive-docs 工作流且无登记表 → 触发扫描
+archive-docs 归档**只凭节点自带配置**(author 产出或用户在节点详情里填),无配置即 no-op 不归档、**不再回落登记表**。文档扫描/分析(`analyzeDocuments`)与登记表 store SHALL **保留代码但不再被 archive-docs 消费**(自动流不碰、archive-docs 不回落);设置里手动重扫仍可跑(只是产物无人消费)。整套子系统的彻底移除留待后续单独 change。
 
-- **WHEN** 一个含 `archive-docs` 节点的工作流被设为项目活动工作流,且该项目尚无文档登记表
-- **THEN** 系统触发文档扫描/onboarding 去 populate 登记表
+#### Scenario: 自动流激活含 archive-docs 工作流 → 不触发扫描
 
-#### Scenario: 工作流不含 archive-docs → 不扫
+- **WHEN** 采纳/激活一个自动生成的、archive-docs 带 author 配置的工作流
+- **THEN** 系统不触发任何文档扫描/分析 agent(配置已随工作流产出)
 
-- **WHEN** 被激活的工作流(如兜底默认、或用 `opsx:archive` 的 opsx 流)不含引擎 `archive-docs` 节点
-- **THEN** 系统不触发文档扫描
-
-#### Scenario: 已有登记表 → 不重复扫
-
-- **WHEN** 激活含 archive-docs 的工作流,但项目已有文档登记表
-- **THEN** 不重复触发扫描(已 populate)
-
-#### Scenario: 首次导入不再无条件扫
-
-- **WHEN** 首次导入一个项目
-- **THEN** 系统不再无条件弹文档 onboarding / 跑 analyze;是否扫由后续「工作流激活」需求驱动决定
-
-#### Scenario: 手动重扫保留
+#### Scenario: 手动重扫仍可跑(产物无人消费)
 
 - **WHEN** 用户在文档登记表设置里点「重扫」
-- **THEN** 照常触发扫描,不受需求驱动限制
+- **THEN** 照常触发扫描(代码保留),但其产物不再被 archive-docs 消费
+
+#### Scenario: 手搭 archive-docs 无配置 → 不归档
+
+- **WHEN** 用户手搭一个含 archive-docs 但无配置的工作流并运行到该节点
+- **THEN** 节点作 no-op 不归档,不回落登记表
 

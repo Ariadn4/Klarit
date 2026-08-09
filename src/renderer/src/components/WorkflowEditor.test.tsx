@@ -64,9 +64,9 @@ describe('WorkflowEditor 草稿态（initialDef）', () => {
     expect(getWorkflow).not.toHaveBeenCalled()
   })
 
-  const footerLabels = { close: '关闭', save: '保存为正式工作流', update: '更新工作流', setActive: '设置为本项目工作流', setActiveConfirm: '确认？' }
+  const footerLabels = { close: '关闭', save: '保存为正式工作流', update: '更新工作流', saveAndActive: '保存并设为本项目工作流' }
 
-  it('chromeless「设置为本项目工作流」只在保存为正式后出现；确认 → 保存后激活', async () => {
+  it('chromeless 未激活：主按钮「保存并设为本项目工作流」一键保存并激活（无二次确认）', async () => {
     const saveWorkflow = vi.fn(async (_def: WorkflowDefinition) => ({ ok: true }) as WorkflowValidation)
     const onSetActive = vi.fn(async (_id: string) => {})
     installKlarit({ saveWorkflow })
@@ -75,38 +75,43 @@ describe('WorkflowEditor 草稿态（initialDef）', () => {
       <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
     )
     await screen.findByDisplayValue('草稿流')
-    // 未保存前：不显「设置为本项目工作流」
+    // 无独立「设置为本项目工作流」按钮、无「保存为正式工作流」按钮——合并成一个主按钮
     expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
-    // 保存为正式后出现
-    await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
-    await userEvent.click(await screen.findByRole('button', { name: '设置为本项目工作流' }))
-    // 二次确认 → 确定 → 激活（保存已发生）
-    await userEvent.click(screen.getByRole('button', { name: '确定' }))
+    expect(screen.queryByRole('button', { name: '保存为正式工作流' })).not.toBeInTheDocument()
+    // 一键：点主按钮 → 先保存入库、再激活（无二次确认）
+    await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
+    await waitFor(() => expect(saveWorkflow).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(onSetActive).toHaveBeenCalledWith('draft-x'))
   })
 
-  it('chromeless「设置为本项目工作流」取消 → 不激活', async () => {
+  it('chromeless 保存校验不过 → 不激活', async () => {
+    const saveWorkflow = vi.fn(async (_def: WorkflowDefinition) => ({ ok: false, reason: '不合法' }) as WorkflowValidation)
     const onSetActive = vi.fn(async (_id: string) => {})
-    installKlarit()
+    installKlarit({ saveWorkflow })
     const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
     render(
-      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless alreadySaved footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
     )
     await screen.findByDisplayValue('草稿流')
-    // alreadySaved → 直接显该按钮
-    await userEvent.click(screen.getByRole('button', { name: '设置为本项目工作流' }))
-    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
+    await waitFor(() => expect(saveWorkflow).toHaveBeenCalledTimes(1))
     expect(onSetActive).not.toHaveBeenCalled()
   })
 
-  it('chromeless isActive：已是激活工作流 → 不显「设置为本项目工作流」（即便已保存）', async () => {
-    installKlarit()
+  it('chromeless isActive：已是激活工作流 → 主按钮仅「更新工作流」、点击只保存不激活', async () => {
+    const saveWorkflow = vi.fn(async (_def: WorkflowDefinition) => ({ ok: true }) as WorkflowValidation)
+    const onSetActive = vi.fn(async (_id: string) => {})
+    installKlarit({ saveWorkflow })
     const draft: WorkflowDefinition = { ...fixture(), id: 'draft-x', name: { zh: '草稿流' } }
     render(
-      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless alreadySaved isActive footerLabels={footerLabels} onSetActive={() => {}} others={[]} onClose={() => {}} onSaved={() => {}} />
+      <WorkflowEditor workflowId="draft-x" initialDef={draft} chromeless isActive footerLabels={footerLabels} onSetActive={onSetActive} others={[]} onClose={() => {}} onSaved={() => {}} />
     )
     await screen.findByDisplayValue('草稿流')
-    expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
+    // 已激活：不显「保存并设为本项目工作流」，主按钮是「更新工作流」
+    expect(screen.queryByRole('button', { name: '保存并设为本项目工作流' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '更新工作流' }))
+    await waitFor(() => expect(saveWorkflow).toHaveBeenCalledTimes(1))
+    expect(onSetActive).not.toHaveBeenCalled()
   })
 
   it('chromeless libraryFirst：库里读不到（已删）→ 回落草稿，不卡加载中', async () => {
@@ -467,6 +472,106 @@ describe('节点设置块按执行者能力呈现', () => {
     expect(screen.queryByRole('button', { name: /加可写路径/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '加产出' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '加检查项' })).not.toBeInTheDocument()
+  })
+})
+
+/** 一个引擎操作 archive-docs 的节点（带/不带 archiveDocs 由参数控制）。 */
+function archiveDocsFixture(archiveDocs?: Array<{ path: string; kind: 'dynamic' | 'snapshot' }>): WorkflowDefinition {
+  return {
+    id: 'wf',
+    name: { zh: '流程A' },
+    description: {},
+    stages: [{ id: 's1', name: { zh: '开发' } }],
+    nodes: [
+      {
+        id: 'ar',
+        name: { zh: '归档文档' },
+        stageId: 's1',
+        executor: { kind: 'engine', operation: 'archive-docs', ...(archiveDocs ? { archiveDocs } : {}) },
+        outputs: []
+      }
+    ]
+  }
+}
+
+describe('WorkflowEditor archive-docs 归档文档清单', () => {
+  it('archive-docs 节点逐条展示路径 + 动态/快照，可编辑', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => archiveDocsFixture([{ path: 'README.md', kind: 'dynamic' }])) })
+    renderEditor()
+    await enterNode('归档文档')
+    expect(screen.getByText('归档文档清单')).toBeInTheDocument()
+    expect(screen.getByLabelText('归档文档路径 1')).toHaveValue('README.md')
+    expect(screen.getByLabelText('归档方式 1')).toHaveValue('dynamic')
+  })
+
+  it('加文档：追加一条新条目', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => archiveDocsFixture([{ path: 'README.md', kind: 'dynamic' }])) })
+    renderEditor()
+    await enterNode('归档文档')
+    expect(screen.queryByLabelText('归档文档路径 2')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '加文档' }))
+    expect(screen.getByLabelText('归档文档路径 2')).toBeInTheDocument()
+    expect(screen.getByLabelText('归档方式 2')).toHaveValue('dynamic')
+  })
+
+  it('切换 kind：改动态为快照更新草稿', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => archiveDocsFixture([{ path: 'README.md', kind: 'dynamic' }])) })
+    renderEditor()
+    await enterNode('归档文档')
+    await userEvent.selectOptions(screen.getByLabelText('归档方式 1'), 'snapshot')
+    expect(screen.getByLabelText('归档方式 1')).toHaveValue('snapshot')
+  })
+
+  it('删除条目：移除该行', async () => {
+    installKlarit({
+      getWorkflow: vi.fn(async () =>
+        archiveDocsFixture([
+          { path: 'README.md', kind: 'dynamic' },
+          { path: 'CHANGELOG.md', kind: 'snapshot' }
+        ])
+      )
+    })
+    renderEditor()
+    await enterNode('归档文档')
+    expect(screen.getByLabelText('归档文档路径 2')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '删除归档文档 1' }))
+    // 删首条后只剩一行，第二行不再存在
+    expect(screen.getByLabelText('归档文档路径 1')).toHaveValue('CHANGELOG.md')
+    expect(screen.queryByLabelText('归档文档路径 2')).not.toBeInTheDocument()
+  })
+
+  it('改路径：更新草稿', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => archiveDocsFixture([{ path: 'README.md', kind: 'dynamic' }])) })
+    renderEditor()
+    await enterNode('归档文档')
+    const input = screen.getByLabelText('归档文档路径 1')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'docs/spec.md')
+    expect(input).toHaveValue('docs/spec.md')
+  })
+
+  it('空配置：显示空态提示（不提登记表），而非什么都不显示', async () => {
+    installKlarit({ getWorkflow: vi.fn(async () => archiveDocsFixture()) })
+    renderEditor()
+    await enterNode('归档文档')
+    expect(screen.getByText('归档文档清单')).toBeInTheDocument()
+    expect(screen.getByText('尚未指定要归档的文档。')).toBeInTheDocument()
+    expect(screen.queryByLabelText('归档文档路径 1')).not.toBeInTheDocument()
+  })
+
+  it('非 archive-docs 引擎节点：不显示归档文档清单块', async () => {
+    renderEditor()
+    await enterNode()
+    await userEvent.selectOptions(screen.getByLabelText('执行者类型'), 'engine')
+    await userEvent.selectOptions(screen.getByLabelText('引擎操作'), 'create-branch')
+    expect(screen.queryByText('归档文档清单')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '加文档' })).not.toBeInTheDocument()
+  })
+
+  it('非引擎（agent）节点：不显示归档文档清单块', async () => {
+    renderEditor()
+    await enterNode()
+    expect(screen.queryByText('归档文档清单')).not.toBeInTheDocument()
   })
 })
 

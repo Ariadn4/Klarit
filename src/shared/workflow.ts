@@ -2,6 +2,7 @@
 
 import type {
   AgentInstruction,
+  ArchiveDocEntry,
   DocRegistry,
   ExternalVerify,
   GateCheck,
@@ -220,6 +221,22 @@ auto 门是「命令**退出码 0 才放行**」，**没有「反着判」**。�
 ## 不可逆固化前，必有一道人工审批门（硬要求）
 
 把改动**合并回主干**、**推送**到远端、对外**开 PR** 这类**不可逆固化**，一旦做了就难以收回。所以在任何这类固化动作**之前，必须**有一道人工审批门（\`manual\`，可弹决策、可驳回）让**人来把最后一关**——满意才固化。这是产品底线，**不因项目"自主/无人值守"地运转就省**掉这道门：越是让流程自动往下跑，越要在离开可回退区的那一步留一个人拍板。（这道审批门就落成上面讲的 \`manual\` 门，别用只是叫「验收」实则跑命令/跑 agent 的普通节点顶替——那不会真的等人。）
+
+## 归档：尽量一个归档节点，优先项目自己的归档方式
+
+把本次任务该沉淀的内容归档，**尽量只放一个文档归档节点**。归档集中在一处，「哪些文档会被动到」就一目了然、也不会几处归档各扫一遍、彼此打架；散在多处反而看不清、易重复。
+
+**项目若有自己的归档 / 沉淀文档的约定，优先用它**——项目自带的方式最懂自己的文档该怎么续写、往哪归，比你另起一套稳。（例如项目自带某个负责归档收尾的技能或流程，就走它，按上面「已装技能」的办法按名引用即可；至于叫什么名字、怎么归，运行时 agent 自己清楚，你不必替它写死。）
+
+项目自己的归档**没覆盖到的文档**，就在 \`archive-docs\` 节点的**分类文档配置**里（\`executor.archiveDocs\`）把它们列出来。下方会给你一份**项目文档枚举**（系统已廉价遍历列好，你无需自己去发现文档）；据它这样产出配置：
+
+- 先**剔除**项目自己的归档方式已经覆盖的那些文档（那部分交给项目自带的方式归，别重复归）；
+- **剩下的**每个文档判一个 kind：\`dynamic\`（就地更新到最新现状、只留现状）或 \`snapshot\`（冻结、只往后追加一条记录）；
+- 列成 \`[{ "path": "相对路径", "kind": "dynamic" | "snapshot" }]\` 写进该节点的 \`archiveDocs\`。
+
+这样归档直接照这份分类配置把文档归到位，省掉「先扫描登记表、再决定归哪些」这一次二次动作——配置已经指明路径与归法，无需再扫描。
+
+**归档不必自己挂门**：归档只是把文档提交到特性分支 / worktree，合入前驳回即随分支丢弃、**可回退**，且它本就排在人工验收**之后**（那道验收门已经把关）。所以别再单独为归档设一道门，直接把归档节点摆在交付段收尾即可。
 
 ## agent 节点：用「已装技能」而不是臆造
 
@@ -825,6 +842,135 @@ export function createRealPrWorkflow(id: string): WorkflowDefinition {
       engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
       engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
     ]
+  }
+}
+
+// ── 固定脚手架装配（固定头 + LLM 中间 + 固定尾） ─────────────────────────────
+
+/** 脊柱引擎操作集：这些属脚手架（头/尾），middle 里误产的一律丢弃（含旧复合别名）。 */
+const SCAFFOLD_SPINE_OPS: ReadonlySet<string> = new Set<string>([
+  ...ENGINE_OPERATIONS,
+  LEGACY_DELETE_BRANCH_WORKTREE
+])
+
+/** middle 节点是否属脊柱（须丢弃）：引擎脊柱操作，或挂了人工门（验收门属脚手架固定槽）。 */
+function isSpineMiddleNode(n: WorkflowNode): boolean {
+  if (n.executor?.kind === 'engine' && SCAFFOLD_SPINE_OPS.has(n.executor.operation)) return true
+  return (n.gate ?? []).some((g) => g.kind === 'manual')
+}
+
+/** 脚手架固定头：建分支→开 worktree→关联环境（准备段，所有变体同）。 */
+function scaffoldHead(): WorkflowNode[] {
+  return [
+    engineNode('create-branch', L('建分支', 'Create branch'), 'prepare', 'create-branch'),
+    engineNode('open-worktree', L('开 worktree', 'Open worktree'), 'prepare', 'open-worktree'),
+    engineNode('link-env', L('关联环境', 'Link env'), 'prepare', 'link-env')
+  ]
+}
+
+/** 脚手架固定的合并前人工验收门（command + manual，复用默认工作流 review-before-merge 写法）。 */
+function scaffoldApprovalGate(): WorkflowNode {
+  return {
+    id: 'review-before-merge',
+    name: L('合并前审批', 'Approve before merge'),
+    stageId: 'deliver',
+    executor: {
+      kind: 'command',
+      commands: [
+        { command: `node -e "console.log('待审批：查看本卡改动，满意就通过归档并固化，不满意可驳回打回改')"` }
+      ]
+    },
+    outputs: [],
+    gate: [{ kind: 'manual', actions: [{ label: '查看改动', command: 'git diff' }] }]
+  }
+}
+
+/**
+ * 脚手架固定的归档节点（archive-docs），携带 author 产出的**分类文档配置**（存于 engine executor 的
+ * `archiveDocs`，每条 `{ path, kind }`）。配置为空 → 不带字段，运行期回落到扫描登记表兜底（见 document-archive）。
+ * 路径非法（`path` 不合规）的条目过滤掉。
+ */
+function scaffoldArchiveNode(archiveDocs: ArchiveDocEntry[]): WorkflowNode {
+  const entries = archiveDocs.filter((d) => d && isSafeRelativePath(d.path))
+  const executor: Extract<NodeExecutor, { kind: 'engine' }> = { kind: 'engine', operation: 'archive-docs' }
+  if (entries.length) executor.archiveDocs = entries
+  return { id: 'archive-docs', name: L('归档文档', 'Archive docs'), stageId: 'deliver', executor, outputs: [] }
+}
+
+/**
+ * 脚手架固定尾（交付段）：验收门 → 归档 → 合并/收尾（按变体）→ 清理。
+ * - `local-merge`：merge-branch → push-branch(推主干) → remove-worktree → delete-branch。
+ * - `pr`：push-branch(需求分支,挂人工评审) → open-pr(挂外部门 pr-merged) → remove-worktree → delete-branch（不本地合并）。
+ */
+function scaffoldTail(variant: 'local-merge' | 'pr', archiveDocs: ArchiveDocEntry[]): WorkflowNode[] {
+  const front = [scaffoldApprovalGate(), scaffoldArchiveNode(archiveDocs)]
+  if (variant === 'pr') {
+    return [
+      ...front,
+      engineNode('push-feature', L('push 需求分支', 'Push feature branch'), 'deliver', 'push-branch', [
+        { kind: 'manual', actions: [{ label: '查看分支提交', command: 'git log --oneline -10' }] }
+      ]),
+      engineNode('open-pr', L('开 PR/MR', 'Open PR/MR'), 'deliver', 'open-pr', [
+        { kind: 'external', verify: 'pr-merged' }
+      ]),
+      engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
+      engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
+    ]
+  }
+  return [
+    ...front,
+    engineNode('merge-branch', L('合并分支', 'Merge branch'), 'deliver', 'merge-branch'),
+    engineNode('push-main', L('推送主干', 'Push main'), 'deliver', 'push-branch'),
+    engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
+    engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
+  ]
+}
+
+/**
+ * **固定脚手架装配器**（纯函数，shared）——把 **固定头**（建分支/开 worktree/关联环境）+ **LLM 生成的中间干活段** +
+ * **固定尾**（人工验收门 → 归档 archive-docs(带清单) → 合并/收尾/清理，按 `variant`）拼成一份完整合法
+ * `WorkflowDefinition`。顺序**钉死**：中间 → 验收门 → 归档 → 合并 → 清理，排序问题从结构上消失（见 design）。
+ *
+ * - `variant`：`'local-merge'`（本地直合，缺省）或 `'pr'`（推分支+开 PR，合并在平台上发生）。缺省/未知 → 本地直合。
+ * - `middle`：中间纯干活节点（agent/command）。**脊柱类**（引擎分支/合并/推送/清理/归档等）与**带人工门**的节点被
+ *   丢弃（那些属脚手架，比照 repairWorkflow 丢非法节点）；保留节点 stageId 一律归 `build`、id 冲突则重命名保唯一。
+ * - `archiveDocs`：author 产出的、该由 archive-docs 归档的**分类文档配置** `{ path, kind }[]`（可空；空则归档节点
+ *   不带配置、运行期回落扫描登记表）。
+ * - `meta`：可选覆盖 `id` / `name` / `suggestedTypes`（缺省给合理值 / DEFAULT_CARD_TYPES）。
+ *
+ * 结果必过 `validateWorkflow` + `checkBranchPairing`，且 `lintWorkflow` 无「固化步骤前缺人工验收」告警
+ * （固定验收门在归档与所有固化之前）。
+ */
+export function buildScaffoldedWorkflow(
+  variant: 'local-merge' | 'pr' | undefined,
+  middle: WorkflowNode[],
+  archiveDocs: ArchiveDocEntry[],
+  meta: { id?: string; name?: Localized; suggestedTypes?: WorkflowDefinition['suggestedTypes'] } = {}
+): WorkflowDefinition {
+  const v = variant === 'pr' ? 'pr' : 'local-merge'
+  const head = scaffoldHead()
+  const tail = scaffoldTail(v, Array.isArray(archiveDocs) ? archiveDocs : [])
+  // 脚手架头/尾的 id 先占位，middle 的 id 须避开它们与彼此。
+  const usedIds = new Set<string>([...head, ...tail].map((n) => n.id))
+  const cleanMiddle: WorkflowNode[] = []
+  let seq = 0
+  for (const n of Array.isArray(middle) ? middle : []) {
+    if (!n || typeof n !== 'object' || isSpineMiddleNode(n)) continue
+    let id = nonEmpty(n.id) ? n.id : ''
+    if (id === '' || usedIds.has(id)) {
+      do {
+        id = `work-${++seq}`
+      } while (usedIds.has(id))
+    }
+    usedIds.add(id)
+    cleanMiddle.push({ ...n, id, stageId: 'build' })
+  }
+  return {
+    id: nonEmpty(meta.id) ? meta.id : 'scaffolded-workflow',
+    name: meta.name && hasAnyLanguage(meta.name) ? meta.name : L('自动装配工作流', 'Scaffolded workflow'),
+    suggestedTypes: meta.suggestedTypes ?? DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
+    stages: DEFAULT_STAGES.map((s) => ({ ...s })),
+    nodes: [...head, ...cleanMiddle, ...tail]
   }
 }
 

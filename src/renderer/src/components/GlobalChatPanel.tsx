@@ -116,13 +116,11 @@ export function WorkflowPreviewModal(): React.JSX.Element | null {
           initialDef={def}
           libraryFirst={alreadySaved}
           chromeless
-          alreadySaved={alreadySaved}
           footerLabels={{
             close: t('globalChat.workflowClose'),
             save: t('globalChat.workflowSaveFormal'),
             update: t('globalChat.workflowUpdate'),
-            setActive: t('globalChat.workflowSetActive'),
-            setActiveConfirm: t('globalChat.workflowSetActiveConfirm')
+            saveAndActive: t('globalChat.workflowSaveAndActive')
           }}
           isActive={def.id === activeWorkflowId}
           onSetActive={async (id) => {

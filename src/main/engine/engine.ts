@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type {
   AgentHandshake,
+  ArchiveDocEntry,
   DecisionResponse,
   CommandSpec,
   DocRegistry,
@@ -28,7 +29,7 @@ import type {
   WorkflowDefinition,
   WorkflowNode
 } from '../../shared/types'
-import { buildArchiveDelegation } from '../../shared/workflow'
+import { isSafeRelativePath } from '../../shared/workflow'
 import type { EffortLevel } from '../../shared/agents'
 import type { RulePackItemRef } from '../../shared/rule-pack'
 import { resolveLocalized } from '../../shared/localized'
@@ -272,7 +273,6 @@ export function createEngine(deps: EngineDeps): Engine {
   const prepareAgent = deps.prepareAgent
   const prepareHealAgent = deps.prepareHealAgent
   const handshakeDir = deps.handshakeDir ?? join(tmpdir(), 'klarit-handshakes')
-  const getDocRegistry = deps.getDocRegistry ?? ((): DocRegistry | null => null)
   const supportsSubagents = deps.supportsSubagents ?? ((): boolean => false)
   /** heal / 处置 agent 的自愈上限（复用 agent 自愈上限）。 */
   const MAX_HEAL = MAX_AGENT_HEAL
@@ -978,51 +978,42 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
-   * `archive-docs` 执行:读各涉及成员仓的文档登记表 → 兜底判定 → 委派 agent 按 kind 归档 → **提交**(scopeGuard)。
-   * 返回 `'noop'`(空表,过节点、不算失败) / `'paused'` / `'decided'`(挂起) / `'heal'`(续接重跑) / `'done'`。
-   * 与 open-pr 不同:commitChanges 缺省(=真),文档改动被提交而非丢弃;并把登记表文档位置注入 writableScope,
-   * 使提交收窄到这些文档、越界改动被还原(「只碰这些文档」)。多仓:同一 agent 跨仓,scopeGuard 逐仓各自提交。
+   * `archive-docs` 执行:全凭节点自带的**分类文档配置**(engine executor 的 archiveDocs,每条 {path,kind})——
+   * 委派 agent 按 kind 归档(动态就地更新 / 快照追加) → **提交**(scopeGuard);**不读扫描登记表、不触发文档分析 agent**。
+   * 返回 `'noop'`(无配置,过节点、不算失败) / `'paused'` / `'decided'`(挂起) / `'heal'`(续接重跑) / `'done'`。
+   * 与 open-pr 不同:commitChanges 缺省(=真),文档改动被提交而非丢弃;并把配置里的路径注入 writableScope,
+   * 使提交收窄到这些文档、越界改动被还原(「只碰这些文档」)。
    */
   async function runArchiveDocsNode(
     bp: RunBreakpoint,
     node: WorkflowNode,
     a: Active
   ): Promise<'noop' | 'paused' | 'decided' | 'heal' | 'done'> {
-    const memberIds = resolveTargetMembers(bp, node)
-    // 逐涉及成员仓读各自登记表:null = 从未建表。
-    const regs = memberIds.map((id) => ({ id, reg: getDocRegistry(id) }))
-    const established = regs.filter((r): r is { id: string; reg: DocRegistry } => r.reg !== null)
-    // 无一成员仓建过登记表 → 挂起提示先建表(比照 open-pr 失败路由)。
-    if (established.length === 0) {
-      raiseDecision(
-        bp,
-        buildFailureDecision(node.id, nodeLabel(node), 'archive-docs', 'no-registry', '当前成员仓尚未建立文档登记表,请先在设置/onboarding 里建立登记表再归档')
-      )
-      return 'decided'
+    // 节点自带 author 产出的**分类文档配置**（engine executor 的 archiveDocs，每条 {path,kind}）→ 按 kind 归档、
+    // **不读扫描登记表**（归档不触发文档扫描）；无配置时不归档(no-op),不再回落登记表(doc-scan 已不作归档来源)。
+    const authored: ArchiveDocEntry[] =
+      node.executor.kind === 'engine'
+        ? (node.executor.archiveDocs ?? []).filter((d) => isSafeRelativePath(d?.path))
+        : []
+    if (authored.length > 0) {
+      // 有配置但无可用 agent → 终局失败挂起（no-agent，比照登记表路）。
+      if (!prepareAgent) {
+        raiseDecision(
+          bp,
+          buildFailureDecision(node.id, nodeLabel(node), 'archive-docs', 'no-agent', '未配置可用的默认 agent,无法归档文档')
+        )
+        return 'decided'
+      }
+      const subagents = supportsSubagents()
+      const delegation = buildArchiveDelegationFromEntries(authored, { subagents })
+      // 可写范围 = author 配置里的路径（去重、安全相对过滤；收窄提交、还原越界；不读登记表）。
+      const writableScope = Array.from(new Set(authored.map((d) => d.path)))
+      return runAgentNode(bp, archiveDocsAgentNode(node, delegation, writableScope), a)
     }
-    // 有表但全空 → 无可归档,noop 过节点(不算失败、不委派 agent、不提交)。
-    const withDocs = established.filter((r) => r.reg.docs.length > 0)
-    if (withDocs.length === 0) {
-      emit({ kind: 'op-output', runId: bp.runId, nodeId: node.id, outcome: 'noop', detail: '' })
-      return 'noop'
-    }
-    // 有可归档但无可用 agent → 终局失败挂起(no-agent,比照 open-pr)。
-    if (!prepareAgent) {
-      raiseDecision(
-        bp,
-        buildFailureDecision(node.id, nodeLabel(node), 'archive-docs', 'no-agent', '未配置可用的默认 agent,无法归档文档')
-      )
-      return 'decided'
-    }
-    // 合成委派指令:单仓直接用其登记表;多仓逐仓分节(各带仓标签),让同一 agent 在各自 worktree 各归各仓。
-    const subagents = supportsSubagents()
-    const delegation =
-      withDocs.length === 1
-        ? buildArchiveDelegation(withDocs[0].reg, { subagents })
-        : withDocs.map((r) => buildArchiveDelegation(r.reg, { subagents, repoLabel: r.id })).join('\n\n———\n\n')
-    // 可写范围 = 各仓登记表文档位置之并(收窄提交、还原越界);跨仓路径互不干扰(各仓只出现自己的路径)。
-    const writableScope = Array.from(new Set(withDocs.flatMap((r) => r.reg.docs.map((d) => d.location))))
-    return runAgentNode(bp, archiveDocsAgentNode(node, delegation, writableScope), a)
+    // 节点无配置(缺省/空清单) → 不归档(no-op),节点照常收尾:不读扫描登记表、不委派 agent、不提交。
+    // 归档全凭节点自带的配置(author 产出或用户在节点详情里填);不再回落登记表(doc-scan 已不作为归档来源)。
+    emit({ kind: 'op-output', runId: bp.runId, nodeId: node.id, outcome: 'noop', detail: '' })
+    return 'noop'
   }
 
   /** trim + 去空行地把 git 输出切成行。 */
@@ -1582,8 +1573,8 @@ export function createEngine(deps: EngineDeps): Engine {
           const gates = node.gate ?? []
           setPhase(bp, node, gates.length ? { kind: 'gate', index: 0 } : { kind: 'done' })
         } else if (node.executor.kind === 'engine' && opOf(node) === 'archive-docs') {
-          // 平台预制节点,内部委派 agent:读各涉及成员仓的文档登记表,按习惯把本次内容归档到位并**提交**
-          // (与 open-pr 的丢弃改动相反)。缺表挂起提示建表、无 agent 挂起、空表 noop 过。
+          // 平台预制节点,内部委派 agent:按节点自带的分类文档配置把本次内容归档到位并**提交**
+          // (与 open-pr 的丢弃改动相反)。有配置无 agent 挂起、无配置 noop 过(不读扫描登记表)。
           const r = await runArchiveDocsNode(bp, node, a)
           if (r === 'paused') {
             bp.state = 'paused'
@@ -2169,6 +2160,41 @@ function archiveDocsAgentNode(node: WorkflowNode, instructionText: string, writa
     executor: { kind: 'agent', instruction: { kind: 'inline', text: instructionText } },
     writableScope
   }
+}
+
+/**
+ * `archive-docs` 节点**自带 author 分类配置**时的委派指令合成器（免二次扫描）——author 生成工作流时在节点
+ * `executor.archiveDocs` 列出每条 `{path,kind}`,直接委派 (子)agent 把本次改动落进这些文档,**不读扫描登记表**。
+ * 与 `buildArchiveDelegation` 精神一致、并沿用其 dynamic/snapshot 路由措辞:一趟委派、子 agent 支持则并行/否则串行退化、
+ * 每条按 kind 归档（dynamic＝就地更新到最新现状 / snapshot＝追加一条冻结记录）、完成后提交这些文档改动。纯函数。
+ */
+function buildArchiveDelegationFromEntries(entries: ArchiveDocEntry[], opts: { subagents?: boolean } = {}): string {
+  const parts: string[] = []
+  parts.push(
+    '把本次任务产生、该沉淀下来的内容归档到下面列出的文档——各归各位,**只碰下面列出的这些文档**,别动别的文件。' +
+      '每条**按其标注的归档方式**处理（见下）。'
+  )
+  parts.push(
+    opts.subagents
+      ? '\n下面每条文档彼此独立。**为每条文档各派一个子 agent 并行处理**,各干各的、互不阻塞。'
+      : '\n下面每条文档彼此独立。**顺次逐条处理**(一条处理完再下一条,串行)。'
+  )
+  parts.push('\n## 要归档的文档')
+  parts.push(
+    entries
+      .map((d, i) => {
+        const action =
+          d.kind === 'dynamic'
+            ? '**动态文档 · 就地更新**：把它改写到反映最新现状——只留现状，不留旧版/差异/历史版本。'
+            : '**快照文档 · 追加冻结**：至多向它**追加**一条新的冻结记录；既有内容绝不回改、不修改（本次无值得沉淀的重大改动就不落）。'
+        return `${i + 1}. \`${d.path}\`\n   ${action}`
+      })
+      .join('\n')
+  )
+  parts.push(
+    '\n完成后**提交这些文档改动**到当前分支(归档就是要把内容沉淀进仓里)。某条本次无需改动就跳过它,节点照常收尾。'
+  )
+  return parts.join('\n')
 }
 
 function isTransient(outcome: string): boolean {

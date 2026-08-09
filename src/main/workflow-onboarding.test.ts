@@ -2,13 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   runWorkflowOnboarding,
   buildWorkflowRevisionIntent,
-  needsDocScanOnActivate,
+  formatDocEnumForIntent,
   WORKFLOW_ONBOARDING_INTENT,
   type WorkflowOnboardingDeps,
   type WorkflowNodeOverview
 } from './workflow-onboarding'
 import type { AuthorWorkflowResult } from './orchestrate-service'
-import type { Project, WorkflowDefinition, WorkflowProposal } from '../shared/types'
+import type { Project, WorkflowProposal } from '../shared/types'
 import { lintWorkflow } from '../shared/workflow'
 
 /** 最小合法 Project（成员仓根供 hasHabits，其余字段判据核不看）。 */
@@ -427,54 +427,26 @@ describe('runWorkflowOnboarding 有界自动重试（设计决策 #11：失败�
   })
 })
 
-describe('needsDocScanOnActivate（需求驱动扫描判据，纯可单测）', () => {
-  /** 含 engine/archive-docs 节点的工作流定义。 */
-  const withArchiveDocs = (): WorkflowDefinition => ({
-    id: 'wf-arch',
-    name: { zh: '带归档' },
-    stages: [{ id: 's1', name: { zh: '阶段' } }],
-    nodes: [
-      {
-        id: 'n-arch',
-        name: { zh: '归档文档' },
-        stageId: 's1',
-        executor: { kind: 'engine', operation: 'archive-docs' },
-        outputs: []
-      }
-    ]
+describe('formatDocEnumForIntent（廉价文档枚举 → 注入 author 意图，纯可单测）', () => {
+  it('空清单 → 空串（不追加任何枚举段）', () => {
+    expect(formatDocEnumForIntent([])).toBe('')
   })
 
-  /** 不含 archive-docs 的工作流定义（引擎 merge-branch）。 */
-  const withoutArchiveDocs = (): WorkflowDefinition => ({
-    id: 'wf-plain',
-    name: { zh: '直合' },
-    stages: [{ id: 's1', name: { zh: '阶段' } }],
-    nodes: [
-      {
-        id: 'n-merge',
-        name: { zh: '合并分支' },
-        stageId: 's1',
-        executor: { kind: 'engine', operation: 'merge-branch' },
-        outputs: []
-      }
-    ]
+  it('非空 → 含「项目文档清单」标签且逐条列出每个路径', () => {
+    const out = formatDocEnumForIntent(['docs/a.md', 'README.md'])
+    expect(out).toContain('项目文档清单')
+    expect(out).toContain('docs/a.md')
+    expect(out).toContain('README.md')
   })
 
-  it('含 archive-docs + 无登记表 → true', () => {
-    expect(needsDocScanOnActivate(withArchiveDocs(), false)).toBe(true)
+  it('去重且滤掉空白路径', () => {
+    const out = formatDocEnumForIntent(['docs/a.md', 'docs/a.md', '  ', ''])
+    // 只应出现一次 docs/a.md（去重），空白项不入列
+    expect(out.match(/docs\/a\.md/g)).toHaveLength(1)
   })
 
-  it('含 archive-docs + 已有登记表 → false', () => {
-    expect(needsDocScanOnActivate(withArchiveDocs(), true)).toBe(false)
-  })
-
-  it('不含 archive-docs → false（即便无登记表）', () => {
-    expect(needsDocScanOnActivate(withoutArchiveDocs(), false)).toBe(false)
-  })
-
-  it('null / undefined def → false', () => {
-    expect(needsDocScanOnActivate(null, false)).toBe(false)
-    expect(needsDocScanOnActivate(undefined, false)).toBe(false)
+  it('全为空白 → 视同空清单，返回空串', () => {
+    expect(formatDocEnumForIntent(['', '   '])).toBe('')
   })
 })
 
