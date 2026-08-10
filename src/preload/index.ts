@@ -56,6 +56,8 @@ const api: KlaritApi = {
   },
   readRunOutput: (runId, bucket) => ipcRenderer.invoke(IPC.engineReadOutput, runId, bucket),
   listRunOutputBuckets: (runId) => ipcRenderer.invoke(IPC.engineListOutputBuckets, runId),
+  readRunJournal: (runId) => ipcRenderer.invoke(IPC.engineReadJournal, runId),
+  listCardRuns: (slug) => ipcRenderer.invoke(IPC.cardsRuns, slug),
   listCards: () => ipcRenderer.invoke(IPC.cardsList),
   createCards: (candidates) => ipcRenderer.invoke(IPC.cardsCreate, candidates),
   updateCard: (slug, patch) => ipcRenderer.invoke(IPC.cardsUpdate, slug, patch),

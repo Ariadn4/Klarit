@@ -430,6 +430,36 @@ export const zh = {
       exited: '已结束',
       timeout: '已超时中止'
     },
+    detailTab: '详情',
+    runLogTab: '运行记录',
+    timeline: {
+      empty: '这次运行没有记录',
+      noRuns: '这张卡还没有带记录的运行',
+      selectRun: '选择要回看的运行',
+      runAt: '{{time}} 那次',
+      runUnknownTime: '运行 {{runId}}',
+      currentRun: '（当前）',
+      nthEntry: '第 {{n}} 次进入',
+      durationBelowSecond: '不到 1 秒',
+      durationSec: '{{sec}} 秒',
+      durationMin: '{{min}} 分 {{sec}} 秒',
+      completed: '已完成',
+      skipped: '已跳过',
+      stoppedAtDecision: '停在决策',
+      unfinished: '未结束',
+      gateRetries: '门重试 {{times}} 次（{{detail}}）',
+      cause: {
+        error: '报错',
+        timeout: '超时'
+      },
+      rerun: {
+        node: '重跑节点',
+        gate: '重跑门'
+      },
+      bgRunning: '运行中',
+      expand: '展开看 {{node}} 的输出',
+      collapse: '收起 {{node}} 的输出'
+    },
     submit: '提交',
     advanceDetach: '进入下一节点（转后台）',
     advanceAbort: '中止并进入下一节点',

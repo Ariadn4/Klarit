@@ -1100,6 +1100,7 @@ export type EngineProgressEvent =
   | { kind: 'state'; runId: string; state: RunState }
 
 /**
+ * 运行日志（journal）一条 = 一个**结构性**进度事件 + 发生时刻。运行日志不是新埋点体系，
  * 是 `EngineProgressEvent` 的持久化消费者——故条目形状就是事件本身，未来新增事件类型自动进来。
  * **排除 `op-chunk`**：流式输出字节已由输出桶持有，日志只留桶引用（`nodeId`/`bgId` 即桶键来源）。
  */
@@ -1109,6 +1110,12 @@ export type RunJournalEntry = Exclude<EngineProgressEvent, { kind: 'op-chunk' }>
 }
 
 /** 一张卡的一次运行（供「运行记录」页签在不知道 runId 的情况下切换回看）。 */
+export interface CardRunSummary {
+  runId: string
+  state: RunState
+  /** 运行日志首条的时刻；该运行无日志时缺省。 */
+  startedAt?: number
+}
 
 // ── 文档登记表（document-registry）：per-成员仓的文档现状单一事实源 ──
 
@@ -1220,6 +1227,9 @@ export interface KlaritApi {
   /** 列某运行的全部输出桶键。 */
   listRunOutputBuckets: (runId: string) => Promise<string[]>
   /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志（本能力上线前的运行）给空数组。 */
+  readRunJournal: (runId: string) => Promise<RunJournalEntry[]>
+  /** 列某卡的历次运行（新→旧），供「运行记录」页签切换回看。 */
+  listCardRuns: (slug: string) => Promise<CardRunSummary[]>
   // ── 需求卡持久化与运行集成 ──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   listCards: () => Promise<StoredCard[]>

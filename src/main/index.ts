@@ -20,6 +20,8 @@ import type {
   DecisionResponse,
   DecomposeInput,
   CardBranch,
+  CardRunSummary,
+  RunJournalEntry,
   RemoveCardOptions,
   DecomposeOutcome,
   DecomposePromptOutcome,
@@ -95,6 +97,7 @@ import { deriveRunRequest } from './card-run'
 import { createAutoScheduler, type AutoScheduler } from './auto-scheduler'
 import { cardBranchesView } from './card-branches'
 import { createOutputBuffer } from './engine/output-buffer'
+import { createRunJournal } from './engine/run-journal'
 import { createDecomposeSeam } from './global-agent'
 import type { CandidateProducer, ResolveDeps } from './decompose-service'
 import { buildDecomposeMessage, headlessInvocation, parseCandidateCards, runAgentHeadless } from './agent-runner'
@@ -1140,9 +1143,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.engineListOutputBuckets, (_e, runId: string): string[] =>
     engine.listOutputBuckets(runId)
   )
+  ipcMain.handle(IPC.engineReadJournal, (_e, runId: string): RunJournalEntry[] => engine.readJournal(runId))
+  // 某卡的历次运行：断点库按 `request.cardId` 反查（正向链），新→旧；开始时刻取该运行日志的首条时刻。
+  ipcMain.handle(IPC.cardsRuns, (e, slug: string): CardRunSummary[] => {
+    const pid = currentProjectId(e)
+    if (!pid || !cardStore.get(pid, slug)) return []
     return runStore
       .list()
       .filter((bp) => bp.request.cardId === slug)
+      .map((bp) => ({ runId: bp.runId, state: bp.state, startedAt: engine.readJournal(bp.runId)[0]?.at }))
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0) || b.runId.localeCompare(a.runId))
+  })
 
   // ── 需求卡持久化与运行集成 ──
   ipcMain.handle(IPC.cardsList, (e): StoredCard[] => {

@@ -24,6 +24,7 @@ import type {
   MemberDerived,
   NodePhase,
   RunBreakpoint,
+  RunJournalEntry,
   RunRepoTarget,
   RunRequest,
   WorkflowDefinition,
@@ -38,6 +39,7 @@ import { listBranches, makeGitRunner } from '../git'
 import { makeAsyncGitRunner, mergeBranch, checkBranchMerged } from '../git-write'
 import { runCommand as realRunCommand, type CommandResult } from '../command-run'
 import { createMemoryOutputBuffer, type OutputBuffer } from './output-buffer'
+import { createMemoryRunJournal, type RunJournal } from './run-journal'
 import { chunkBucket } from '../../shared/output-bucket'
 import { collectPrLinks } from '../../shared/pr-links'
 import {
@@ -149,6 +151,11 @@ export interface EngineDeps {
   getObjectiveCheck?: (ref: RulePackItemRef) => string | null
   /** 命令输出按桶缓冲(可回看);缺省内存缓冲。真实由 main 注入文件缓冲(userData/engine-runs/<runId>/)。 */
   outputBuffer?: OutputBuffer
+  /**
+   * 运行日志(结构性事件落盘,供时间线回看);缺省内存日志。引擎只在既有 emit 处**旁挂**一次写入,
+   * 不按类型过滤(收录规则属 journal 自己),故未来新增事件类型自动进日志。
+   */
+  journal?: RunJournal
   /** 当前界面语言存取（用于把节点显示名解析为单语言标签）；缺省回退默认语言。 */
   language?: () => string
   /** agent 运行器（无头拉起 agent CLI）；缺省真实运行器。测试注入假运行器（写假握手 + 编排退出码）。 */
@@ -210,6 +217,8 @@ export interface Engine {
   readOutput: (runId: string, bucket: string) => string
   /** 列某运行的全部输出桶键。 */
   listOutputBuckets: (runId: string) => string[]
+  /** 读某运行的运行日志(结构性事件序列,供时间线);无日志(本能力上线前的运行)返回空。 */
+  readJournal: (runId: string) => RunJournalEntry[]
 }
 
 /** 一个转入后台的命令:仍在跑、仍流式输出,持杀进程树句柄供中止。 */
@@ -247,11 +256,19 @@ export function createEngine(deps: EngineDeps): Engine {
   // 节点显示名解析为单语言标签（决策/命令 label 用）；语言取当前界面语言，缺省回退默认。
   const nodeLabel = (node: WorkflowNode): string => resolveLocalized(node.name, deps.language?.() ?? DEFAULT_LANGUAGE)
   const outputBuffer = deps.outputBuffer ?? createMemoryOutputBuffer()
+  const journal = deps.journal ?? createMemoryRunJournal()
   const rawEmit = deps.emit ?? ((): void => {})
-  // 包装 emit:op-chunk 在流式推送之外按桶累积(前台 node:<id>、后台 bg:<id>),供关重开回看。
+  // 包装 emit:op-chunk 在流式推送之外按桶累积(前台 node:<id>、后台 bg:<id>),供关重开回看;
+  // 同一处**旁挂**运行日志(journal 自己丢 op-chunk、只留桶引用),故时间线不需要引擎逐路径埋点。
   const emit = (evt: EngineProgressEvent): void => {
     if (evt.kind === 'op-chunk') {
       outputBuffer.append(evt.runId, chunkBucket(evt.nodeId, { bgId: evt.bgId, cmdIndex: evt.cmdIndex }), evt.chunk)
+    }
+    // 旁路永不阻断运行:日志写不进去(磁盘满/权限)只是这次没记，运行照跑。
+    try {
+      journal.append(evt, Date.now())
+    } catch {
+      /* 忽略 */
     }
     rawEmit(evt)
   }
@@ -1744,6 +1761,9 @@ export function createEngine(deps: EngineDeps): Engine {
     bp.pendingSince = Date.now()
     bp.state = 'waiting-decision'
     emit({ kind: 'decision', runId: bp.runId, decision })
+  }
+
+  /** 清待决策的**唯一**入口：决策与其产生时刻同死，绝不留「有时刻无决策」的半态。 */
   function clearDecision(bp: RunBreakpoint): void {
     bp.pendingDecision = null
     delete bp.pendingSince
@@ -2130,6 +2150,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
     readOutput: (runId, bucket) => outputBuffer.read(runId, bucket),
     listOutputBuckets: (runId) => outputBuffer.listBuckets(runId),
+    readJournal: (runId) => journal.read(runId)
   }
 }
 

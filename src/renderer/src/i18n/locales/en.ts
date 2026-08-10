@@ -435,6 +435,36 @@ export const en: Dictionary = {
       exited: 'Ended',
       timeout: 'Timed out'
     },
+    detailTab: 'Details',
+    runLogTab: 'Run log',
+    timeline: {
+      empty: 'No record for this run',
+      noRuns: 'This card has no recorded run yet',
+      selectRun: 'Pick a run to review',
+      runAt: 'Run at {{time}}',
+      runUnknownTime: 'Run {{runId}}',
+      currentRun: ' (current)',
+      nthEntry: 'Entry #{{n}}',
+      durationBelowSecond: 'under 1s',
+      durationSec: '{{sec}}s',
+      durationMin: '{{min}}m {{sec}}s',
+      completed: 'Completed',
+      skipped: 'Skipped',
+      stoppedAtDecision: 'Waiting on decision',
+      unfinished: 'Unfinished',
+      gateRetries: 'Gate retried {{times}}× ({{detail}})',
+      cause: {
+        error: 'error',
+        timeout: 'timeout'
+      },
+      rerun: {
+        node: 'rerun node',
+        gate: 'rerun gate'
+      },
+      bgRunning: 'Running',
+      expand: 'Show output of {{node}}',
+      collapse: 'Hide output of {{node}}'
+    },
     submit: 'Submit',
     advanceDetach: 'Next node (detach)',
     advanceAbort: 'Abort and go to next node',

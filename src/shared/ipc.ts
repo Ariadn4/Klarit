@@ -213,6 +213,9 @@ export const IPC = {
   /** 列某运行的全部输出桶键。 */
   engineListOutputBuckets: 'engine:listOutputBuckets',
   /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志给空数组。 */
+  engineReadJournal: 'engine:readJournal',
+  /** 列某卡的历次运行（新→旧），供「运行记录」页签在不知道 runId 的情况下切换回看。 */
+  cardsRuns: 'cards:runs',
   // ── 需求卡持久化与运行集成（requirement-card-store / card-detail）──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   cardsList: 'cards:list',

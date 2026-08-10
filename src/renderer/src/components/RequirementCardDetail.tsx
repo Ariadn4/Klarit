@@ -1,6 +1,7 @@
 /**
  * 需求卡详情面板：卡信息 + 运行控制（运行/暂停/恢复）+ 单卡决策（RunDecisionPanel）+ 命令输出分流
  * （前台当前命令 + 各后台命令各自可看）。决策与输出区可由卡上圆点点击定位（detailFocus）。
+ * 另有「运行记录」页签：该卡历次运行的时间线（RunTimeline），默认当前活跃运行、可切历史运行。
  * 跨卡决策弹窗不在本能力范围。
  */
 
@@ -8,12 +9,13 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Play, Pause, Trash2, X, Loader2 } from 'lucide-react'
-import type { BranchCleanupItem, WorkflowDefinition } from '@shared/types'
+import type { BranchCleanupItem, CardRunSummary, WorkflowDefinition } from '@shared/types'
 import { RunDecisionPanel } from './RunDecisionPanel'
 import { RunStatusLine } from './RunStatusLine'
 import { CardBranchChips } from './CardBranchChips'
 import { CardConsultPanel } from './CardConsultPanel'
 import { CommandOutputView } from './CommandOutputView'
+import { RunTimeline } from './RunTimeline'
 import { CopyButton } from './CopyButton'
 import { cardBadgeClass } from './cardTypeColors'
 import { runStateToCardStatus } from '../lib/board'
@@ -28,6 +30,7 @@ export function RequirementCardDetail(): React.JSX.Element | null {
   const focus = useCardsStore((s) => s.detailFocus)
   const card = useCardsStore((s) => s.cards.find((c) => c.proposedName === s.detailSlug) ?? null)
   const cardTypes = useCardsStore((s) => s.cardTypes)
+  const activeRunId = card?.activeRunId ?? null
   const bp = useCardsStore((s) => (card?.activeRunId ? (s.runs[card.activeRunId] ?? null) : null))
   const close = useCardsStore((s) => s.closeDetail)
   const setRun = useCardsStore((s) => s.setRun)
@@ -47,6 +50,11 @@ export function RequirementCardDetail(): React.JSX.Element | null {
   const decisionRef = useRef<HTMLDivElement>(null)
   const outputRef = useRef<HTMLDivElement>(null)
 
+  // 「运行记录」页签：该卡历次运行（新→旧）+ 当前回看的那次；默认活跃运行，用户无需知道 runId。
+  const [tab, setTab] = useState<'detail' | 'runLog'>('detail')
+  const [cardRuns, setCardRuns] = useState<CardRunSummary[]>([])
+  const [viewRunId, setViewRunId] = useState<string | null>(null)
+
   // 载入该运行的工作流定义：判断当前节点是否 command（决定是否显示推进控件）与是否末节点。
   const [wf, setWf] = useState<WorkflowDefinition | null>(null)
   const wfId = bp?.request.workflowId
@@ -64,6 +72,30 @@ export function RequirementCardDetail(): React.JSX.Element | null {
     const el = focus === 'decision' ? decisionRef.current : outputRef.current
     el?.scrollIntoView({ block: 'nearest' })
   }, [focus, slug, bp?.state])
+
+  // 切到「运行记录」页签（或换卡）时拉该卡的历次运行；默认回看活跃运行，无活跃运行则回看最近一次。
+  useEffect(() => {
+    if (tab !== 'runLog' || !slug) return
+    let alive = true
+    void window.klarit.listCardRuns(slug).then((runs) => {
+      if (!alive) return
+      setCardRuns(runs)
+      setViewRunId((cur) => {
+        if (cur && runs.some((r) => r.runId === cur)) return cur
+        return runs.find((r) => r.runId === activeRunId)?.runId ?? runs[0]?.runId ?? null
+      })
+    })
+    return () => {
+      alive = false
+    }
+  }, [tab, slug, activeRunId])
+
+  // 换卡：页签与回看选择复位，避免上一张卡的运行记录粘着。
+  useEffect(() => {
+    setTab('detail')
+    setCardRuns([])
+    setViewRunId(null)
+  }, [slug])
 
   // 打开删卡确认时拉该卡分支的回收信息（合并状态/worktree 存在）；关闭时复位勾选与信息。
   useEffect(() => {
@@ -202,6 +234,56 @@ export function RequirementCardDetail(): React.JSX.Element | null {
           </div>
         </header>
 
+        {/* 页签：详情 / 运行记录（该卡历次运行的时间线）。 */}
+        <div role="tablist" className="flex shrink-0 items-center gap-3 border-b border-stone-100 px-4">
+          {(['detail', 'runLog'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`-mb-px border-b-2 py-1.5 text-[12px] ${
+                tab === key ? 'border-cobalt-500 text-ink' : 'border-transparent text-stone-600 hover:text-ink'
+              }`}
+            >
+              {t(key === 'detail' ? 'board.detailTab' : 'board.runLogTab')}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'runLog' && (
+          <div className="min-h-0 flex-1 space-y-2 overflow-auto px-4 pb-28 pt-3 text-[12px]">
+            {cardRuns.length === 0 || !viewRunId ? (
+              <div className="rounded border border-stone-300 bg-canvas p-3 text-[12px] text-stone-600">
+                {t('board.timeline.noRuns')}
+              </div>
+            ) : (
+              <>
+                {cardRuns.length > 1 && (
+                  <select
+                    aria-label={t('board.timeline.selectRun')}
+                    value={viewRunId}
+                    onChange={(ev) => setViewRunId(ev.target.value)}
+                    className="w-full rounded border border-stone-300 bg-paper px-2 py-1 text-[12px] text-ink"
+                  >
+                    {cardRuns.map((r) => (
+                      <option key={r.runId} value={r.runId}>
+                        {(r.startedAt
+                          ? t('board.timeline.runAt', { time: new Date(r.startedAt).toLocaleString() })
+                          : t('board.timeline.runUnknownTime', { runId: r.runId })) +
+                          (r.runId === activeRunId ? t('board.timeline.currentRun') : '')}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <RunTimeline runId={viewRunId} nodes={wf?.nodes} />
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'detail' && (
         <div className="min-h-0 flex-1 space-y-3 overflow-auto px-4 pb-28 pt-3 text-[12px]">
           {card.description && (
             <p className="whitespace-pre-wrap break-words text-ink">{card.description}</p>
@@ -338,6 +420,7 @@ export function RequirementCardDetail(): React.JSX.Element | null {
             </div>
           )}
         </div>
+        )}
       {/* 询问 Agent：底部可开合抽屉（绝对定位、折叠只露把手+输入、发送/拉起展开覆盖任务内容） */}
       <CardConsultPanel
         cardId={card.proposedName}
