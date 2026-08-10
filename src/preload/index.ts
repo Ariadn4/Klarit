@@ -7,6 +7,7 @@ import type {
   WorkflowGenPhase
 } from '../shared/types'
 import type { EffectiveTheme } from '../shared/theme'
+import type { DecisionInboxEntry } from '../shared/decision-inbox'
 
 const api: KlaritApi = {
   importProject: () => ipcRenderer.invoke(IPC.importProject),
@@ -98,6 +99,20 @@ const api: KlaritApi = {
   minimizeWindow: () => ipcRenderer.invoke(IPC.windowMinimize),
   toggleMaximizeWindow: () => ipcRenderer.invoke(IPC.windowMaximizeToggle),
   closeWindow: () => ipcRenderer.invoke(IPC.windowClose),
+  focusWindow: () => ipcRenderer.invoke(IPC.windowFocus),
+  listDecisionInbox: () => ipcRenderer.invoke(IPC.decisionInboxList),
+  onDecisionInboxChange: (handler) => {
+    const listener = (_e: unknown, entries: DecisionInboxEntry[]): void => handler(entries)
+    ipcRenderer.on(IPC.decisionInboxChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.decisionInboxChanged, listener)
+  },
+  onDecisionNotify: (handler) => {
+    const listener = (_e: unknown, entry: DecisionInboxEntry): void => handler(entry)
+    ipcRenderer.on(IPC.decisionInboxNotify, listener)
+    return () => ipcRenderer.removeListener(IPC.decisionInboxNotify, listener)
+  },
+  getNotifyOnDecision: () => ipcRenderer.invoke(IPC.getNotifyOnDecision),
+  setNotifyOnDecision: (on) => ipcRenderer.invoke(IPC.setNotifyOnDecision, on),
   listWorkflows: () => ipcRenderer.invoke(IPC.listWorkflows),
   getWorkflow: (id) => ipcRenderer.invoke(IPC.getWorkflow, id),
   createWorkflow: () => ipcRenderer.invoke(IPC.createWorkflow),

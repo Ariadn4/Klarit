@@ -19,6 +19,7 @@ import { DocumentScanStatus } from './components/DocumentScanStatus'
 import { WorkflowGenStatus } from './components/WorkflowGenStatus'
 import { RequirementCardDetail } from './components/RequirementCardDetail'
 import { useCardsStore } from './stores/cards'
+import { useDecisionInboxStore } from './stores/decisionInbox'
 import { useGlobalChatStore } from './stores/globalChat'
 import { useModalQueue } from './stores/modalQueue'
 import { useWorkflowGenStore } from './stores/workflowGen'
@@ -90,6 +91,8 @@ export function App(): React.JSX.Element {
     setProjects(list)
     // 当前项目的需求卡 + 类型集（驱动看板真卡）。
     void useCardsStore.getState().load()
+    // 当前项目的决策收件箱（顶栏徽标与列表）；主进程侧是 pendingDecision 的投影，这里只镜像。
+    void useDecisionInboxStore.getState().load()
   }, [])
 
   // 取当前窗口项目的激活工作流定义：先拿激活 id，再读完整定义；无激活/定义缺失则置空（看板退回两列书挡）。
@@ -198,6 +201,22 @@ export function App(): React.JSX.Element {
       if (evt.kind === 'op-output') setRefreshKey((k) => k + 1)
       if (evt.kind === 'state' || evt.kind === 'background') void useCardsStore.getState().load()
     })
+    // 决策收件箱变更（主进程投影的全量快照）→ 顶栏徽标与列表实时跟随。
+    const offInbox = window.klarit.onDecisionInboxChange((entries) => {
+      useDecisionInboxStore.getState().setEntries(entries)
+    })
+    // 主进程已做「未聚焦 + 开关开 + 仅新增」门控，这里只负责按当前语言翻译并弹通知；
+    // 点通知＝点收件箱条目：把窗口唤到前台并跳到该卡的决策面板。
+    const offInboxNotify = window.klarit.onDecisionNotify((entry) => {
+      if (typeof Notification === 'undefined') return
+      const n = new Notification(entry.cardName, {
+        body: i18n.t(entry.titleKey, entry.titleParams)
+      })
+      n.onclick = () => {
+        void window.klarit.focusWindow()
+        useCardsStore.getState().openDetail(entry.cardId, 'decision')
+      }
+    })
     // 卡上分支名点击 → 主进程解析卡首仓+分支 → 切到 git 视图并定位该 worktree（按窗口持久化）。
     const offGitFocus = window.klarit.onGitViewFocus(({ repoId, branch }) => {
       const next: SidebarViewState = { view: 'git', gitMemberId: repoId, gitBranch: branch }
@@ -214,6 +233,8 @@ export function App(): React.JSX.Element {
       offCards()
       offTree()
       offEngine()
+      offInbox()
+      offInboxNotify()
       offGitFocus()
     }
   }, [refresh, refreshActiveWorkflow])
@@ -351,7 +372,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <Topbar collapsed={collapsed} onToggleSidebar={toggleSidebar} />
+      <Topbar collapsed={collapsed} onToggleSidebar={toggleSidebar} hasProject={current !== null} />
       <div className={`flex min-h-0 flex-1${resizing ? ' select-none' : ''}`}>
         {!collapsed && (
           <Sidebar

@@ -81,7 +81,7 @@ const NAV: NavGroup[] = [
       { id: 'project-workflow', labelKey: 'settingsPanel.navWorkflow' },
       { id: 'project-card-types', labelKey: 'settingsPanel.navCardTypes' },
       { id: 'project-constitution', labelKey: 'settingsPanel.navConstitution' },
-      { id: 'project-documents', labelKey: 'settingsPanel.navDocuments' }
+      { id: 'project-documents', labelKey: 'settingsPanel.navDocuments' },
     ]
   }
 ]
@@ -109,6 +109,17 @@ export function SettingsPanel({
 }: SettingsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const [section, setSection] = useState<SectionId>('app-general')
+  // 决策通知开关（默认开）：自读自写主进程设置，不经外层 props 层层穿。
+  const [notifyOnDecision, setNotifyOnDecision] = useState(true)
+  useEffect(() => {
+    let alive = true
+    void window.klarit.getNotifyOnDecision().then((on) => {
+      if (alive) setNotifyOnDecision(on)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
   // 顶栏插槽：内部视图（编辑器/详情页）把 返回/保存 传送到与 X 同行。
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null)
   // 默认模型建议清单随当前默认 agent 联动；combobox 可输可选（自绘弹层，聚焦展示完整建议）。
@@ -293,6 +304,25 @@ export function SettingsPanel({
                     </Field>
                   </>
                 )}
+
+                {/* 决策通知：有新待决策且应用不在前台时弹桌面通知（见 decision-inbox）。 */}
+                <Field
+                  label={t('decisionInbox.notifyLabel')}
+                  htmlFor="settings-notify-decision"
+                  description={t('decisionInbox.notifyHint')}
+                >
+                  <input
+                    id="settings-notify-decision"
+                    type="checkbox"
+                    checked={notifyOnDecision}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                      setNotifyOnDecision(next)
+                      void window.klarit.setNotifyOnDecision(next)
+                    }}
+                    className="h-4 w-4 accent-cobalt-500"
+                  />
+                </Field>
               </section>
             )}
 

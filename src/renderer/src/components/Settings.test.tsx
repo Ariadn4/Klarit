@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Settings } from './Settings'
 
 beforeEach(() => {
   ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = {
     listWorkflows: vi.fn(async () => []),
-    getActiveWorkflow: vi.fn(async () => null)
+    getActiveWorkflow: vi.fn(async () => null),
+    getNotifyOnDecision: vi.fn(async () => true),
+    setNotifyOnDecision: vi.fn(async (on: boolean) => on)
   }
 })
 
@@ -212,6 +214,8 @@ describe('Settings 设置入口', () => {
     ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = {
       listWorkflows: vi.fn(async () => []),
       getActiveWorkflow: vi.fn(async () => null),
+      getNotifyOnDecision: vi.fn(async () => true),
+      setNotifyOnDecision: vi.fn(async (on: boolean) => on),
       getDocuments: vi.fn(async () => ({
         memberId: 'm1',
         docs: [
@@ -256,5 +260,65 @@ describe('Settings 设置入口', () => {
     await userEvent.click(screen.getByRole('button', { name: /设置/ }))
     await userEvent.click(screen.getByRole('button', { name: '文档' }))
     expect(screen.getByText(/未绑定项目/)).toBeInTheDocument()
+  })
+
+  it('项目设置组含「巡检」项，点选展示巡检管理（默认零条 → 空态与新建入口）', async () => {
+    ;(globalThis as unknown as { window: { klarit: unknown } }).window.klarit = {
+      listWorkflows: vi.fn(async () => []),
+      getActiveWorkflow: vi.fn(async () => null),
+      getNotifyOnDecision: vi.fn(async () => true),
+      setNotifyOnDecision: vi.fn(async (on: boolean) => on),
+      listPatrols: vi.fn(async () => [])
+    }
+    renderSettings({
+      project: {
+        id: 'p1',
+        displayName: 'proj',
+        derivedName: 'proj',
+        members: [],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    })
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    await userEvent.click(screen.getByRole('button', { name: '巡检' }))
+    expect(await screen.findByText(/还没有巡检/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '新建巡检' })).toBeInTheDocument()
+  })
+
+  it('项目设置→巡检：未绑定项目时显示空态、不报错', async () => {
+    renderSettings()
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    await userEvent.click(screen.getByRole('button', { name: '巡检' }))
+    expect(screen.getByText(/未绑定项目/)).toBeInTheDocument()
+  })
+})
+
+describe('通用设置里的决策通知开关', () => {
+  it('默认按主进程读到的值呈开启态', async () => {
+    renderSettings()
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    const box = await screen.findByRole('checkbox', { name: '有新待决策时发桌面通知' })
+    expect(box).toBeChecked()
+  })
+
+  it('关掉后经 IPC 持久化，且界面立即反映', async () => {
+    const api = (globalThis as unknown as { window: { klarit: Record<string, ReturnType<typeof vi.fn>> } })
+      .window.klarit
+    renderSettings()
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    const box = await screen.findByRole('checkbox', { name: '有新待决策时发桌面通知' })
+    await userEvent.click(box)
+    expect(api.setNotifyOnDecision).toHaveBeenCalledWith(false)
+    expect(box).not.toBeChecked()
+  })
+
+  it('主进程读到关 → 呈关闭态', async () => {
+    const api = (globalThis as unknown as { window: { klarit: Record<string, unknown> } }).window.klarit
+    api.getNotifyOnDecision = vi.fn(async () => false)
+    renderSettings()
+    await userEvent.click(screen.getByRole('button', { name: /设置/ }))
+    const box = await screen.findByRole('checkbox', { name: '有新待决策时发桌面通知' })
+    await waitFor(() => expect(box).not.toBeChecked())
   })
 })

@@ -22,7 +22,21 @@ export const en: Dictionary = {
   },
   topbar: {
     expandSidebar: 'Expand sidebar',
-    collapseSidebar: 'Collapse sidebar'
+    collapseSidebar: 'Collapse sidebar',
+    decisionInbox: 'Decision inbox'
+  },
+  decisionInbox: {
+    title: 'Waiting on you',
+    empty: 'Nothing is waiting on you',
+    pendingCount: '{{n}} waiting on you',
+    gateReview: 'Waiting for review',
+    gateFailure: 'Needs your call',
+    waitedJustNow: 'Just now',
+    waitedMinutes: 'Waiting {{value}}m',
+    waitedHours: 'Waiting {{value}}h',
+    waitedDays: 'Waiting {{value}}d',
+    notifyLabel: 'Notify me when a new decision is waiting',
+    notifyHint: 'Only interrupts you when the app is not in the foreground.'
   },
   sidebar: {
     filesView: 'File tree view',
@@ -113,6 +127,7 @@ export const en: Dictionary = {
     toggleRuleAriaLabel: 'Toggle rule {{name}}',
     effectiveHeading: 'Effective constitution ({{count}} rules)',
     effectiveEmpty: 'None yet — activated rule packs are summarized here as effective rules.'
+  },
   },
   cardTypeLibrary: {
     title: 'Cards',

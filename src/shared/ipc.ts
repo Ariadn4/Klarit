@@ -59,6 +59,21 @@ export const IPC = {
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',
   windowClose: 'window:close',
+  /** 把本窗口唤到前台（点决策通知回到应用）。 */
+  windowFocus: 'window:focus',
+  // ── 决策收件箱（decision-inbox：pendingDecision 的项目级投影）──
+  /** 拉取当前项目的收件箱条目（按等最久在前排序）；未绑定项目给空数组。 */
+  decisionInboxList: 'decisionInbox:list',
+  /** main → renderer：收件箱内容变化（增/删）→ 渲染层实时更新列表与徽标。 */
+  decisionInboxChanged: 'decisionInbox:changed',
+  /**
+   * main → renderer：请渲染层为一条**新**待决策弹桌面通知（主进程已做「未聚焦 + 开关开」门控，
+   * 文案由渲染层按当前语言翻译——决策文案的 i18n 词典在渲染层）。
+   */
+  decisionInboxNotify: 'decisionInbox:notify',
+  /** 读/写「有新待决策且应用未聚焦时发通知」开关（默认开）。 */
+  getNotifyOnDecision: 'settings:getNotifyOnDecision',
+  setNotifyOnDecision: 'settings:setNotifyOnDecision',
   // ── 工作流库与项目激活 ──
   listWorkflows: 'workflow:list',
   getWorkflow: 'workflow:get',
@@ -197,6 +212,7 @@ export const IPC = {
   engineReadOutput: 'engine:readOutput',
   /** 列某运行的全部输出桶键。 */
   engineListOutputBuckets: 'engine:listOutputBuckets',
+  /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志给空数组。 */
   // ── 需求卡持久化与运行集成（requirement-card-store / card-detail）──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   cardsList: 'cards:list',

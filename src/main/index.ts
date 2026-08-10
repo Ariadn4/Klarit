@@ -25,6 +25,8 @@ import type {
   DecomposePromptOutcome,
   DetectedAgent,
   DocRegistry,
+  EngineDecision,
+  EngineProgressEvent,
   ImportOutcome,
   Project,
   RegistryData,
@@ -50,7 +52,8 @@ import {
   setAppearance as applyAppearance,
   setDefaultAgent as applyDefaultAgent,
   setDefaultModel as applyDefaultModel,
-  setDefaultEffort as applyDefaultEffort
+  setDefaultEffort as applyDefaultEffort,
+  setNotifyOnDecision as applyNotifyOnDecision
 } from './settings'
 import { makeAgentProbe, scanAgents } from './agents'
 import { agentSupportsSubagents } from '../shared/agents'
@@ -74,6 +77,8 @@ import { hasAgentHabits } from './agent-habits'
 import { runWorkflowOnboarding, formatDocEnumForIntent, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
+import { createDecisionInbox, type DecisionInbox } from './decision-inbox'
+import type { DecisionInboxEntry } from '../shared/decision-inbox'
 import { createGlobalSkillStore } from './global-skill-store'
 import { buildDecomposeSkill } from '../shared/decomposition'
 import {
@@ -156,14 +161,31 @@ function saveRegistry(): void {
 // 工作流库：包目录存于 userData/workflows/<id>/（含 workflow.yaml + skill 文件）。
 const workflows = createWorkflowStore(join(app.getPath('userData'), 'workflows'))
 
+// 运行断点库：`userData/engine-runs/<runId>.json`。引擎与决策收件箱（它的观察方）共用同一份。
+const ENGINE_RUNS_DIR = join(app.getPath('userData'), 'engine-runs')
+const runStore = createRunStore(ENGINE_RUNS_DIR)
+
+/** 主进程内对引擎进度事件的订阅者（决策收件箱等）；与推给渲染层的广播并行，互不影响。 */
+const engineObservers = new Set<(evt: EngineProgressEvent) => void>()
+
 // 运行引擎：断点存于 userData/engine-runs/<runId>.json；进度事件广播给所有窗口观察。
 const engine = createEngine({
   getWorkflow: (id) => workflows.get(id),
-  store: createRunStore(join(app.getPath('userData'), 'engine-runs')),
-  outputBuffer: createOutputBuffer(join(app.getPath('userData'), 'engine-runs')),
+  store: runStore,
+  outputBuffer: createOutputBuffer(ENGINE_RUNS_DIR),
+  // 运行日志：与输出桶同一个运行目录（userData/engine-runs/<runId>/journal.jsonl），二者同生共死。
+  journal: createRunJournal(ENGINE_RUNS_DIR),
   emit: (evt) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IPC.engineProgress, evt)
+    }
+    // 主进程内观察者（收件箱投影）——单个观察者出错不得影响引擎与其它观察者。
+    for (const observe of engineObservers) {
+      try {
+        observe(evt)
+      } catch {
+        /* 观察方永不拖垮引擎回路 */
+      }
     }
     // 运行状态变化 → 跟随更新其绑定卡的生命周期状态（按 activeRunId 反查所属卡）。
     if (evt.kind === 'state') {
@@ -257,7 +279,11 @@ function startCardRun(pid: string, card: StoredCard): { runId: string } | { erro
   const launched = engine.start(derived.request)
   cardStore.update(pid, card.proposedName, { activeRunId: launched.runId, status: '进行中', updatedAt: Date.now() })
   broadcastCardsChanged()
+  refreshInbox(pid) // 新起的运行刚认领到卡，让收件箱能把它的待决策归到本项目
   return { runId: launched.runId }
+}
+
+/** 某运行是否仍活跃（running/paused/waiting-decision 占槽）；done/aborted/未知不占。单一真相来源。 */
 }
 
 const autoSchedulers = new Map<string, AutoScheduler>()
@@ -287,6 +313,67 @@ function schedulerFor(pid: string): AutoScheduler {
 /** 触发某项目的自动排程重评估（无 pid 时空操作）。 */
 function scheduleEvaluate(pid: string | null): void {
   if (pid) void schedulerFor(pid).evaluate()
+}
+
+  decision: EngineDecision
+        engineObservers.add(handler)
+        return () => engineObservers.delete(handler)
+      },
+      abortRun: async (runId) => {
+        await engine.abort(runId)
+        // 腾出的槽立刻可用：引擎只在 `done` 时触发补位，`aborted` 这条得自己补。
+        void schedulerFor(pid).evaluate()
+      },
+const decisionInboxes = new Map<string, DecisionInbox>()
+
+/** 把一条消息发给绑定了某项目的所有窗口。 */
+function sendToProjectWindows(pid: string, channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && manager.current(win)?.id === pid) win.webContents.send(channel, payload)
+  }
+}
+
+/** 某项目的收件箱投影（首次访问时建好并全量重建；重建静默、不发通知）。 */
+function inboxFor(pid: string): DecisionInbox {
+  let inbox = decisionInboxes.get(pid)
+  if (!inbox) {
+    inbox = createDecisionInbox({
+      onEngineProgress: (handler) => {
+        engineObservers.add(handler)
+        return () => engineObservers.delete(handler)
+      },
+      listBreakpoints: () => runStore.list(),
+      getBreakpoint: (runId) => runStore.load(runId),
+      listCards: () => cardStore.list(pid),
+      // 老断点没有 pendingSince → 回落该运行断点文件的 mtime（不完美但不阻断，不值得为它做迁移）。
+      fallbackSince: (runId) => {
+        try {
+          return statSync(join(ENGINE_RUNS_DIR, `${runId}.json`)).mtimeMs
+        } catch {
+          return undefined
+        }
+      },
+      onChange: (entries) => sendToProjectWindows(pid, IPC.decisionInboxChanged, entries),
+      isFocused: () => BrowserWindow.getFocusedWindow() !== null,
+      notifyEnabled: () => settings.notifyOnDecision !== false,
+      // 弹通知交给渲染层——决策文案的 i18n 词典在那边；主进程只做「未聚焦 + 开关开 + 仅新增」门控。
+      // 只发给该项目的**一个**窗口，避免同项目开两窗时弹两条。
+      notify: (entry: DecisionInboxEntry) => {
+        const win = BrowserWindow.getAllWindows().find(
+          (w) => !w.isDestroyed() && manager.current(w)?.id === pid
+        )
+        win?.webContents.send(IPC.decisionInboxNotify, entry)
+      }
+    })
+    decisionInboxes.set(pid, inbox)
+    inbox.rebuild()
+  }
+  return inbox
+}
+
+/** 卡↔运行链变化后，让该项目的收件箱跟上（新起的运行要能被认领进投影）。 */
+function refreshInbox(pid: string | null): void {
+  if (pid && decisionInboxes.has(pid)) decisionInboxes.get(pid)!.rebuild()
 }
 
 /**
@@ -537,7 +624,8 @@ const E2E_WORKFLOW_PRODUCER: OpsProducer | null =
 // 真实 ops producer：只读姿态、脱 worktree（cwd 用 userData scratch，agent 写代码我们也不消费）。
 // 会话 sessionId 桥接到**本作用域**会话库，供多轮原生续接。agent/模型按会话选型覆盖全局默认（未选回落默认）。
 // addDirs（可选）：额外挂给 agent 的可访问目录（→ CLI `--add-dir`）。聊天路径不带（cwd scratch，只编排卡）；
-// 自动 author 路带项目成员仓真实路径，让 agent 能实际读到项目文件推断习惯（设计决策 #10）。
+// 自动 author 路带**本次物化的习惯上下文包**（habit-context：痕迹逐字副本 + manifest），不再挂成员仓根
+// ——挂仓根在大项目上让 author 极慢、CPU 累计上万秒。
 const orchestrateProducer = (
   scope: string,
   agentId?: string,
@@ -939,6 +1027,27 @@ function registerIpc(): void {
     else win.maximize()
   })
   ipcMain.handle(IPC.windowClose, (e) => senderWindow(e)?.close())
+  // 点决策通知回到应用：把本窗口从最小化/后台唤到前台。
+  ipcMain.handle(IPC.windowFocus, (e) => {
+    const win = senderWindow(e)
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+
+  // ── 决策收件箱：只读拉取 + 通知开关（条目的真相仍是 pendingDecision，这里不提供任何写入口）──
+  ipcMain.handle(IPC.decisionInboxList, (e): DecisionInboxEntry[] => {
+    const pid = currentProjectId(e)
+    return pid ? inboxFor(pid).list() : []
+  })
+
+  ipcMain.handle(IPC.getNotifyOnDecision, (): boolean => settings.notifyOnDecision !== false)
+
+  ipcMain.handle(IPC.setNotifyOnDecision, (_e, value: unknown): boolean => {
+    settings = applyNotifyOnDecision(settings, value, { write: (s) => writeJson(SETTINGS_FILE, s) })
+    return settings.notifyOnDecision !== false
+  })
 
   ipcMain.handle(IPC.getSystemLocale, (): string => app.getLocale())
 
@@ -1031,6 +1140,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.engineListOutputBuckets, (_e, runId: string): string[] =>
     engine.listOutputBuckets(runId)
   )
+    return runStore
+      .list()
+      .filter((bp) => bp.request.cardId === slug)
 
   // ── 需求卡持久化与运行集成 ──
   ipcMain.handle(IPC.cardsList, (e): StoredCard[] => {
@@ -1380,7 +1492,7 @@ function registerIpc(): void {
     // 追加进 author 意图——让 author 自己据此填 archive-docs 归档配置（剔项目自有归档已覆盖的、剩余分动态/快照），
     // 免得它靠 --add-dir 自行发现文档（不可靠）。fs 调用留此处，格式化交纯函数 formatDocEnumForIntent。
     // collapse 后是十几条紧凑文档（openspec/ 等折成一条），而非全项目数百文件——喂全量会撑爆/拖死 agent 调用。
-    const docPaths = addDirs.flatMap((root) => scanDocuments(root).map((d) => d.location)).slice(0, 80)
+    const docPaths = members.flatMap(({ root }) => scanDocuments(root).map((d) => d.location)).slice(0, 80)
     const intentWithDocs = intent + formatDocEnumForIntent(docPaths)
     return authorWorkflow(
       orchestrateDepsFor(projectId),
@@ -1829,6 +1941,8 @@ function registerIpc(): void {
       settings.language ?? DEFAULT_LANGUAGE
     )
   })
+
+  // ── 定时巡检：随项目持久化，四个写口都回全量新列表；写完踢一次评估（新建的巡检可立刻到期）──
 }
 
 function restoreOrStart(): void {
@@ -1876,7 +1990,11 @@ app.whenReady().then(() => {
   // 恢复完再对每个项目踢一次自动排程：恢复可能既成超额（活跃>3，排程容忍不填），也可能有空槽可补待办。
   void engine.resumeAll().finally(() => {
     for (const p of registry.projects) scheduleEvaluate(p.id)
+    // 恢复后建好各项目的收件箱投影（由断点全量重建；重建静默，开机不糊一脸通知）。
+    for (const p of registry.projects) inboxFor(p.id)
+    // 开机补跑：软件没开的那段时间不跑，错过多少个窗口也只补**一次**（由 isDue + lastRunAt 保证）。
   })
+  // 巡检常驻回路：分钟级 tick 唤醒评估（只评估当前有窗口绑定的项目）。
   restoreOrStart()
 
   app.on('activate', () => {
@@ -1887,6 +2005,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   writeJson(SESSION_FILE, manager.snapshotSession())
   engine.killAllBackground() // 杀掉所有转后台的命令,不留孤儿
+  // 停巡检 tick 并取消在飞的巡检命令（杀进程树由既有运行器负责）。
 })
 
 app.on('window-all-closed', () => {

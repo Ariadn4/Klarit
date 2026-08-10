@@ -5,6 +5,7 @@ import type { Localized } from './localized'
 import type { Appearance } from './appearance'
 import type { EffectiveTheme } from './theme'
 import type { AgentId, AgentModel, EffortLevel } from './agents'
+import type { DecisionInboxEntry } from './decision-inbox'
 import type {
   ConstitutionGovernance,
   EffectiveConstitutionRule,
@@ -25,6 +26,8 @@ export interface AppSettings {
   defaultModel?: string
   /** 默认 effort（推理力度，low/medium/high）；缺省表示跟随各 agent CLI 自身默认，不注入参数。 */
   defaultEffort?: EffortLevel
+  /** 有新待决策且应用未聚焦时是否发桌面通知（见 decision-inbox）；缺省视为开。 */
+  notifyOnDecision?: boolean
 }
 
 /** 一个本地已检测到的 agent：标识、展示名、其可选模型清单。 */
@@ -1035,6 +1038,12 @@ export interface RunBreakpoint {
   /** 等待中的决策；非 null 时 state 为 waiting-decision。 */
   pendingDecision: EngineDecision | null
   /**
+   * 该待决策的**产生时刻**（毫秒时间戳）。与 `pendingDecision` **同生共死**：置决策时写、清决策时清，
+   * 不会出现「有决策无时刻」或「有时刻无决策」。只供决策的观察方（见 decision-inbox）排序与算等待时长，
+   * 引擎自身不读它、不据它改行为。**可选**——本字段引入前写下的老断点没有它，读取方须优雅回落。
+   */
+  pendingSince?: number
+  /**
    * 客观门重试日志：键为 `<nodeId>:<gateIndex>`，值为该门历次失败的重试记录。持久化使关闭重开后计数不丢；
    * 门通过即清空该键（见 engine-execution「客观门失败的自动重试与升级」）。
    */
@@ -1089,6 +1098,17 @@ export type EngineProgressEvent =
   | { kind: 'background'; runId: string; nodeId: string; bgId: string; label: string; status: 'started' | 'stopped' | 'exited' | 'timeout' }
   | { kind: 'decision'; runId: string; decision: EngineDecision }
   | { kind: 'state'; runId: string; state: RunState }
+
+/**
+ * 是 `EngineProgressEvent` 的持久化消费者——故条目形状就是事件本身，未来新增事件类型自动进来。
+ * **排除 `op-chunk`**：流式输出字节已由输出桶持有，日志只留桶引用（`nodeId`/`bgId` 即桶键来源）。
+ */
+export type RunJournalEntry = Exclude<EngineProgressEvent, { kind: 'op-chunk' }> & {
+  /** 发生时刻（毫秒时间戳）。 */
+  at: number
+}
+
+/** 一张卡的一次运行（供「运行记录」页签在不知道 runId 的情况下切换回看）。 */
 
 // ── 文档登记表（document-registry）：per-成员仓的文档现状单一事实源 ──
 
@@ -1199,6 +1219,7 @@ export interface KlaritApi {
   readRunOutput: (runId: string, bucket: string) => Promise<string>
   /** 列某运行的全部输出桶键。 */
   listRunOutputBuckets: (runId: string) => Promise<string[]>
+  /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志（本能力上线前的运行）给空数组。 */
   // ── 需求卡持久化与运行集成 ──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   listCards: () => Promise<StoredCard[]>
@@ -1254,6 +1275,19 @@ export interface KlaritApi {
   toggleMaximizeWindow: () => Promise<void>
   /** 关闭当前窗口。 */
   closeWindow: () => Promise<void>
+  /** 把当前窗口唤到前台（点决策通知回到应用）。 */
+  focusWindow: () => Promise<void>
+  // ── 决策收件箱（decision-inbox）──
+  /** 拉取当前项目的收件箱条目（等最久的在前）；未绑定项目给空数组。 */
+  listDecisionInbox: () => Promise<DecisionInboxEntry[]>
+  /** 订阅收件箱变更（条目增/删）；返回取消订阅函数。 */
+  onDecisionInboxChange: (handler: (entries: DecisionInboxEntry[]) => void) => () => void
+  /** 订阅「请为这条新待决策弹桌面通知」（主进程已做未聚焦/开关门控）；返回取消订阅函数。 */
+  onDecisionNotify: (handler: (entry: DecisionInboxEntry) => void) => () => void
+  /** 读「新待决策时发桌面通知」开关。 */
+  getNotifyOnDecision: () => Promise<boolean>
+  /** 写「新待决策时发桌面通知」开关，返回落定值。 */
+  setNotifyOnDecision: (on: boolean) => Promise<boolean>
   /** 列出工作流库（轻量摘要，跳过损坏包）。 */
   listWorkflows: () => Promise<WorkflowSummary[]>
   /** 读取某工作流完整定义；不存在或损坏返回 null。 */

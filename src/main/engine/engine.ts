@@ -1738,10 +1738,15 @@ export function createEngine(deps: EngineDeps): Engine {
     return { runId: bp.runId, settled }
   }
 
+  /** 置待决策的**唯一**入口：决策与其产生时刻 `pendingSince` 同生（清空一律走 clearDecision）。 */
   function raiseDecision(bp: RunBreakpoint, decision: EngineDecision): void {
     bp.pendingDecision = decision
+    bp.pendingSince = Date.now()
     bp.state = 'waiting-decision'
     emit({ kind: 'decision', runId: bp.runId, decision })
+  function clearDecision(bp: RunBreakpoint): void {
+    bp.pendingDecision = null
+    delete bp.pendingSince
   }
 
   function bump(runId: string, nodeId: string): number {
@@ -1800,7 +1805,7 @@ export function createEngine(deps: EngineDeps): Engine {
       if (!bp) throw new Error(`未知运行:${runId}`)
       if (!bp.pendingDecision || bp.state !== 'waiting-decision') return { runId, settled: Promise.resolve(bp) }
       const decided = bp.pendingDecision // 捕获来源/选项，供 agent 决策路由（清空前）
-      bp.pendingDecision = null
+      clearDecision(bp)
       bp.state = 'running'
       bp.request = derive(bp.request, bp.runId)
       bp.members = deriveMembers(bp.request)
@@ -1965,7 +1970,7 @@ export function createEngine(deps: EngineDeps): Engine {
       killBackgroundOf(runId, cur, a2) // 杀后台活进程 + 清记录 + 持久化
       a2.driving = false
       cur.state = 'aborted'
-      cur.pendingDecision = null
+      clearDecision(cur)
       return persist(cur)
     },
 
@@ -1979,7 +1984,7 @@ export function createEngine(deps: EngineDeps): Engine {
       const settled = (async (): Promise<RunBreakpoint> => {
         await suspendIfDriving(runId) // 活跑先安全挂起
         const bp = deps.store.load(runId)!
-        bp.pendingDecision = null // 干预 supersede 任何待决策
+        clearDecision(bp) // 干预 supersede 任何待决策
         bp.state = 'running'
         bp.request = derive(bp.request, bp.runId)
         bp.members = deriveMembers(bp.request)
@@ -2006,7 +2011,7 @@ export function createEngine(deps: EngineDeps): Engine {
         const node = nodesOf(bp).find((n) => n.id === bp.currentNodeId)
         // 无当前可注入的 agent 节点 → 优雅无操作。
         if (!node || node.executor.kind !== 'agent') return persist(bp)
-        bp.pendingDecision = null
+        clearDecision(bp)
         bp.state = 'running'
         bp.request = derive(bp.request, bp.runId)
         bp.members = deriveMembers(bp.request)
@@ -2124,7 +2129,7 @@ export function createEngine(deps: EngineDeps): Engine {
     },
 
     readOutput: (runId, bucket) => outputBuffer.read(runId, bucket),
-    listOutputBuckets: (runId) => outputBuffer.listBuckets(runId)
+    listOutputBuckets: (runId) => outputBuffer.listBuckets(runId),
   }
 }
 

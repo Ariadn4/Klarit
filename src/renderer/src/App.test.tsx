@@ -9,6 +9,7 @@ import { useCardsStore } from './stores/cards'
 import { useGlobalChatStore } from './stores/globalChat'
 import { useModalQueue } from './stores/modalQueue'
 import { useWorkflowGenStore } from './stores/workflowGen'
+import { useDecisionInboxStore } from './stores/decisionInbox'
 
 interface KlaritMock {
   getSidebarWidth: ReturnType<typeof vi.fn>
@@ -41,6 +42,9 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     listProjects: vi.fn(async () => []),
     onFileTreeChange: vi.fn(() => () => {}),
     onEngineProgress: vi.fn(() => () => {}),
+    listDecisionInbox: vi.fn(async () => []),
+    onDecisionInboxChange: vi.fn(() => () => {}),
+    onDecisionNotify: vi.fn(() => () => {}),
     onGitViewFocus: vi.fn(() => () => {}),
     getRunState: vi.fn(async () => null),
     cardBranches: vi.fn(async () => []),
@@ -78,6 +82,7 @@ beforeEach(() => {
   useGlobalChatStore.setState({ workflowPreview: null, open: false, savedWorkflowAt: [] })
   // 全局模态协调器 / 工作流生成状态亦为常驻单例 store，逐用例复位避免队列/状态泄漏。
   useModalQueue.setState({ openIds: new Set(), queue: [] })
+  useDecisionInboxStore.setState({ entries: [], open: false })
   useWorkflowGenStore.setState({ generating: false })
 })
 

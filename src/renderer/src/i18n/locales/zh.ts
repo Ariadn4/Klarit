@@ -20,7 +20,21 @@ export const zh = {
   },
   topbar: {
     expandSidebar: '展开侧边栏',
-    collapseSidebar: '折叠侧边栏'
+    collapseSidebar: '折叠侧边栏',
+    decisionInbox: '决策收件箱'
+  },
+  decisionInbox: {
+    title: '等你拍板',
+    empty: '没有等你拍板的事',
+    pendingCount: '{{n}} 件事等你拍板',
+    gateReview: '等你验收',
+    gateFailure: '要你决定',
+    waitedJustNow: '刚刚',
+    waitedMinutes: '已等 {{value}} 分钟',
+    waitedHours: '已等 {{value}} 小时',
+    waitedDays: '已等 {{value}} 天',
+    notifyLabel: '有新待决策时发桌面通知',
+    notifyHint: '只在应用没在前台时打扰你。'
   },
   sidebar: {
     filesView: '文件树视图',
@@ -110,6 +124,7 @@ export const zh = {
     toggleRuleAriaLabel: '规则开关 {{name}}',
     effectiveHeading: '生效宪法（{{count}} 条）',
     effectiveEmpty: '暂无——激活规则包后这里汇总实际生效的规则。'
+  },
   },
   cardTypeLibrary: {
     title: '需求卡',
