@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
 import type {
+  CandidateCard,
+  CandidateIssue,
   EngineProgressEvent,
   FileTreeChange,
   KlaritApi,
@@ -150,6 +152,18 @@ const api: KlaritApi = {
   getConstitution: () => ipcRenderer.invoke(IPC.getConstitution),
   setConstitution: (governance) => ipcRenderer.invoke(IPC.setConstitution, governance),
   effectiveConstitution: () => ipcRenderer.invoke(IPC.effectiveConstitution),
+  listPatrols: () => ipcRenderer.invoke(IPC.listPatrols),
+  savePatrol: (patrol) => ipcRenderer.invoke(IPC.savePatrol, patrol),
+  removePatrol: (patrolId) => ipcRenderer.invoke(IPC.removePatrol, patrolId),
+  setPatrolEnabled: (patrolId, enabled) => ipcRenderer.invoke(IPC.setPatrolEnabled, patrolId, enabled),
+  onPatrolCandidates: (handler) => {
+    const listener = (
+      _e: unknown,
+      outcome: { candidates: CandidateCard[]; issues: CandidateIssue[] }
+    ): void => handler(outcome)
+    ipcRenderer.on(IPC.patrolCandidates, listener)
+    return () => ipcRenderer.removeListener(IPC.patrolCandidates, listener)
+  },
   getDecomposePrompt: () => ipcRenderer.invoke(IPC.getDecomposePrompt),
   decomposeRequirement: (input) => ipcRenderer.invoke(IPC.decomposeRequirement, input),
   submitDecomposedCandidates: (candidates) =>

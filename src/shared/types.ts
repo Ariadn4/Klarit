@@ -6,6 +6,7 @@ import type { Appearance } from './appearance'
 import type { EffectiveTheme } from './theme'
 import type { AgentId, AgentModel, EffortLevel } from './agents'
 import type { DecisionInboxEntry } from './decision-inbox'
+import type { Patrol } from './patrol'
 import type {
   ConstitutionGovernance,
   EffectiveConstitutionRule,
@@ -91,6 +92,8 @@ export interface Project {
   constitution?: ConstitutionGovernance
   /** 该项目的需求卡类型集；缺省（未设置）视为默认种子。激活带建议类型的工作流时幂等播种进来。属项目管理数据、不入 git。 */
   cardTypes?: CardTypeDef[]
+  /** 该项目的定时巡检（见 `scheduled-patrol`）；缺省＝一条都没有。属项目管理数据、不入 git。 */
+  patrols?: Patrol[]
   createdAt: string
   updatedAt: string
 }
@@ -1369,6 +1372,22 @@ export interface KlaritApi {
   setConstitution: (governance: ConstitutionGovernance) => Promise<void>
   /** 读当前项目的生效宪法（派生：激活并集减去关闭项）。 */
   effectiveConstitution: () => Promise<EffectiveConstitutionRule[]>
+  // ── 定时巡检（scheduled-patrol）：随项目持久化，默认零条；写口一律回全量新列表 ──
+  /** 读当前项目的巡检列表；未绑定项目给空列表。 */
+  listPatrols: () => Promise<Patrol[]>
+  /** 新建或按 id 覆盖一条巡检，回全量新列表。 */
+  savePatrol: (patrol: Patrol) => Promise<Patrol[]>
+  /** 删除一条巡检，回全量新列表。 */
+  removePatrol: (patrolId: string) => Promise<Patrol[]>
+  /** 启停一条巡检（不删除，配置与 lastRunAt 保留），回全量新列表。 */
+  setPatrolEnabled: (patrolId: string, enabled: boolean) => Promise<Patrol[]>
+  /**
+   * 订阅巡检推来的候选需求卡（经既有候选提交接缝规整+校验后推送，**止于审阅**：不落库、不建活卡）；
+   * 返回取消订阅函数。
+   */
+  onPatrolCandidates: (
+    handler: (outcome: { candidates: CandidateCard[]; issues: CandidateIssue[] }) => void
+  ) => () => void
   // ── 新建需求：分解能力（全局 agent 接缝；止于产出候选卡，落库归下一个 change）──
   /** 读当前项目的生效分解 prompt（供外部 AI 读取 skill）；未绑定项目返回 { unbound: true }。 */
   getDecomposePrompt: () => Promise<DecomposePromptOutcome>

@@ -37,6 +37,11 @@ interface NewRequirementState {
   addReviewRelation: (index: number, relation: CardRelation) => void
   /** 删某候选卡的第 relIndex 条关系边（详情窗删跨卡依赖门用）。 */
   removeReviewRelation: (index: number, relIndex: number) => void
+  /**
+   * 收下巡检推来的候选（主进程经既有候选提交接缝规整+校验后推送）：**止于审阅**，直接进审阅窗。
+   * 仅在空闲时接收——用户正在描述/审阅时不打断，丢弃本次（问题没被改动，下个巡检周期还会再扫到）。
+   */
+  receiveCandidates: (candidates: CandidateCard[], issues: CandidateIssue[]) => void
   /** 创建任务：把（含编辑的）候选经统一创建接缝落库到当前项目（手动新建路），再刷新看板。 */
   createTasks: () => Promise<void>
 }
@@ -116,6 +121,11 @@ export const useNewRequirementStore = create<NewRequirementState>((set, get) => 
         i === index ? { ...c, relations: c.relations.filter((_, ri) => ri !== relIndex) } : c
       )
     })),
+
+  receiveCandidates: (candidates, issues) => {
+    if (get().phase !== 'idle' || candidates.length === 0) return
+    set({ phase: 'reviewing', windowOpen: true, reviewCards: candidates, issues, notice: null })
+  },
 
   // 统一创建接缝：把审阅通过的候选落库到当前项目（与外部分解路共用 cards:create），再刷新看板、收起流程。
   createTasks: async () => {

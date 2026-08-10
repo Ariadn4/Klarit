@@ -115,6 +115,13 @@ export const IPC = {
   setConstitution: 'project:setConstitution',
   /** 读当前项目的生效宪法（派生：激活并集减去关闭项）。 */
   effectiveConstitution: 'project:effectiveConstitution',
+  // ── 定时巡检（scheduled-patrol）：随项目持久化，默认零条；四个写口都回全量新列表 ──
+  listPatrols: 'patrol:list',
+  savePatrol: 'patrol:save',
+  removePatrol: 'patrol:remove',
+  setPatrolEnabled: 'patrol:setEnabled',
+  /** main → renderer：巡检扫出问题推来的候选需求卡，**止于审阅**（复用新建需求的审阅窗）。 */
+  patrolCandidates: 'patrol:candidates',
   // ── 新建需求：分解能力（全局 agent 接缝；止于产出候选卡，落库归下一个 change）──
   /** 读当前项目的生效分解 prompt（激活工作流新建需求指令 → 全局默认分解 skill 兜底）；未绑定给空态。 */
   getDecomposePrompt: 'decompose:getPrompt',

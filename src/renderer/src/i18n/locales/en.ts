@@ -89,6 +89,9 @@ export const en: Dictionary = {
     navDocuments: 'Documents',
     sectionProjectDocuments: 'Project documents',
     noProjectDocuments: 'No project bound — open a project to manage its document registry here.',
+    navPatrol: 'Patrols',
+    sectionProjectPatrol: 'Scheduled patrols',
+    noProjectPatrol: 'No project bound — open a project to configure its scheduled patrols here.',
     appearanceLabel: 'Appearance',
     appearanceOption: {
       dark: 'Dark',
@@ -128,6 +131,48 @@ export const en: Dictionary = {
     effectiveHeading: 'Effective constitution ({{count}} rules)',
     effectiveEmpty: 'None yet — activated rule packs are summarized here as effective rules.'
   },
+  patrol: {
+    title: 'Scheduled patrols',
+    description:
+      'Run a maintenance action on a schedule: run a workflow, run a command, or scan for doc rot. A patrol only finds problems and pushes them as candidate requirements for your review — it never changes code on its own.',
+    empty: 'No patrols yet — add one so something keeps an eye on the project while nobody is working.',
+    add: 'New patrol',
+    untitled: 'Untitled patrol',
+    nameLabel: 'Name',
+    namePlaceholder: 'Scan the docs every night…',
+    triggerLabel: 'Trigger',
+    triggerKind: { everyHours: 'Every n hours', daily: 'Daily', weekly: 'Weekly' },
+    hoursLabel: 'Every how many hours',
+    timeLabel: 'Time',
+    weekdayLabel: 'Day of week',
+    weekday: {
+      '0': 'Sunday',
+      '1': 'Monday',
+      '2': 'Tuesday',
+      '3': 'Wednesday',
+      '4': 'Thursday',
+      '5': 'Friday',
+      '6': 'Saturday'
+    },
+    triggerEveryHours: 'Every {{hours}} hours',
+    triggerDaily: 'Daily at {{time}}',
+    triggerWeekly: '{{weekday}} at {{time}}',
+    actionLabel: 'Action',
+    actionKind: { workflow: 'Run a workflow', command: 'Run a command', docScan: 'Scan for doc rot' },
+    workflowLabel: 'Workflow',
+    noWorkflows: 'Workflow library is empty — create one in App settings · Workflows first.',
+    commandLabel: 'Command',
+    commandPlaceholder: 'npm run lint',
+    actionWorkflow: 'Run workflow: {{name}}',
+    actionCommand: 'Run command: {{command}}',
+    actionDocScan: 'Scan for doc rot',
+    enableAriaLabel: 'Enable patrol {{name}}',
+    editAriaLabel: 'Edit patrol {{name}}',
+    deleteAriaLabel: 'Delete patrol {{name}}',
+    disabledBadge: 'Disabled',
+    lastRunNever: 'Never run',
+    concurrencyHint:
+      'Patrols share the auto-scheduling concurrency limit; when all slots are busy this round is skipped, not queued.'
   },
   cardTypeLibrary: {
     title: 'Cards',

@@ -84,3 +84,35 @@ describe('preload 决策收件箱契约', () => {
 })
 
 describe('preload 定时巡检契约', () => {
+  const patrol = {
+    id: 'pt-1',
+    name: '每天扫文档',
+    trigger: { kind: 'daily' as const, time: '03:00' },
+    action: { kind: 'docScan' as const },
+    enabled: true
+  }
+
+  it('listPatrols / savePatrol / removePatrol / setPatrolEnabled 转发到各自通道', async () => {
+    const api = await loadApi()
+    await api.listPatrols()
+    expect(invoke).toHaveBeenCalledWith(IPC.listPatrols)
+    await api.savePatrol(patrol)
+    expect(invoke).toHaveBeenCalledWith(IPC.savePatrol, patrol)
+    await api.removePatrol('pt-1')
+    expect(invoke).toHaveBeenCalledWith(IPC.removePatrol, 'pt-1')
+    await api.setPatrolEnabled('pt-1', false)
+    expect(invoke).toHaveBeenCalledWith(IPC.setPatrolEnabled, 'pt-1', false)
+  })
+
+  it('onPatrolCandidates 订阅 patrol:candidates（巡检产出止于审阅），取消订阅时摘掉监听', async () => {
+    const api = await loadApi()
+    const handler = vi.fn()
+    const off = api.onPatrolCandidates(handler)
+    const [channel, listener] = on.mock.calls.find((c) => c[0] === IPC.patrolCandidates)!
+    expect(channel).toBe(IPC.patrolCandidates)
+    listener(null, { candidates: [{ proposedName: 'x' }], issues: [] })
+    expect(handler).toHaveBeenCalledWith({ candidates: [{ proposedName: 'x' }], issues: [] })
+    off()
+    expect(removeListener).toHaveBeenCalledWith(IPC.patrolCandidates, listener)
+  })
+})

@@ -133,9 +133,18 @@ import type {
 import {
   importProject,
   linkMemberByDir,
+  listPatrols,
+  markPatrolRun,
   relocateMemberToDir,
+  removePatrol as removePatrolCore,
+  setPatrolEnabled as setPatrolEnabledCore,
+  upsertPatrol,
   type ProjectServiceDeps
 } from './project-service'
+import { createPatrolScheduler, type PatrolScheduler } from './patrol-scheduler'
+import type { Patrol, PatrolFinding } from '../shared/patrol'
+import { toProposedName } from '../shared/requirement-card'
+import { runCommand } from './command-run'
 import { listBranches, listWorktrees, makeGitRunner, probeGit } from './git'
 import { makeAsyncGitRunner } from './git-write'
 import { branchCleanupInfo, recycleCardBranches, type CleanupMember } from './card-cleanup'
@@ -287,6 +296,22 @@ function startCardRun(pid: string, card: StoredCard): { runId: string } | { erro
 }
 
 /** 某运行是否仍活跃（running/paused/waiting-decision 占槽）；done/aborted/未知不占。单一真相来源。 */
+function isRunLive(runId: string): boolean {
+  const st = engine.getRunState(runId)?.state
+  return st === 'running' || st === 'paused' || st === 'waiting-decision'
+}
+
+/**
+ * 巡检拉起的运行（每项目一份，纯内存）：这些运行**不绑卡**，故不在 `cardStore` 里，
+ * 需单独记好交给自动排程计入活跃数——上限约束的是「一切系统自动发起的运行」。
+ */
+const patrolRuns = new Map<string, Array<{ runId: string; repos: string[] }>>()
+
+/** 某项目仍活跃的巡检运行（顺手回收已终局者，不让表无限长）。 */
+function livePatrolRuns(pid: string): Array<{ runId: string; repos: string[] }> {
+  const kept = (patrolRuns.get(pid) ?? []).filter((r) => isRunLive(r.runId))
+  patrolRuns.set(pid, kept)
+  return kept
 }
 
 const autoSchedulers = new Map<string, AutoScheduler>()
@@ -298,14 +323,12 @@ function schedulerFor(pid: string): AutoScheduler {
       getProject: () => findProjectById(registry, pid) ?? null,
       getRegistry: () => typeArchetypeMap(getProjectCardTypes(registry, pid)),
       canDerive: (card, project) => deriveRunRequest(card, project).ok,
-      // 单一真相来源：运行仍活（running/paused/waiting-decision 占槽），done/aborted/未知不占。
-      isRunLive: (runId) => {
-        const st = engine.getRunState(runId)?.state
-        return st === 'running' || st === 'paused' || st === 'waiting-decision'
-      },
+      isRunLive,
       startCard: (card) => {
         startCardRun(pid, card)
       },
+      // 巡检拉起的运行与排程拉起的共享同一上限、同一活跃判定（见 scheduled-patrol）。
+      listPatrolRuns: () => livePatrolRuns(pid),
       maxConcurrent: 3
     })
     autoSchedulers.set(pid, s)
@@ -318,7 +341,142 @@ function scheduleEvaluate(pid: string | null): void {
   if (pid) void schedulerFor(pid).evaluate()
 }
 
+// ── 定时巡检：每项目一个常驻回路（懒建、缓存）+ 应用级分钟 tick（见 scheduled-patrol）──
+
+/**
+ * 巡检跑工作流：与自动排程同一条启动路径（`engine.start`），只是不绑卡——巡检 MUST NOT 建活卡。
+ * 分支每次另起一档（`avoidBranchConflict`），免得撞上一轮巡检留下的分支。项目无成员/工作流不在库 → 不起。
+ */
+function startPatrolWorkflow(pid: string, workflowId: string, patrol: Patrol): string | null {
+  const project = findProjectById(registry, pid)
+  if (!project || !workflows.get(workflowId)) return null
+  const repos = project.members.map((m) => ({ memberId: m.id, repoPath: m.rootPath, tag: m.tag }))
+  if (repos.length === 0) return null
+  const launched = engine.start({
+    workflowId,
+    repoPath: repos[0].repoPath,
+    repos,
+    branch: `patrol-${toProposedName(patrol.name || patrol.id)}`,
+    avoidBranchConflict: true
+  })
+  patrolRuns.set(pid, [
+    ...livePatrolRuns(pid),
+    { runId: launched.runId, repos: repos.map((r) => r.memberId) }
+  ])
+  return launched.runId
+}
+
+/**
+ * 文档腐烂扫描：复用既有 `document-scan` 重扫各成员仓，与已建的文档登记表对账，产出漂移发现。
+ * 两类漂移：登记过的位置在磁盘上没了、磁盘上新出现的文档没进表。**从未建表的成员仓跳过**
+ * （没有基线就无从谈漂移，别拿一整仓文档当发现刷屏）。
+ */
+function patrolDocScan(pid: string): PatrolFinding[] {
+  const zh = (settings.language ?? DEFAULT_LANGUAGE) !== 'en'
+  const findings: PatrolFinding[] = []
+  for (const m of findProjectById(registry, pid)?.members ?? []) {
+    if (!documentStore.has(m.id)) continue
+    const docs = documentStore.get(m.id).docs
+    // 登记覆盖判定：命中条目本身，或落在某文件夹条目之下（登记表与新扫描的折叠粒度可能不同，
+    // 不这么比会把「同一批文档换了个折叠法」全报成漂移）。
+    const covered = (loc: string): boolean =>
+      docs.some((d) => d.location === loc || (d.isFolder && loc.startsWith(`${d.location}/`)))
+    const gone = docs
+      .map((d) => d.location)
+      .filter((loc) => !existsSync(join(m.rootPath, loc)))
+    const unregistered = scanDocuments(m.rootPath)
+      .filter((d) => (d.isFolder ? !(d.coversFiles ?? []).every(covered) : !covered(d.location)))
+      .map((d) => d.location)
+    if (gone.length === 0 && unregistered.length === 0) continue
+    const lines: string[] = []
+    if (gone.length > 0) {
+      lines.push(zh ? '登记过但磁盘上已不存在：' : 'Registered but missing on disk:')
+      lines.push(...gone.map((loc) => `- ${loc}`))
+    }
+    if (unregistered.length > 0) {
+      lines.push(zh ? '磁盘上有但未登记：' : 'On disk but not registered:')
+      lines.push(...unregistered.map((loc) => `- ${loc}`))
+    }
+    findings.push({
+      title: zh ? `文档与代码漂移：${m.derivedName}` : `Docs drifted from code: ${m.derivedName}`,
+      description: lines.join('\n')
+    })
+  }
+  return findings
+}
+
+/**
+ * 巡检运行撞上待决策 → 一条人话发现（哪条巡检、哪个节点、什么决策、已经中止了）。文案的 zh/en 分支
+ * 与 `patrolDocScan` 同一套；决策自身的文案词典在渲染层，主进程不硬翻 i18n key，只给出决策来源与
+ * 用户可读的 `reason`。
+ */
+function patrolStuckFinding(input: {
+  patrol: Patrol
+  runId: string
+  nodeId: string
   decision: EngineDecision
+}): PatrolFinding {
+  const zh = (settings.language ?? DEFAULT_LANGUAGE) !== 'en'
+  const name = input.patrol.name || input.patrol.id
+  const lines = zh
+    ? [
+        `巡检「${name}」拉起的工作流运行在节点 ${input.nodeId} 上抛出了待决策。`,
+        '巡检是周期性巡逻、不站在那等人拍板，该运行已被中止、并发槽已释放。',
+        `决策来源：${input.decision.source}`
+      ]
+    : [
+        `The run started by patrol "${name}" raised a decision at node ${input.nodeId}.`,
+        'A patrol never waits for a verdict, so the run was aborted and its concurrency slot released.',
+        `Decision source: ${input.decision.source}`
+      ]
+  if (input.decision.reason) lines.push(zh ? `原因：${input.decision.reason}` : `Reason: ${input.decision.reason}`)
+  lines.push(
+    zh
+      ? '要不要跟进由你定：可以手动跑一次这个工作流并回答决策，或者改掉这条巡检的动作。'
+      : 'It is up to you: run the workflow manually and answer the decision, or change what this patrol does.'
+  )
+  return {
+    title: zh
+      ? `巡检「${name}」的运行卡在决策上：${input.nodeId}`
+      : `Patrol "${name}" run stuck on a decision at ${input.nodeId}`,
+    description: lines.join('\n')
+  }
+}
+
+/** 巡检推候选：经既有候选提交接缝规整+校验（不旁路），再推给绑该项目的窗口审阅——**止于审阅**。 */
+async function pushPatrolCandidates(pid: string, candidates: CandidateCard[]): Promise<void> {
+  const outcome = await createDecomposeSeam(makeResolveDeps(pid), decomposeProducer).submit(candidates, pid)
+  if ('unbound' in outcome) return
+  sendToProjectWindows(pid, IPC.patrolCandidates, {
+    candidates: outcome.candidates,
+    issues: outcome.issues
+  })
+}
+
+const patrolSchedulers = new Map<string, PatrolScheduler>()
+function patrolSchedulerFor(pid: string): PatrolScheduler {
+  let s = patrolSchedulers.get(pid)
+  if (!s) {
+    s = createPatrolScheduler({
+      listPatrols: () => listPatrols(registry, pid),
+      getProject: () => findProjectById(registry, pid) ?? null,
+      now: () => Date.now(),
+      // 与自动排程同一口径的空槽（同一上限、同一 isRunLive）；槽满时巡检跳过本次、不排队。
+      hasFreeSlot: () => schedulerFor(pid).freeSlots() > 0,
+      markRun: (patrolId, at) => {
+        markPatrolRun(registry, pid, patrolId, at, new Date().toISOString())
+        saveRegistry()
+      },
+      startWorkflow: (workflowId, patrol) => startPatrolWorkflow(pid, workflowId, patrol),
+      runCommand: (command, signal) =>
+        runCommand(command, { cwd: findProjectById(registry, pid)?.members[0]?.rootPath ?? process.cwd(), signal }),
+      scanDocuments: async () => patrolDocScan(pid),
+      // 候选卡类型取项目在册的首个 leaf 类型（container 不该被用作巡检产出）。
+      candidateTypeId: () =>
+        getProjectCardTypes(registry, pid).find((t) => t.archetype === 'leaf')?.id ?? 'feature',
+      pushCandidates: (candidates) => pushPatrolCandidates(pid, candidates),
+      // 巡检运行不绑卡 → 收件箱不投影它，只能由回路自己盯着「它撞上决策没有」（同一条观察者接缝）。
+      onEngineProgress: (handler) => {
         engineObservers.add(handler)
         return () => engineObservers.delete(handler)
       },
@@ -327,6 +485,29 @@ function scheduleEvaluate(pid: string | null): void {
         // 腾出的槽立刻可用：引擎只在 `done` 时触发补位，`aborted` 这条得自己补。
         void schedulerFor(pid).evaluate()
       },
+      describeStuckRun: patrolStuckFinding
+    })
+    patrolSchedulers.set(pid, s)
+  }
+  return s
+}
+
+/** 巡检 tick 间隔（分钟级足够：场景是「每天凌晨扫一次文档」，不是秒级调度）。 */
+const PATROL_TICK_MS = 60_000
+let patrolTimer: NodeJS.Timeout | null = null
+
+/** 评估所有**当前有窗口绑定**的项目的巡检（软件没开就不跑，是桌面应用的诚实边界）。 */
+function evaluatePatrols(): void {
+  const bound = new Set<string>()
+  for (const win of BrowserWindow.getAllWindows()) {
+    const pid = win.isDestroyed() ? null : manager.current(win)?.id
+    if (pid) bound.add(pid)
+  }
+  for (const pid of bound) void patrolSchedulerFor(pid).evaluate()
+}
+
+// ── 决策收件箱：每项目一份 `pendingDecision` 的投影（懒建、缓存；不落盘、不双写）──
+
 const decisionInboxes = new Map<string, DecisionInbox>()
 
 /** 把一条消息发给绑定了某项目的所有窗口。 */
@@ -1954,6 +2135,34 @@ function registerIpc(): void {
   })
 
   // ── 定时巡检：随项目持久化，四个写口都回全量新列表；写完踢一次评估（新建的巡检可立刻到期）──
+  const patrolsOf = (e: Electron.IpcMainInvokeEvent): Patrol[] => {
+    const pid = currentProjectId(e)
+    return pid ? listPatrols(registry, pid) : []
+  }
+  /** 写口收口：命中项目才落盘并重评估，否则原样回当前列表。 */
+  const writePatrol = (
+    e: Electron.IpcMainInvokeEvent,
+    apply: (pid: string, now: string) => Patrol[] | null
+  ): Patrol[] => {
+    const pid = currentProjectId(e)
+    if (!pid) return []
+    const next = apply(pid, new Date().toISOString())
+    if (!next) return patrolsOf(e)
+    saveRegistry()
+    void patrolSchedulerFor(pid).evaluate()
+    return next
+  }
+
+  ipcMain.handle(IPC.listPatrols, (e): Patrol[] => patrolsOf(e))
+  ipcMain.handle(IPC.savePatrol, (e, patrol: Patrol): Patrol[] =>
+    writePatrol(e, (pid, now) => upsertPatrol(registry, pid, patrol, now))
+  )
+  ipcMain.handle(IPC.removePatrol, (e, patrolId: string): Patrol[] =>
+    writePatrol(e, (pid, now) => removePatrolCore(registry, pid, patrolId, now))
+  )
+  ipcMain.handle(IPC.setPatrolEnabled, (e, patrolId: string, enabled: boolean): Patrol[] =>
+    writePatrol(e, (pid, now) => setPatrolEnabledCore(registry, pid, patrolId, enabled, now))
+  )
 }
 
 function restoreOrStart(): void {
@@ -2004,8 +2213,11 @@ app.whenReady().then(() => {
     // 恢复后建好各项目的收件箱投影（由断点全量重建；重建静默，开机不糊一脸通知）。
     for (const p of registry.projects) inboxFor(p.id)
     // 开机补跑：软件没开的那段时间不跑，错过多少个窗口也只补**一次**（由 isDue + lastRunAt 保证）。
+    evaluatePatrols()
   })
   // 巡检常驻回路：分钟级 tick 唤醒评估（只评估当前有窗口绑定的项目）。
+  patrolTimer = setInterval(evaluatePatrols, PATROL_TICK_MS)
+  patrolTimer.unref?.()
   restoreOrStart()
 
   app.on('activate', () => {
@@ -2017,6 +2229,8 @@ app.on('before-quit', () => {
   writeJson(SESSION_FILE, manager.snapshotSession())
   engine.killAllBackground() // 杀掉所有转后台的命令,不留孤儿
   // 停巡检 tick 并取消在飞的巡检命令（杀进程树由既有运行器负责）。
+  if (patrolTimer) clearInterval(patrolTimer)
+  for (const s of patrolSchedulers.values()) s.dispose()
 })
 
 app.on('window-all-closed', () => {

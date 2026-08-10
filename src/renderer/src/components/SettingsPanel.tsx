@@ -13,6 +13,7 @@ import { RuleLibrary } from './RuleLibrary'
 import { CardTypeLibrary } from './CardTypeLibrary'
 import { ConstitutionSettings } from './ConstitutionSettings'
 import { DocumentRegistrySettings } from './DocumentRegistrySettings'
+import { PatrolSettings } from './PatrolSettings'
 import { Field } from './ui/Field'
 import { inputClass } from './ui/styles'
 import { SettingsHeaderSlotContext } from './ui/SettingsHeaderSlot'
@@ -56,6 +57,7 @@ type SectionId =
   | 'project-card-types'
   | 'project-constitution'
   | 'project-documents'
+  | 'project-patrol'
 
 interface NavItem {
   id: SectionId
@@ -82,6 +84,7 @@ const NAV: NavGroup[] = [
       { id: 'project-card-types', labelKey: 'settingsPanel.navCardTypes' },
       { id: 'project-constitution', labelKey: 'settingsPanel.navConstitution' },
       { id: 'project-documents', labelKey: 'settingsPanel.navDocuments' },
+      { id: 'project-patrol', labelKey: 'settingsPanel.navPatrol' }
     ]
   }
 ]
@@ -368,6 +371,16 @@ export function SettingsPanel({
                   <p className="text-[13px] text-stone-600">
                     {t('settingsPanel.noProjectDocuments')}
                   </p>
+                )}
+              </section>
+            )}
+
+            {section === 'project-patrol' && (
+              <section aria-label={t('settingsPanel.sectionProjectPatrol')}>
+                {project ? (
+                  <PatrolSettings />
+                ) : (
+                  <p className="text-[13px] text-stone-600">{t('settingsPanel.noProjectPatrol')}</p>
                 )}
               </section>
             )}

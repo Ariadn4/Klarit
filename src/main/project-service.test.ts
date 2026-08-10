@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { resolve } from 'node:path'
-import type { GitProbeResult, NestedRepoCandidate } from '../shared/types'
-import { createRegistry, findProjectByMemberId } from './registry-core'
+import type { GitProbeResult, NestedRepoCandidate, RegistryData } from '../shared/types'
+import type { Patrol } from '../shared/patrol'
+import { createRegistry, findProjectByMemberId, normalizeRegistry } from './registry-core'
 import {
   importProject,
   linkMemberByDir,
+  listPatrols,
+  markPatrolRun,
   relocateMemberToDir,
   rebindMemberIfGitAppeared,
+  removePatrol,
+  setPatrolEnabled,
+  upsertPatrol,
   type ProjectServiceDeps
 } from './project-service'
 
@@ -197,5 +203,88 @@ describe('成员关联 / 重定位 / 补绑', () => {
     const out = importProject(data, top, deps)
     const member = out.project.members[0]
     expect(rebindMemberIfGitAppeared(data, member, deps)).toBeNull()
+  })
+})
+
+describe('巡检配置持久化（随项目走）', () => {
+  const patrol = (over: Partial<Patrol> = {}): Patrol => ({
+    id: 'pt-1',
+    name: '每天扫文档',
+    trigger: { kind: 'daily', time: '03:00' },
+    action: { kind: 'docScan' },
+    enabled: true,
+    ...over
+  })
+
+  /** 模拟「重开软件」：整份注册表过一遍落盘 → 读盘 → 容错规整。 */
+  const reopen = (data: RegistryData): RegistryData =>
+    normalizeRegistry(JSON.parse(JSON.stringify(data)))
+
+  function withProject(): { data: RegistryData; pid: string } {
+    const top = resolve('/work/patrolled')
+    const data = createRegistry()
+    const out = importProject(data, top, makeDeps({ [top]: gitProbe(top) }))
+    return { data, pid: out.project.id }
+  }
+
+  it('默认零条巡检（不预置任何巡检）', () => {
+    const { data, pid } = withProject()
+    expect(listPatrols(data, pid)).toEqual([])
+  })
+
+  it('新建后重开仍在，配置与开关保持', () => {
+    const { data, pid } = withProject()
+    upsertPatrol(data, pid, patrol(), NOW)
+    expect(listPatrols(reopen(data), pid)).toEqual([patrol()])
+  })
+
+  it('编辑同 id 覆盖而非追加', () => {
+    const { data, pid } = withProject()
+    upsertPatrol(data, pid, patrol(), NOW)
+    upsertPatrol(data, pid, patrol({ name: '改名了', trigger: { kind: 'everyHours', hours: 6 } }), NOW)
+    const after = listPatrols(reopen(data), pid)
+    expect(after).toHaveLength(1)
+    expect(after[0]).toMatchObject({ name: '改名了', trigger: { kind: 'everyHours', hours: 6 } })
+  })
+
+  it('停用不删除：配置与 lastRunAt 保留，可再启用', () => {
+    const { data, pid } = withProject()
+    upsertPatrol(data, pid, patrol(), NOW)
+    markPatrolRun(data, pid, 'pt-1', 1700, NOW)
+    setPatrolEnabled(data, pid, 'pt-1', false, NOW)
+    const off = listPatrols(reopen(data), pid)[0]
+    expect(off).toMatchObject({ enabled: false, name: '每天扫文档', lastRunAt: 1700 })
+    setPatrolEnabled(data, pid, 'pt-1', true, NOW)
+    expect(listPatrols(data, pid)[0]).toMatchObject({ enabled: true, lastRunAt: 1700 })
+  })
+
+  it('删除后重开不再回来', () => {
+    const { data, pid } = withProject()
+    upsertPatrol(data, pid, patrol(), NOW)
+    removePatrol(data, pid, 'pt-1', NOW)
+    expect(listPatrols(reopen(data), pid)).toEqual([])
+  })
+
+  it('lastRunAt 持久化（重开后仍是上次发起时刻）', () => {
+    const { data, pid } = withProject()
+    upsertPatrol(data, pid, patrol(), NOW)
+    markPatrolRun(data, pid, 'pt-1', 1_760_000_000_000, NOW)
+    expect(listPatrols(reopen(data), pid)[0].lastRunAt).toBe(1_760_000_000_000)
+  })
+
+  it('老项目没有巡检字段 → 读为空列表、不报错；脏条目不出闸', () => {
+    const { data, pid } = withProject()
+    expect(listPatrols(data, pid)).toEqual([])
+    ;(data.projects[0] as { patrols?: unknown }).patrols = [{ id: 'x', trigger: { kind: 'cron' } }, patrol()]
+    expect(listPatrols(data, pid)).toEqual([patrol()])
+  })
+
+  it('项目不存在 → 读空、写为 null（不静默造项目）', () => {
+    const { data } = withProject()
+    expect(listPatrols(data, 'nope')).toEqual([])
+    expect(upsertPatrol(data, 'nope', patrol(), NOW)).toBeNull()
+    expect(removePatrol(data, 'nope', 'pt-1', NOW)).toBeNull()
+    expect(setPatrolEnabled(data, 'nope', 'pt-1', false, NOW)).toBeNull()
+    expect(markPatrolRun(data, 'nope', 'pt-1', 1, NOW)).toBeNull()
   })
 })

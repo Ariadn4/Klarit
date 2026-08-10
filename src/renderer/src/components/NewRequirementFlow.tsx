@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronLeft, Loader2, Minus, Paperclip, X } from 'lucide-react'
 import Markdown from 'react-markdown'
@@ -474,6 +474,14 @@ export function NewRequirementFlow(): React.JSX.Element {
   const phase = useNewRequirementStore((s) => s.phase)
   const windowOpen = useNewRequirementStore((s) => s.windowOpen)
   const notice = useNewRequirementStore((s) => s.notice)
+  // 巡检扫出的问题也走这条审阅路（止于审阅、不落库）——同一个窗，用户不必学第二套。
+  useEffect(
+    () =>
+      window.klarit.onPatrolCandidates?.(({ candidates, issues }) =>
+        useNewRequirementStore.getState().receiveCandidates(candidates, issues)
+      ),
+    []
+  )
   return (
     <>
       {windowOpen && phase === 'describing' && <DescribeWindow />}
