@@ -58,6 +58,7 @@ import {
   setNotifyOnDecision as applyNotifyOnDecision
 } from './settings'
 import { makeAgentProbe, scanAgents } from './agents'
+import { setDetectedAgents } from './agent/launch'
 import { agentSupportsSubagents } from '../shared/agents'
 import {
   clearActiveWorkflow,
@@ -901,6 +902,14 @@ let settings: AppSettings = { language: DEFAULT_LANGUAGE }
 
 // 本机已检测到的 agent（每次启动重扫，反映新装/卸载，不持久化）；whenReady 内填充。
 let detectedAgents: DetectedAgent[] = []
+
+/**
+ * 全部「被管理的目录」：已注册项目的成员仓主工作树与其全部 worktree。这些目录的内容由外部 agent 写入、
+ * 可能源自导入的第三方项目——落在其内的可执行文件不得成为 agent CLI 的解析结果。
+ */
+function registeredDirs(): string[] {
+  return registry.projects.flatMap((p) => p.members.flatMap((m) => [m.rootPath, ...m.worktreePaths]))
+}
 
 /** 生效主题对应的窗口底色（防深色启动白闪）——取自深色令牌 canvas / 浅色 paper。 */
 const THEME_BG: Record<EffectiveTheme, string> = { dark: '#14141c', light: '#f5f1e8' }
@@ -2198,7 +2207,17 @@ app.whenReady().then(() => {
     systemLocale: () => app.getLocale()
   })
   // 扫描本机已安装 agent（每次启动重扫；探测健壮、永不抛出，扫不到即空列表）。
-  detectedAgents = scanAgents(makeAgentProbe())
+  // 解析**钉在 userData**（Klarit 自己的目录）下跑：`where` 的搜索范围含当前目录，钉住才不让被管理的
+  // 仓库参与决定解析结果；同时把已注册项目 / worktree 目录交给护栏，落在其内的候选一律拒。
+  const scan = scanAgents(makeAgentProbe(app.getPath('userData')), { forbiddenDirs: registeredDirs() })
+  detectedAgents = scan.agents
+  // 解析出的绝对路径灌进共用启动实现——它是起 agent 子进程的唯一可信来源（绝不回落裸命令名）。
+  setDetectedAgents(detectedAgents)
+  for (const issue of scan.issues) {
+    if (issue.reason === 'rejected-by-guard') {
+      console.warn(`[agents] ${issue.id} 的路径候选被安全护栏拒绝，视为未检测到：${issue.candidates.join(' | ')}`)
+    }
+  }
   // 让 nativeTheme 跟随已存外观（'system' 则跟随 OS），使窗口首帧底色与生效主题一致、无白闪。
   nativeTheme.themeSource = settings.appearance ?? DEFAULT_APPEARANCE
   // 系统明暗变化时（仅「跟随系统」会改变 shouldUseDarkColors）广播新生效主题。

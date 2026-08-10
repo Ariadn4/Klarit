@@ -71,6 +71,7 @@ import type { RunStore } from './run-store'
 import { memberWorktreePath, nextSuffixed, resolveFreeBranch } from './branch-naming'
 import { realAgentRunner, type AgentLaunch, type AgentRunner, type AgentRunSpec } from '../agent/runner'
 import { launchContinuation, buildContinuationDelta } from '../agent/continuation'
+import { transcriptForRebuild, REBUILD_BUDGET } from '../agent/rebuild-transcript'
 import { readHandshake as realReadHandshake } from '../agent/handshake'
 import { scopeGuard } from '../agent/scope'
 
@@ -151,6 +152,11 @@ export interface EngineDeps {
   getObjectiveCheck?: (ref: RulePackItemRef) => string | null
   /** 命令输出按桶缓冲(可回看);缺省内存缓冲。真实由 main 注入文件缓冲(userData/engine-runs/<runId>/)。 */
   outputBuffer?: OutputBuffer
+  /**
+   * 流式增量**推送**的合批时间窗(毫秒,缺省 50):同一输出桶的相邻增量并成一条再发,免得逐 token 一条
+   * 把 IPC 顶满。只影响推送——落盘照旧逐行即时。`0` ＝ 不合批(逐条推,供需要逐条断言的测试)。
+   */
+  chunkBatchMs?: number
   /**
    * 运行日志(结构性事件落盘,供时间线回看);缺省内存日志。引擎只在既有 emit 处**旁挂**一次写入,
    * 不按类型过滤(收录规则属 journal 自己),故未来新增事件类型自动进日志。
@@ -258,12 +264,61 @@ export function createEngine(deps: EngineDeps): Engine {
   const outputBuffer = deps.outputBuffer ?? createMemoryOutputBuffer()
   const journal = deps.journal ?? createMemoryRunJournal()
   const rawEmit = deps.emit ?? ((): void => {})
+  /**
+   * 流式增量的推送合批时间窗（毫秒）。结构化流式输出的行频可达每 token 一行，逐行推送会把 IPC 频率
+   * 和渲染层一起顶上去。**只合批推送**——落盘不受影响（见下）。`<=0` ＝ 不合批（测试可关）。
+   */
+  const chunkBatchMs = deps.chunkBatchMs ?? 50
+  /** 在途未推送的增量：键 = 运行 + 桶 + 流，值 = 首个事件（承载桶身份）与待合并的片段。 */
+  const pendingChunks = new Map<string, { evt: Extract<EngineProgressEvent, { kind: 'op-chunk' }>; parts: string[] }>()
+  let chunkTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 把在途增量合并成每桶一条推出去（同时旁挂日志——journal 自己会丢 op-chunk）。 */
+  const flushChunks = (): void => {
+    if (chunkTimer) {
+      clearTimeout(chunkTimer)
+      chunkTimer = null
+    }
+    if (!pendingChunks.size) return
+    const batch = [...pendingChunks.values()]
+    pendingChunks.clear()
+    for (const { evt, parts } of batch) {
+      const merged = { ...evt, chunk: parts.join('') }
+      try {
+        journal.append(merged, Date.now())
+      } catch {
+        /* 忽略 */
+      }
+      rawEmit(merged)
+    }
+  }
+
   // 包装 emit:op-chunk 在流式推送之外按桶累积(前台 node:<id>、后台 bg:<id>),供关重开回看;
   // 同一处**旁挂**运行日志(journal 自己丢 op-chunk、只留桶引用),故时间线不需要引擎逐路径埋点。
+  //
+  // 落盘与推送在这里分道:**落盘逐行即时、绕过合批**(崩溃半路的可重建性不拿去换界面流畅),
+  // 推送按时间窗把同桶相邻增量合并后再发。结构性事件推送前先把在途增量放出去,保住次序。
   const emit = (evt: EngineProgressEvent): void => {
     if (evt.kind === 'op-chunk') {
-      outputBuffer.append(evt.runId, chunkBucket(evt.nodeId, { bgId: evt.bgId, cmdIndex: evt.cmdIndex }), evt.chunk)
+      const bucket = chunkBucket(evt.nodeId, { bgId: evt.bgId, cmdIndex: evt.cmdIndex })
+      outputBuffer.append(evt.runId, bucket, evt.chunk)
+      if (chunkBatchMs <= 0) {
+        try {
+          journal.append(evt, Date.now())
+        } catch {
+          /* 忽略 */
+        }
+        rawEmit(evt)
+        return
+      }
+      const key = `${evt.runId} ${bucket} ${evt.stream}`
+      const cur = pendingChunks.get(key)
+      if (cur) cur.parts.push(evt.chunk)
+      else pendingChunks.set(key, { evt, parts: [evt.chunk] })
+      if (!chunkTimer) chunkTimer = setTimeout(flushChunks, chunkBatchMs)
+      return
     }
+    flushChunks()
     // 旁路永不阻断运行:日志写不进去(磁盘满/权限)只是这次没记，运行照跑。
     try {
       journal.append(evt, Date.now())
@@ -798,6 +853,28 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   /**
+   * 某 agent 节点的**原始流记录**落盘路径（agent stdout 逐行原样，供续接重建与将来的结构化消费）。
+   * 由输出缓冲分配：与该节点的展示分桶同目录、同生共死，但**两份并存、互不取代**（职责相反：
+   * 展示要压缩给人看，原始要保真给机器）。无盘缓冲返回 undefined（调用方回落展示转写）。
+   */
+  const agentHistoryPath = (runId: string, nodeId: string): string | undefined =>
+    outputBuffer.rawPath(runId, `node:${nodeId}`) ?? undefined
+
+  /**
+   * 续接阶梯第 2 层（喂回历史重建）的历史段：**优先由原始流记录派生**——展示转写丢掉了 `tool_result`、
+   * 把 `tool_use` 目标截到 80 字，照它重建的话走到兜底层的 agent 只会收到「我调过 Edit，路径大概是
+   * src/main/engine/engi…」，不知道自己看到过什么。无原始记录（本能力上线前的运行）→ 回落既有展示
+   * 转写，不报错、不阻断续接。
+   */
+  function historyBlock(runId: string, nodeId: string): string {
+    const bucket = `node:${nodeId}`
+    const raw = outputBuffer.readRaw(runId, bucket)
+    // 有原始记录：按事件边界转写与取舍（重建自己的规则）；没有：拿展示文本垫一下，聊胜于无。
+    const text = raw.trim() ? transcriptForRebuild(raw) : outputBuffer.read(runId, bucket).trim().slice(-REBUILD_BUDGET)
+    return text.trim() ? `\n\n# 你之前的执行记录（供参考，worktree 里已有对应改动，别重复已完成的）\n${text}` : ''
+  }
+
+  /**
    * 运行 agent 节点的 executing 阶段（里程碑 A：单仓；多仓 extraDirs 留阶段 B）。一个 agent 承担本节点：
    * 全新拉起 或 续接（自愈计数>0 时按阶梯 resume/自存重建），流式回显，退出读握手分流：
    * `done`→成功（进越界检测/门把）；`need-decision`→抛 `sourceKind='agent'` 决策；`failed`→限次自愈续接，超限抛决策。
@@ -874,7 +951,9 @@ export function createEngine(deps: EngineDeps): Engine {
         nodeRun.session = id
         deps.store.save(bp)
       },
-      onChunk: (stream, chunk) => emit({ kind: 'op-chunk', runId: bp.runId, nodeId: node.id, stream, chunk })
+      onChunk: (stream, chunk) => emit({ kind: 'op-chunk', runId: bp.runId, nodeId: node.id, stream, chunk }),
+      // 原始流记录：agent stdout 逐行原样落盘（边跑边追加），供续接兜底重建
+      historyPath: agentHistoryPath(bp.runId, node.id)
     }
 
     // 续接（自愈失败详情 / 用户决策答复 / 修复前向回退 / 崩溃恢复）走阶梯；否则全新起
@@ -885,14 +964,10 @@ export function createEngine(deps: EngineDeps): Engine {
     nodeRun.forwardFix = undefined // 一次性，消费即清
     if (nodeRun.lastFailure || answer || forwardFix || resumedMidRun) {
       const delta = buildContinuationDelta({ failure: nodeRun.lastFailure, decisionAnswer: answer, forwardFix })
-      // 全新起兜底的 rebuildPrompt：完整任务 + 喂回已记录的执行历史（readable transcript）+ delta。
-      const transcript = outputBuffer.read(bp.runId, `node:${node.id}`)
-      const historyBlock = transcript.trim()
-        ? `\n\n# 你之前的执行记录（供参考，worktree 里已有对应改动，别重复已完成的）\n${transcript.slice(-8000)}`
-        : ''
+      // 全新起兜底的 rebuildPrompt：完整任务 + 喂回已记录的执行历史（由原始流记录派生）+ delta。
       launch = launchContinuation(runAgent, spec, {
         inject: delta,
-        rebuildPrompt: `${prep.prompt}${historyBlock}\n\n${delta}`
+        rebuildPrompt: `${prep.prompt}${historyBlock(bp.runId, node.id)}\n\n${delta}`
       })
     } else {
       launch = runAgent.start({ ...spec, prompt: prep.prompt })
@@ -1067,14 +1142,19 @@ export function createEngine(deps: EngineDeps): Engine {
         hr.session = id
         deps.store.save(bp)
       },
-      onChunk: (stream, chunk) => emit({ kind: 'op-chunk', runId: bp.runId, nodeId, stream, chunk })
+      onChunk: (stream, chunk) => emit({ kind: 'op-chunk', runId: bp.runId, nodeId, stream, chunk }),
+      // heal agent 与本节点共用输出桶，原始流记录同理（两份记录对每一次 agent 运行都成立）
+      historyPath: agentHistoryPath(bp.runId, nodeId)
     }
     const answer = hr.pendingAnswer
     hr.pendingAnswer = undefined
     let launch: AgentLaunch | null
     if (hr.session || hr.lastFailure || answer) {
       const delta = buildContinuationDelta({ failure: hr.lastFailure, decisionAnswer: answer })
-      launch = launchContinuation(runAgent, spec, { inject: delta, rebuildPrompt: `${prep.prompt}\n\n${delta}` })
+      launch = launchContinuation(runAgent, spec, {
+        inject: delta,
+        rebuildPrompt: `${prep.prompt}${historyBlock(bp.runId, nodeId)}\n\n${delta}`
+      })
     } else {
       launch = runAgent.start({ ...spec, prompt: prep.prompt })
     }

@@ -1,6 +1,7 @@
 /**
- * agent 外壳 adapter：把一次「启动 / 原生续接」声明式翻译成 CLI 调用式（命令 + 参数 + stdin 内容）。
- * **纯函数、无副作用**——只做 argv 翻译，便于测试；实际拉进程由 `runner.ts` 的共享运行器执行。
+ * agent 外壳 adapter：把一次「启动 / 原生续接」声明式翻译成 CLI 调用式（参数 + stdin 内容）。
+ * **纯函数、无副作用**——只做 argv 翻译，便于测试；实际拉进程由 `launch.ts` 的共用启动实现执行
+ * （起哪个可执行文件由探测出的绝对路径决定，adapter 不碰命令名）。
  *
  * 只接 agent 外壳（claude / codex / cursor），不接模型/后端。首发落地 claude 一家（里程碑 A），
  * codex/cursor 留阶段 B；接口已为多目录（一个 agent 跨仓 `extraDirs`）与续接预留。
@@ -8,9 +9,12 @@
 
 import { clampEffortToHigh, type AgentId, type EffortLevel } from '../../shared/agents'
 
-/** 一次 agent CLI 启动的调用式（纯数据）。`input` 经 stdin 喂入（完整 prompt / 注入文本），不进 argv（避免长度/转义/注入）。 */
+/**
+ * 一次 agent CLI 启动的调用式（纯数据）。`input` 经 stdin 喂入（完整 prompt / 注入文本），不进 argv
+ * （避免长度/转义/注入）。**没有「命令名」字段**——起哪个可执行文件由 `agent-detection` 解析出的
+ * 绝对路径决定（见 `launch.ts`），adapter 只负责 argv。
+ */
 export interface AgentInvocation {
-  command: string
   args: string[]
   input?: string
 }
@@ -92,10 +96,29 @@ function claudeStreamLine(line: string): string | null {
   return null // system / tool_result 等噪音不展示
 }
 
-/** 把 extraArgs 字符串按空白切分为参数（工作流作者可信输入）。 */
+/**
+ * shell 元字符：一个参数含它们就有机会变成**第二条命令**（cmd 与 POSIX shell 的口子都封上）。
+ * 反斜杠不在此列——Windows 路径要用。
+ */
+const SHELL_META = /[&|;<>^"'`$()%!\r\n]/
+
+/**
+ * 把 extraArgs 字符串按空白切分为参数。**来源是不受信输入**——工作流现在由 agent 自动 author 出来，
+ * 「工作流作者是人、内容可信」的旧前提已不成立。故逐项封 shell 元字符：含则**抛错**（由调用方归技术
+ * 失败并给出可辨认原因），MUST NOT 静默丢弃该参数照常启动——那会让工作流的实际行为与其定义不一致。
+ *
+ * 只封「一个参数变成第二条命令」这一条路，**不做 flag 白名单**：既有契约明写 extraArgs 透传、模型值
+ * 不做清单校验，白名单与之打架且必然过时（过时的白名单挡掉合法用法，用户会去找绕过去的口子）。
+ */
 function splitExtra(extraArgs?: string): string[] {
   const s = extraArgs?.trim()
-  return s ? s.split(/\s+/) : []
+  if (!s) return []
+  const items = s.split(/\s+/)
+  const bad = items.find((i) => SHELL_META.test(i))
+  if (bad !== undefined) {
+    throw new Error(`透传参数含 shell 元字符，拒绝启动（不静默丢弃）：${bad}`)
+  }
+  return items
 }
 
 /** claude 公共参数：无头 print + 流式 NDJSON（供实时展示）+ 跳权限 + 选模型/effort + 跨仓多目录 + 透传。 */
@@ -121,15 +144,11 @@ function withUltracode(text: string, opts: AgentInvokeOpts): string {
 export const claudeAdapter: AgentAdapter = {
   id: 'claude-code',
   supportsResume: true,
-  start: (prompt, opts) => ({ command: 'claude', args: claudeCommon(opts), input: withUltracode(prompt, opts) }),
+  start: (prompt, opts) => ({ args: claudeCommon(opts), input: withUltracode(prompt, opts) }),
   // 按**具体 session id** 精确续接（--resume <id>）；无 id 则无法原生续接，返回 null（引擎回落历史重建）。
   resume: (inject, opts) =>
     opts.sessionId
-      ? {
-          command: 'claude',
-          args: ['--resume', opts.sessionId, ...claudeCommon(opts)],
-          input: withUltracode(inject, opts)
-        }
+      ? { args: ['--resume', opts.sessionId, ...claudeCommon(opts)], input: withUltracode(inject, opts) }
       : null,
   displayFromStreamLine: claudeStreamLine,
   sessionIdFromStreamLine: claudeSessionId
@@ -151,10 +170,10 @@ function codexCommon(opts: AgentInvokeOpts): string[] {
 export const codexAdapter: AgentAdapter = {
   id: 'codex',
   supportsResume: true,
-  start: (prompt, opts) => ({ command: 'codex', args: ['exec', ...codexCommon(opts), '-'], input: prompt }),
+  start: (prompt, opts) => ({ args: ['exec', ...codexCommon(opts), '-'], input: prompt }),
   resume: (inject, opts) =>
     opts.sessionId
-      ? { command: 'codex', args: ['exec', 'resume', opts.sessionId, ...codexCommon(opts), '-'], input: inject }
+      ? { args: ['exec', 'resume', opts.sessionId, ...codexCommon(opts), '-'], input: inject }
       : null
 }
 
@@ -171,10 +190,10 @@ function cursorCommon(opts: AgentInvokeOpts): string[] {
 export const cursorAdapter: AgentAdapter = {
   id: 'cursor',
   supportsResume: true,
-  start: (prompt, opts) => ({ command: 'cursor-agent', args: cursorCommon(opts), input: prompt }),
+  start: (prompt, opts) => ({ args: cursorCommon(opts), input: prompt }),
   resume: (inject, opts) =>
     opts.sessionId
-      ? { command: 'cursor-agent', args: ['--resume', opts.sessionId, ...cursorCommon(opts)], input: inject }
+      ? { args: ['--resume', opts.sessionId, ...cursorCommon(opts)], input: inject }
       : null
 }
 

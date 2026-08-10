@@ -56,7 +56,12 @@ function installKlarit(over: Record<string, unknown> = {}): void {
     allRulePacks: vi.fn(async () => []),
     getWorkflow: vi.fn(async () => null),
     scanAgents: vi.fn(async () => [
-      { id: 'claude-code', name: 'Claude Code', models: [{ id: 'm1', name: 'M1' }, { id: 'm2', name: 'M2' }] }
+      {
+        id: 'claude-code',
+        name: 'Claude Code',
+        executablePath: 'C:\bin\claude.exe',
+        models: [{ id: 'm1', name: 'M1' }, { id: 'm2', name: 'M2' }]
+      }
     ]),
     getDefaultAgent: vi.fn(async () => 'claude-code'),
     getDefaultModel: vi.fn(async () => null),

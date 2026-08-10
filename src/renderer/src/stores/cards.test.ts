@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { RunBreakpoint, StoredCard } from '@shared/types'
-import { useCardsStore } from './cards'
+import { useCardsStore, outputKey, OUTPUT_WINDOW } from './cards'
 
 function bp(over: Partial<RunBreakpoint>): RunBreakpoint {
   return {
@@ -208,5 +208,46 @@ describe('cards store · removeCard', () => {
     await useCardsStore.getState().removeCard('card-x')
 
     expect(useCardsStore.getState().detailSlug).toBe('other')
+  })
+})
+
+/**
+ * 渲染层每桶只常驻**尾部有界窗口**（超出部分从内存丢弃），往上回看走既有「从引擎缓冲读该桶」的路径。
+ * 丢过就得标出来——否则界面会把截过的开头当成完整历史。
+ */
+describe('cards store · 输出常驻窗口有界', () => {
+  beforeEach(() => {
+    useCardsStore.setState({ outputs: {}, outputTruncated: {} })
+  })
+
+  it('持续追加 → 每桶常驻内容有界，只留尾部', () => {
+    const s = useCardsStore.getState()
+    for (let i = 0; i < 400; i++) s.appendOutput('r1', 'node:n1', `${'x'.repeat(200)}行${i}\n`)
+    const text = useCardsStore.getState().outputs[outputKey('r1', 'node:n1')]
+    expect(text.length).toBeLessThanOrEqual(OUTPUT_WINDOW)
+    expect(text.endsWith('行399\n')).toBe(true) // 留的是尾部（最新）
+    expect(text).not.toContain('行0\n') // 开头已被丢弃
+  })
+
+  it('丢过内容就标记该桶已截断（供界面提供回看入口）', () => {
+    const s = useCardsStore.getState()
+    s.appendOutput('r1', 'node:n1', '短短一行\n')
+    expect(useCardsStore.getState().outputTruncated[outputKey('r1', 'node:n1')]).toBeFalsy()
+    s.appendOutput('r1', 'node:n1', 'y'.repeat(OUTPUT_WINDOW + 10))
+    expect(useCardsStore.getState().outputTruncated[outputKey('r1', 'node:n1')]).toBe(true)
+  })
+
+  it('seed 回看内容同样只常驻尾部，且标出被截', () => {
+    useCardsStore.getState().seedOutput('r1', 'node:n2', 'z'.repeat(OUTPUT_WINDOW * 2))
+    expect(useCardsStore.getState().outputs[outputKey('r1', 'node:n2')].length).toBe(OUTPUT_WINDOW)
+    expect(useCardsStore.getState().outputTruncated[outputKey('r1', 'node:n2')]).toBe(true)
+  })
+
+  it('别的桶不受影响：截断标记按桶独立', () => {
+    const s = useCardsStore.getState()
+    s.appendOutput('r1', 'node:big', 'q'.repeat(OUTPUT_WINDOW + 1))
+    s.appendOutput('r1', 'node:small', '一行\n')
+    expect(useCardsStore.getState().outputTruncated[outputKey('r1', 'node:big')]).toBe(true)
+    expect(useCardsStore.getState().outputTruncated[outputKey('r1', 'node:small')]).toBeFalsy()
   })
 })

@@ -3,16 +3,21 @@ import { headlessInvocation, buildDecomposeMessage, parseCandidateCards } from '
 
 describe('headlessInvocation', () => {
   it('claude-code：-p（带/不带 model）', () => {
-    expect(headlessInvocation('claude-code')).toEqual({ command: 'claude', args: ['-p'] })
+    expect(headlessInvocation('claude-code')).toEqual({ agentId: 'claude-code', args: ['-p'] })
     expect(headlessInvocation('claude-code', 'opus')).toEqual({
-      command: 'claude',
+      agentId: 'claude-code',
       args: ['-p', '--model', 'opus']
     })
   })
 
-  it('codex / cursor 有各自 CLI', () => {
-    expect(headlessInvocation('codex').command).toBe('codex')
-    expect(headlessInvocation('cursor').command).toBe('cursor-agent')
+  it('调用式只带外壳 id 与 argv，不含命令名（起哪个可执行文件由探测出的绝对路径决定）', () => {
+    for (const id of ['claude-code', 'codex', 'cursor'] as const) {
+      const inv = headlessInvocation(id)
+      expect(inv.agentId).toBe(id)
+      expect(inv).not.toHaveProperty('command')
+    }
+    expect(headlessInvocation('codex').args).toContain('exec')
+    expect(headlessInvocation('cursor').args).toContain('-p')
   })
 })
 

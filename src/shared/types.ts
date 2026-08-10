@@ -31,11 +31,16 @@ export interface AppSettings {
   notifyOnDecision?: boolean
 }
 
-/** 一个本地已检测到的 agent：标识、展示名、其可选模型清单。 */
+/** 一个本地已检测到的 agent：标识、展示名、其可选模型清单、其 CLI 的可执行绝对路径。 */
 export interface DetectedAgent {
   id: AgentId
   name: string
   models: AgentModel[]
+  /**
+   * 该 agent CLI 的**可执行绝对路径**（探测时解析并过护栏）——起子进程的唯一可信来源，
+   * 不存在「命令名」这个概念（裸名交给 shell 会让被管理的仓库决定起哪个可执行文件）。
+   */
+  executablePath: string
 }
 
 /** 项目的 git 信息——一旦查到 git 即记录。 */

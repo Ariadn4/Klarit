@@ -515,6 +515,7 @@ export const en: Dictionary = {
     advanceAbort: 'Abort and go to next node',
     abortFinish: 'Abort and finish',
     noOutput: 'No output yet',
+    loadEarlierOutput: 'Load earlier output',
     copy: 'Copy',
     copied: 'Copied',
     detail: 'Details',

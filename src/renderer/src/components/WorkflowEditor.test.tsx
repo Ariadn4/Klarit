@@ -318,7 +318,9 @@ describe('WorkflowEditor 表单编辑', () => {
       <WorkflowEditor
         workflowId="wf"
         others={[]}
-        detectedAgents={[{ id: 'claude-code', name: 'Claude Code', models: [{ id: 'claude-opus-4-8', name: 'Opus 4.8' }] }]}
+        detectedAgents={[
+          { id: 'claude-code', name: 'Claude Code', executablePath: 'C:\bin\claude.exe', models: [{ id: 'claude-opus-4-8', name: 'Opus 4.8' }] }
+        ]}
         onClose={() => {}}
         onSaved={() => {}}
       />

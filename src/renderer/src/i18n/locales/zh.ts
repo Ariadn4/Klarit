@@ -509,6 +509,7 @@ export const zh = {
     advanceAbort: '中止并进入下一节点',
     abortFinish: '中止并完成流程',
     noOutput: '暂无输出',
+    loadEarlierOutput: '载入更早的输出',
     copy: '复制',
     copied: '已复制',
     detail: '详情',

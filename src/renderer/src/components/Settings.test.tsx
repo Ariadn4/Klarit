@@ -36,12 +36,18 @@ const TWO_AGENTS = [
   {
     id: 'claude-code' as const,
     name: 'Claude Code',
+    executablePath: 'C:\bin\claude.exe',
     models: [
       { id: 'claude-opus-4-8', name: 'Opus 4.8' },
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }
     ]
   },
-  { id: 'codex' as const, name: 'Codex', models: [{ id: 'gpt-5-codex', name: 'GPT-5 Codex' }] }
+  {
+    id: 'codex' as const,
+    name: 'Codex',
+    executablePath: 'C:\bin\codex.exe',
+    models: [{ id: 'gpt-5-codex', name: 'GPT-5 Codex' }]
+  }
 ]
 
 describe('Settings 设置入口', () => {

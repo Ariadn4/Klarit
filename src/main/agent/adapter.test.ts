@@ -4,7 +4,6 @@ import { claudeAdapter, codexAdapter, cursorAdapter, resolveAdapter, type AgentI
 describe('claudeAdapter — start argv 翻译', () => {
   it('无头 print + 跳权限 + 选模型；prompt 走 stdin', () => {
     const inv = claudeAdapter.start('完整 prompt', { model: 'claude-opus-4-8' })
-    expect(inv.command).toBe('claude')
     expect(inv.args).toContain('-p')
     expect(inv.args).toContain('--dangerously-skip-permissions')
     expect(inv.args).toContain('--model')
@@ -30,9 +29,34 @@ describe('claudeAdapter — start argv 翻译', () => {
     expect(inv.args).toContain('bar')
   })
 
+  it('调用式不含命令名——起哪个可执行文件由探测出的绝对路径决定', () => {
+    expect(claudeAdapter.start('p', {})).not.toHaveProperty('command')
+  })
+
   it('建议清单外的模型值原样翻 --model（不做清单校验）', () => {
     const inv = claudeAdapter.start('p', { model: 'opus' })
     expect(inv.args[inv.args.indexOf('--model') + 1]).toBe('opus')
+  })
+})
+
+describe('extraArgs 边界 — 封「一个参数变成第二条命令」，不做 flag 白名单', () => {
+  const META = ['--foo & calc', '--foo|calc', '--foo;calc', '--foo>x', '--out<x', '--a^b', '--a"b', "--a'b", '--a`b', '--a$b', '--a(b)', '--a%PATH%', '--a!b!']
+
+  it.each(META)('含 shell 元字符的项 → 抛出可辨认原因，不静默丢弃后照常启动：%s', (extraArgs) => {
+    for (const a of [claudeAdapter, codexAdapter, cursorAdapter]) {
+      expect(() => a.start('p', { extraArgs })).toThrow(/元字符/)
+    }
+  })
+
+  it('不含元字符的普通参数照旧按空白切分原样传入（不做 flag 清单校验）', () => {
+    const inv = claudeAdapter.start('p', { extraArgs: '--mcp-config ./x.json --future-flag=v1' })
+    expect(inv.args).toContain('--mcp-config')
+    expect(inv.args).toContain('./x.json')
+    expect(inv.args).toContain('--future-flag=v1') // 未来新增 flag 无需等 Klarit 发版
+  })
+
+  it('resume 路径同样受校验（续接不该成为绕过口）', () => {
+    expect(() => claudeAdapter.resume('x', { sessionId: 'sid', extraArgs: 'a & b' })).toThrow(/元字符/)
   })
 })
 
@@ -96,7 +120,6 @@ describe('claudeAdapter — resume by session id', () => {
     expect(claudeAdapter.supportsResume).toBe(true)
     const inv = claudeAdapter.resume('修一下这个门失败', { model: 'm', sessionId: 'sess-123' }) as AgentInvocation
     expect(inv).not.toBeNull()
-    expect(inv.command).toBe('claude')
     expect(inv.args[inv.args.indexOf('--resume') + 1]).toBe('sess-123')
     expect(inv.args).not.toContain('--continue') // 不用「最近一条」
     expect(inv.input).toBe('修一下这个门失败')
@@ -119,7 +142,6 @@ describe('claudeAdapter — 从流式抓 session id', () => {
 describe('codexAdapter / cursorAdapter — 契约对齐', () => {
   it('codex：exec 非交互 + 免审批沙箱 + 选模型；prompt 走 stdin；resume 用 exec resume --last', () => {
     const inv = codexAdapter.start('P', { model: 'gpt-5-codex' })
-    expect(inv.command).toBe('codex')
     expect(inv.args.slice(0, 1)).toEqual(['exec'])
     expect(inv.args).toContain('--ask-for-approval')
     expect(inv.args).toContain('never')
@@ -133,7 +155,6 @@ describe('codexAdapter / cursorAdapter — 契约对齐', () => {
 
   it('cursor：print + force + trust + 选模型 + extraDirs 多目录；resume 用 --resume', () => {
     const inv = cursorAdapter.start('P', { model: 'gpt-5', extraDirs: ['/wt/api'] })
-    expect(inv.command).toBe('cursor-agent')
     expect(inv.args).toContain('-p')
     expect(inv.args).toContain('--force')
     expect(inv.args).toContain('--trust')
