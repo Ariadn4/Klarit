@@ -201,6 +201,24 @@ describe('createOpsProducer（桩 runner）', () => {
     expect(captured).toBeUndefined()
   })
 
+  // habit-context-materialization 回归：聊天写工作流那条路本来就不挂项目——改成「自动路只挂习惯上下文包」后
+  // 它照旧一个可访问目录都不带（既不挂包、也不挂仓根），翻成 CLI 参数里没有任何 --add-dir。
+  it('聊天路径 producer 一个可访问目录都不带（不挂上下文包、不挂仓根）', async () => {
+    let captured: string[] | undefined = ['sentinel']
+    const base = stubRunner('{ "ops": [] }')
+    const runner: AgentRunner = {
+      ...base,
+      start: (spec: AgentRunSpec & { prompt: string }) => {
+        captured = spec.extraDirs
+        return base.start(spec)
+      }
+    }
+    const produce = createOpsProducer({ runner, toolId: 'claude-code', cwd: '/scratch' })
+    await produce('PROMPT', ctx)
+    expect(captured).toBeUndefined()
+    expect(claudeAdapter.start('p', { extraDirs: captured }).args).not.toContain('--add-dir')
+  })
+
   it('有 sessionId 且支持续接 → 走 resume', async () => {
     let resumed = false
     const base = stubRunner('{ "ops": [] }', { supportsResume: true })

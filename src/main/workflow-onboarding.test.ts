@@ -252,12 +252,25 @@ describe('runWorkflowOnboarding 判据核', () => {
 })
 
 describe('WORKFLOW_ONBOARDING_INTENT（系统合成意图措辞，设计决策 #10）', () => {
-  it('告知 author 可直接查看本项目文件以推断习惯', () => {
-    // 可直接读项目文件（纠正「跑在 scratch、拿不到项目路径、只能靠 prompt 上下文猜」的根因）。
+  it('告知 author 可直接查看已备好的习惯材料以推断习惯', () => {
+    // 可直接读（纠正「跑在 scratch、拿不到项目路径、只能靠 prompt 上下文猜」的根因）。
     expect(WORKFLOW_ONBOARDING_INTENT).toMatch(/直接(查看|读)/)
     // 点到具体痕迹来源（.claude/、CLAUDE.md、git）。
     expect(WORKFLOW_ONBOARDING_INTENT).toContain('CLAUDE.md')
     expect(WORKFLOW_ONBOARDING_INTENT).toMatch(/git/i)
+  })
+
+  it('告知「材料已收集在可访问目录」并给出 manifest 入口（habit-context-materialization）', () => {
+    // 材料已由 Klarit 逐字收集进可访问目录 —— author 不必自己去项目里翻。
+    expect(WORKFLOW_ONBOARDING_INTENT).toContain('可访问目录')
+    expect(WORKFLOW_ONBOARDING_INTENT).toMatch(/已(收集|备|放)/)
+    // manifest 是包内的索引（真实路径 + 预跑摘要）。
+    expect(WORKFLOW_ONBOARDING_INTENT).toContain('MANIFEST.md')
+  })
+
+  it('告知「不必也无法遍历整个项目」（不再挂仓根，别去满仓翻）', () => {
+    expect(WORKFLOW_ONBOARDING_INTENT).toMatch(/不必.*(也无法)?.*遍历/)
+    expect(WORKFLOW_ONBOARDING_INTENT).toContain('整个项目')
   })
 
   it('带只读约束：只探查、只输出工作流、不改动任何文件', () => {

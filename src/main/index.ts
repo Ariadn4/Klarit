@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AgentInstruction,
@@ -76,6 +76,7 @@ import {
 import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
 import { createAcceptanceSampleWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
 import { hasAgentHabits } from './agent-habits'
+import { withHabitContextPack, type HabitContextMember } from './habit-context'
 import { runWorkflowOnboarding, formatDocEnumForIntent, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
@@ -1672,25 +1673,36 @@ function registerIpc(): void {
 
   // 无头写工作流入口：显式 projectId + 系统合成意图 → 工作流提案（无则 null）。**不绑发送者事件、不追加用户会话**，
   // 供后台任务（导入后自动派工作流）复用；机器装配与 runOrchestrateTurn 同（orchestrateProducer + orchestrateDepsFor）。
-  // 根因修复（设计决策 #10）：把项目各成员仓**真实路径**作 `--add-dir` 传给 producer，让 author agent 能
-  // 实际查看 `.claude/`/`CLAUDE.md`/`.cursor`/`git log` 推断习惯（否则 cwd 是 userData scratch，对项目零文件访问、
-  // 只能靠 prompt 上下文猜）。仅自动 author 路带（聊天写工作流路不带，见 orchestrateProducer 注释）。只读探查由
-  // WORKFLOW_ONBOARDING_INTENT 硬约束。
+  // 可访问目录 = **本次物化的习惯上下文包**（habit-context）：Klarit 确定性枚举命中的痕迹路径、逐字复制进
+  // 应用临时区的一个 per-run 小目录（附 manifest：真实路径 + git log/scripts/浅层目录清单的原样输出），
+  // 把它作 `--add-dir` 传给 producer。**不再挂成员仓根**——挂仓根虽修好了「author 跑在 scratch、拿不到项目
+  // 文件、只能靠 prompt 猜」的根因，却让大项目上 author 极慢（claude 进程 CPU 累计上万秒）。包在本次调用结束
+  // （含失败/超时）后清理，绝不写进用户仓库。**回退路径保留**（design.md）：`KLARIT_HABIT_MOUNT_REPO_ROOTS=1`
+  // → 包 + 仓根一起挂（dogfood 若发现 author 漏得厉害时用，代价是 CPU 可能治不好）。仅自动 author 路带
+  // （聊天写工作流路不带，见 orchestrateProducer 注释）。只读探查由 WORKFLOW_ONBOARDING_INTENT 硬约束。
   const authorWorkflowForProject = (projectId: string, intent: string): Promise<AuthorWorkflowResult> => {
-    const addDirs = (findProjectById(registry, projectId)?.members ?? [])
-      .map((m) => m.rootPath)
-      .filter((p): p is string => !!p)
+    const members: HabitContextMember[] = (findProjectById(registry, projectId)?.members ?? [])
+      .filter((m) => !!m.rootPath)
+      .map((m) => ({ name: m.derivedName || m.id, root: m.rootPath }))
     // 6.3-feed：廉价文档枚举（scanDocuments = 扫候选 + classify + **collapse 折叠**、走 .gitignore、**无 agent**）
     // 追加进 author 意图——让 author 自己据此填 archive-docs 归档配置（剔项目自有归档已覆盖的、剩余分动态/快照），
     // 免得它靠 --add-dir 自行发现文档（不可靠）。fs 调用留此处，格式化交纯函数 formatDocEnumForIntent。
     // collapse 后是十几条紧凑文档（openspec/ 等折成一条），而非全项目数百文件——喂全量会撑爆/拖死 agent 调用。
     const docPaths = members.flatMap(({ root }) => scanDocuments(root).map((d) => d.location)).slice(0, 80)
     const intentWithDocs = intent + formatDocEnumForIntent(docPaths)
-    return authorWorkflow(
-      orchestrateDepsFor(projectId),
-      orchestrateProducer(projectId, undefined, undefined, addDirs),
-      projectId,
-      intentWithDocs
+    return withHabitContextPack(
+      members,
+      {
+        tmpRoot: join(app.getPath('temp'), 'klarit-habit-context'),
+        mountMemberRoots: process.env.KLARIT_HABIT_MOUNT_REPO_ROOTS === '1'
+      },
+      ({ addDirs }) =>
+        authorWorkflow(
+          orchestrateDepsFor(projectId),
+          orchestrateProducer(projectId, undefined, undefined, addDirs),
+          projectId,
+          intentWithDocs
+        )
     )
   }
 

@@ -136,12 +136,13 @@ export interface WorkflowOnboardingDeps {
 }
 
 /**
- * 系统合成意图（第一步直白版，措辞打磨归第二步 `workflow-from-habits`）：让 author agent 自己去探项目习惯。
- * 不经用户打字、不追加会话——供后台无头调用。项目各成员仓真实路径已作可访问目录（`--add-dir`）挂给 agent
- * （设计决策 #10），故意图告知「可直接查看本项目文件」并加只读约束（只探查、只输出工作流、不改动任何文件）。
+ * 系统合成意图：让 author agent 照项目习惯写工作流。不经用户打字、不追加会话——供后台无头调用。
+ * 挂给 agent 的可访问目录（`--add-dir`）不再是成员仓根，而是 Klarit **物化好的习惯上下文包**
+ * （`habit-context.ts`：痕迹文件逐字副本 + `MANIFEST.md` 真实路径与预跑摘要），故意图告知「材料已收集在
+ * 可访问目录、直接读、不必也无法遍历整个项目」，并保留只读约束（只探查、只输出工作流、不改动任何文件）。
  */
 export const WORKFLOW_ONBOARDING_INTENT =
-  '这是一个已有项目,它的文件已作为可访问目录挂给你。请直接查看这些文件——看它平时怎么使用 AI 编程 agent(如 .claude/、CLAUDE.md、.cursor、AGENTS.md 等)以及它的 git/交付习惯(如 git log),据此为它写一份贴合的 Klarit 工作流。约束:只做只读探查——只查看、不要修改、新建或删除任何文件;你唯一的产出是这份工作流定义本身。'
+  '这是一个已有项目。它的 agent 使用痕迹(如 .claude/、CLAUDE.md、.cursor、AGENTS.md 等)已由 Klarit 逐字复制到一份可访问目录里,并附一份 MANIFEST.md——里面有每个文件在项目中的真实路径、成员仓清单、近期 git log 原文、各仓 package.json 的 scripts,以及一份浅层项目目录清单。请直接读这个目录(先读 MANIFEST.md),据此推断它平时怎么使用 AI 编程 agent 以及它的 git/交付习惯,为它写一份贴合的 Klarit 工作流。材料已备齐,你不必也无法遍历整个项目,不用再去别处找。约束:只做只读探查——只查看、不要修改、新建或删除任何文件;你唯一的产出是这份工作流定义本身。'
 
 /**
  * 固化门 lint 喂回 author 的**修订-复检**循环上界（设计决策 #15）：author 产出可用提案后投递前跑
