@@ -5,6 +5,8 @@ import type { Localized } from './localized'
 import type { Appearance } from './appearance'
 import type { EffectiveTheme } from './theme'
 import type { AgentId, AgentModel, EffortLevel } from './agents'
+import type { DecisionInboxEntry } from './decision-inbox'
+import type { Patrol } from './patrol'
 import type {
   ConstitutionGovernance,
   EffectiveConstitutionRule,
@@ -25,13 +27,20 @@ export interface AppSettings {
   defaultModel?: string
   /** 默认 effort（推理力度，low/medium/high）；缺省表示跟随各 agent CLI 自身默认，不注入参数。 */
   defaultEffort?: EffortLevel
+  /** 有新待决策且应用未聚焦时是否发桌面通知（见 decision-inbox）；缺省视为开。 */
+  notifyOnDecision?: boolean
 }
 
-/** 一个本地已检测到的 agent：标识、展示名、其可选模型清单。 */
+/** 一个本地已检测到的 agent：标识、展示名、其可选模型清单、其 CLI 的可执行绝对路径。 */
 export interface DetectedAgent {
   id: AgentId
   name: string
   models: AgentModel[]
+  /**
+   * 该 agent CLI 的**可执行绝对路径**（探测时解析并过护栏）——起子进程的唯一可信来源，
+   * 不存在「命令名」这个概念（裸名交给 shell 会让被管理的仓库决定起哪个可执行文件）。
+   */
+  executablePath: string
 }
 
 /** 项目的 git 信息——一旦查到 git 即记录。 */
@@ -88,6 +97,8 @@ export interface Project {
   constitution?: ConstitutionGovernance
   /** 该项目的需求卡类型集；缺省（未设置）视为默认种子。激活带建议类型的工作流时幂等播种进来。属项目管理数据、不入 git。 */
   cardTypes?: CardTypeDef[]
+  /** 该项目的定时巡检（见 `scheduled-patrol`）；缺省＝一条都没有。属项目管理数据、不入 git。 */
+  patrols?: Patrol[]
   createdAt: string
   updatedAt: string
 }
@@ -290,10 +301,32 @@ export interface CommandSpec {
   timeoutSec?: number
 }
 
+/**
+ * `archive-docs` 节点携带的一条**分类文档配置**：文档路径 + 归档 kind——沿用 `ManagedDoc.kind` 语义
+ * （`dynamic`＝就地更新到最新现状、只留现状；`snapshot`＝冻结、只追加一条记录）。author 生成工作流时
+ * 据注入的项目文档枚举产出，替代原先「先扫描登记表再决定归哪些」的二次动作。
+ */
+export interface ArchiveDocEntry {
+  /** 待归档文档的相对分支目录路径。 */
+  path: string
+  /** 归档方式：`dynamic` 就地更新现状 / `snapshot` 冻结追加。 */
+  kind: 'dynamic' | 'snapshot'
+}
+
 /** 节点执行者（判别联合，每个节点恰一种）。 */
 export type NodeExecutor =
   | { kind: 'agent'; instruction: AgentInstruction; exec?: AgentExecConfig; structuredOutput?: AgentStructuredOutput }
-  | { kind: 'engine'; operation: string }
+  | {
+      kind: 'engine'
+      operation: string
+      /**
+       * 仅对 `archive-docs` 操作有意义：author 生成工作流时产出的、该由本节点归档的**分类文档配置**
+       * （每条 `{ path, kind }`，`path` 为相对分支目录路径、`kind` 为动态/快照）。带配置时
+       * `runArchiveDocsNode` **按此配置归档**（按 kind 路由动态就地更新 / 快照追加）、不读文档扫描登记表；
+       * 无此字段（或空）时回落到既有行为（读 `demand-driven-doc-scan` 登记表兜底）。见 document-archive。
+       */
+      archiveDocs?: ArchiveDocEntry[]
+    }
   | {
       kind: 'command'
       /** 一条或多条命令；引擎并发跑全部，各自分桶/检查/超时/detach/中止。至少一条（见校验）。 */
@@ -430,6 +463,11 @@ export interface WorkflowSummary {
   name: Localized
   /** 分支配对等语义校验未过时的原因；缺省＝有效。UI 据此标「（无效）」并禁用选择。 */
   invalidReason?: string
+  /**
+   * 软校验（结构可判反模式）的非阻断告警，缺省/空＝无隐患。与 `invalidReason` 严重度不同：
+   * 后者是「可载入但不可用」、拦选择；warnings 只是「可用但有隐患」，供 UI 提示而不阻断存库/加载。
+   */
+  warnings?: string[]
 }
 
 /** 校验/保存结果（失败带可读原因）。 */
@@ -629,6 +667,12 @@ export interface WorkflowProposal {
   issues: string[]
 }
 
+/**
+ * 导入后自动派工作流的后台生成进度相位（main → renderer 底栏状态用）：
+ * `generating` 开始（author 起跑）→ `done`/`failed` 结束（清掉底栏指示）。
+ */
+export type WorkflowGenPhase = 'generating' | 'done' | 'failed'
+
 /** 编排核产物：成套卡操作 + 逐 op 校验问题 + 自然语言答复 + （可选）新项目提议 + （可选）工作流提案。 */
 export interface OrchestrationProposal {
   ops: CardOp[]
@@ -638,6 +682,11 @@ export interface OrchestrationProposal {
   suggestedProject?: SuggestedProject
   /** 意图属写/改工作流时给出：审阅界面渲染工作流只读预览 + 存库；与 ops 互斥（工作流轮 ops 为空）。 */
   workflow?: WorkflowProposal
+  /**
+   * producer（agent 调用）抛错时置真：供无头 author 区分「agent 调用失败/未配置」与「跑通但无产出」两类
+   * 失败（否则二者都塌成 workflow=undefined，无从分辨）。可选、加性——聊天路径不设、渲染层不看。
+   */
+  producerFailed?: boolean
 }
 
 /** 编排接缝产物：编排提案，或当前窗口未绑定项目的空态（无处归属需求）。 */
@@ -997,6 +1046,12 @@ export interface RunBreakpoint {
   /** 等待中的决策；非 null 时 state 为 waiting-decision。 */
   pendingDecision: EngineDecision | null
   /**
+   * 该待决策的**产生时刻**（毫秒时间戳）。与 `pendingDecision` **同生共死**：置决策时写、清决策时清，
+   * 不会出现「有决策无时刻」或「有时刻无决策」。只供决策的观察方（见 decision-inbox）排序与算等待时长，
+   * 引擎自身不读它、不据它改行为。**可选**——本字段引入前写下的老断点没有它，读取方须优雅回落。
+   */
+  pendingSince?: number
+  /**
    * 客观门重试日志：键为 `<nodeId>:<gateIndex>`，值为该门历次失败的重试记录。持久化使关闭重开后计数不丢；
    * 门通过即清空该键（见 engine-execution「客观门失败的自动重试与升级」）。
    */
@@ -1051,6 +1106,24 @@ export type EngineProgressEvent =
   | { kind: 'background'; runId: string; nodeId: string; bgId: string; label: string; status: 'started' | 'stopped' | 'exited' | 'timeout' }
   | { kind: 'decision'; runId: string; decision: EngineDecision }
   | { kind: 'state'; runId: string; state: RunState }
+
+/**
+ * 运行日志（journal）一条 = 一个**结构性**进度事件 + 发生时刻。运行日志不是新埋点体系，
+ * 是 `EngineProgressEvent` 的持久化消费者——故条目形状就是事件本身，未来新增事件类型自动进来。
+ * **排除 `op-chunk`**：流式输出字节已由输出桶持有，日志只留桶引用（`nodeId`/`bgId` 即桶键来源）。
+ */
+export type RunJournalEntry = Exclude<EngineProgressEvent, { kind: 'op-chunk' }> & {
+  /** 发生时刻（毫秒时间戳）。 */
+  at: number
+}
+
+/** 一张卡的一次运行（供「运行记录」页签在不知道 runId 的情况下切换回看）。 */
+export interface CardRunSummary {
+  runId: string
+  state: RunState
+  /** 运行日志首条的时刻；该运行无日志时缺省。 */
+  startedAt?: number
+}
 
 // ── 文档登记表（document-registry）：per-成员仓的文档现状单一事实源 ──
 
@@ -1161,6 +1234,10 @@ export interface KlaritApi {
   readRunOutput: (runId: string, bucket: string) => Promise<string>
   /** 列某运行的全部输出桶键。 */
   listRunOutputBuckets: (runId: string) => Promise<string[]>
+  /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志（本能力上线前的运行）给空数组。 */
+  readRunJournal: (runId: string) => Promise<RunJournalEntry[]>
+  /** 列某卡的历次运行（新→旧），供「运行记录」页签切换回看。 */
+  listCardRuns: (slug: string) => Promise<CardRunSummary[]>
   // ── 需求卡持久化与运行集成 ──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   listCards: () => Promise<StoredCard[]>
@@ -1216,6 +1293,19 @@ export interface KlaritApi {
   toggleMaximizeWindow: () => Promise<void>
   /** 关闭当前窗口。 */
   closeWindow: () => Promise<void>
+  /** 把当前窗口唤到前台（点决策通知回到应用）。 */
+  focusWindow: () => Promise<void>
+  // ── 决策收件箱（decision-inbox）──
+  /** 拉取当前项目的收件箱条目（等最久的在前）；未绑定项目给空数组。 */
+  listDecisionInbox: () => Promise<DecisionInboxEntry[]>
+  /** 订阅收件箱变更（条目增/删）；返回取消订阅函数。 */
+  onDecisionInboxChange: (handler: (entries: DecisionInboxEntry[]) => void) => () => void
+  /** 订阅「请为这条新待决策弹桌面通知」（主进程已做未聚焦/开关门控）；返回取消订阅函数。 */
+  onDecisionNotify: (handler: (entry: DecisionInboxEntry) => void) => () => void
+  /** 读「新待决策时发桌面通知」开关。 */
+  getNotifyOnDecision: () => Promise<boolean>
+  /** 写「新待决策时发桌面通知」开关，返回落定值。 */
+  setNotifyOnDecision: (on: boolean) => Promise<boolean>
   /** 列出工作流库（轻量摘要，跳过损坏包）。 */
   listWorkflows: () => Promise<WorkflowSummary[]>
   /** 读取某工作流完整定义；不存在或损坏返回 null。 */
@@ -1287,6 +1377,22 @@ export interface KlaritApi {
   setConstitution: (governance: ConstitutionGovernance) => Promise<void>
   /** 读当前项目的生效宪法（派生：激活并集减去关闭项）。 */
   effectiveConstitution: () => Promise<EffectiveConstitutionRule[]>
+  // ── 定时巡检（scheduled-patrol）：随项目持久化，默认零条；写口一律回全量新列表 ──
+  /** 读当前项目的巡检列表；未绑定项目给空列表。 */
+  listPatrols: () => Promise<Patrol[]>
+  /** 新建或按 id 覆盖一条巡检，回全量新列表。 */
+  savePatrol: (patrol: Patrol) => Promise<Patrol[]>
+  /** 删除一条巡检，回全量新列表。 */
+  removePatrol: (patrolId: string) => Promise<Patrol[]>
+  /** 启停一条巡检（不删除，配置与 lastRunAt 保留），回全量新列表。 */
+  setPatrolEnabled: (patrolId: string, enabled: boolean) => Promise<Patrol[]>
+  /**
+   * 订阅巡检推来的候选需求卡（经既有候选提交接缝规整+校验后推送，**止于审阅**：不落库、不建活卡）；
+   * 返回取消订阅函数。
+   */
+  onPatrolCandidates: (
+    handler: (outcome: { candidates: CandidateCard[]; issues: CandidateIssue[] }) => void
+  ) => () => void
   // ── 新建需求：分解能力（全局 agent 接缝；止于产出候选卡，落库归下一个 change）──
   /** 读当前项目的生效分解 prompt（供外部 AI 读取 skill）；未绑定项目返回 { unbound: true }。 */
   getDecomposePrompt: () => Promise<DecomposePromptOutcome>
@@ -1382,6 +1488,15 @@ export interface KlaritApi {
   saveDocuments: (registry: DocRegistry) => Promise<void>
   /** 订阅「新导入项目 → 进文档确认步」推送（管理窗导入等窗口外入口）；返回取消订阅函数。 */
   onDocumentsOnboard: (handler: (memberId: string) => void) => () => void
+  /**
+   * 订阅「导入后自动派工作流」的提案就绪推送——提案已作 agent 消息追加进本项目全局对话，收到即
+   * 打开/聚焦对话面板、选中并重取承载它的会话（后台追加消息无自动刷新）；返回取消订阅函数。
+   */
+  onWorkflowProposalReady: (
+    handler: (payload: { projectId: string; conversationId: string }) => void
+  ) => () => void
+  /** 订阅「导入后自动派工作流」的后台生成进度——底栏据此显/隐生成指示；返回取消订阅函数。 */
+  onWorkflowGenStatus: (handler: (phase: WorkflowGenPhase) => void) => () => void
   /** 订阅项目注册表变更广播（管理窗移除/导入等）——收到即刷新项目列表与绑定状态；返回取消订阅函数。 */
   onProjectsChanged: (handler: () => void) => () => void
 }

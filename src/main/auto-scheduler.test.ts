@@ -196,3 +196,72 @@ describe('createAutoScheduler —— 串行化与既成超额', () => {
     expect(h.started).toEqual([])
   })
 })
+
+describe('createAutoScheduler —— 并发槽与巡检共享', () => {
+  it('巡检拉起的活跃运行计入活跃数，空槽相应减少', async () => {
+    const todos = ['a', 'b', 'c'].map((n, i) => card({ proposedName: n, repos: [`repo-${i}`] }))
+    const h = harness(todos, {
+      // 一个由巡检拉起、仍活跃的运行（不绑卡，故不在卡表里）
+      listPatrolRuns: () => [{ runId: 'run-patrol', repos: ['ops'] }],
+      isRunLive: (runId) => runId === 'run-patrol'
+    })
+    expect(h.scheduler.freeSlots()).toBe(2)
+    await h.scheduler.evaluate()
+    expect(h.started.length).toBe(2)
+  })
+
+  it('巡检运行终局后不再占槽（同一 isRunLive 判定）', async () => {
+    const h = harness([card({ proposedName: 'a' })], {
+      listPatrolRuns: () => [{ runId: 'run-patrol', repos: ['web'] }],
+      isRunLive: () => false // 该巡检运行已 done
+    })
+    expect(h.scheduler.freeSlots()).toBe(3)
+  })
+
+  it('巡检占满槽 → 本次评估不拉起任何待办卡', async () => {
+    const h = harness([card({ proposedName: 'a', repos: ['api'] })], {
+      listPatrolRuns: () => [
+        { runId: 'p1', repos: ['ops'] },
+        { runId: 'p2', repos: ['ops'] },
+        { runId: 'p3', repos: ['ops'] }
+      ],
+      isRunLive: (runId) => ['p1', 'p2', 'p3'].includes(runId)
+    })
+    expect(h.scheduler.freeSlots()).toBe(0)
+    await h.scheduler.evaluate()
+    expect(h.started).toEqual([])
+  })
+
+  it('巡检运行的成员仓参与「与在跑不共享仓者优先」的选取', async () => {
+    const shared = card({ proposedName: 'shared', repos: ['web'] })
+    const free = card({ proposedName: 'free', repos: ['api'] })
+    const h = harness([shared, free], {
+      listPatrolRuns: () => [{ runId: 'run-patrol', repos: ['web'] }],
+      isRunLive: (runId) => runId === 'run-patrol',
+      maxConcurrent: 2
+    })
+    await h.scheduler.evaluate()
+    // 1 个空槽：与巡检在跑不共享仓的 free 优先
+    expect(h.started).toEqual(['free'])
+  })
+
+  it('手动启动仍不受上限约束：既成超额时排程只是不填槽，不抛不中止', async () => {
+    const manual = [1, 2, 3, 4].map((i) =>
+      card({ proposedName: `m${i}`, status: '进行中', activeRunId: `run-m${i}`, repos: ['web'] })
+    )
+    const todo = card({ proposedName: 'todo', repos: ['api'] })
+    const h = harness([...manual, todo], {
+      listPatrolRuns: () => [{ runId: 'run-patrol', repos: ['ops'] }],
+      isRunLive: (runId) => runId.startsWith('run-')
+    })
+    // 手动 4 + 巡检 1 = 5 > 3：空槽为 0（不为负），排程按兵不动。
+    expect(h.scheduler.freeSlots()).toBe(0)
+    await expect(h.scheduler.evaluate()).resolves.toBeUndefined()
+    expect(h.started).toEqual([])
+  })
+
+  it('未注入巡检运行来源（无巡检）→ 空槽口径与既有一致', () => {
+    const h = harness([card({ proposedName: 'a' })])
+    expect(h.scheduler.freeSlots()).toBe(3)
+  })
+})

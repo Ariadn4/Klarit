@@ -59,6 +59,21 @@ export const IPC = {
   windowMinimize: 'window:minimize',
   windowMaximizeToggle: 'window:maximizeToggle',
   windowClose: 'window:close',
+  /** 把本窗口唤到前台（点决策通知回到应用）。 */
+  windowFocus: 'window:focus',
+  // ── 决策收件箱（decision-inbox：pendingDecision 的项目级投影）──
+  /** 拉取当前项目的收件箱条目（按等最久在前排序）；未绑定项目给空数组。 */
+  decisionInboxList: 'decisionInbox:list',
+  /** main → renderer：收件箱内容变化（增/删）→ 渲染层实时更新列表与徽标。 */
+  decisionInboxChanged: 'decisionInbox:changed',
+  /**
+   * main → renderer：请渲染层为一条**新**待决策弹桌面通知（主进程已做「未聚焦 + 开关开」门控，
+   * 文案由渲染层按当前语言翻译——决策文案的 i18n 词典在渲染层）。
+   */
+  decisionInboxNotify: 'decisionInbox:notify',
+  /** 读/写「有新待决策且应用未聚焦时发通知」开关（默认开）。 */
+  getNotifyOnDecision: 'settings:getNotifyOnDecision',
+  setNotifyOnDecision: 'settings:setNotifyOnDecision',
   // ── 工作流库与项目激活 ──
   listWorkflows: 'workflow:list',
   getWorkflow: 'workflow:get',
@@ -100,6 +115,13 @@ export const IPC = {
   setConstitution: 'project:setConstitution',
   /** 读当前项目的生效宪法（派生：激活并集减去关闭项）。 */
   effectiveConstitution: 'project:effectiveConstitution',
+  // ── 定时巡检（scheduled-patrol）：随项目持久化，默认零条；四个写口都回全量新列表 ──
+  listPatrols: 'patrol:list',
+  savePatrol: 'patrol:save',
+  removePatrol: 'patrol:remove',
+  setPatrolEnabled: 'patrol:setEnabled',
+  /** main → renderer：巡检扫出问题推来的候选需求卡，**止于审阅**（复用新建需求的审阅窗）。 */
+  patrolCandidates: 'patrol:candidates',
   // ── 新建需求：分解能力（全局 agent 接缝；止于产出候选卡，落库归下一个 change）──
   /** 读当前项目的生效分解 prompt（激活工作流新建需求指令 → 全局默认分解 skill 兜底）；未绑定给空态。 */
   getDecomposePrompt: 'decompose:getPrompt',
@@ -197,6 +219,10 @@ export const IPC = {
   engineReadOutput: 'engine:readOutput',
   /** 列某运行的全部输出桶键。 */
   engineListOutputBuckets: 'engine:listOutputBuckets',
+  /** 读某运行的运行日志（结构性事件序列，供「运行记录」时间线）；无日志给空数组。 */
+  engineReadJournal: 'engine:readJournal',
+  /** 列某卡的历次运行（新→旧），供「运行记录」页签在不知道 runId 的情况下切换回看。 */
+  cardsRuns: 'cards:runs',
   // ── 需求卡持久化与运行集成（requirement-card-store / card-detail）──
   /** 列当前绑定项目的全部需求卡；未绑定给空数组。 */
   cardsList: 'cards:list',
@@ -221,6 +247,14 @@ export const IPC = {
   documentsSave: 'documents:save',
   /** main → renderer：新导入项目落定，请该项目的窗口立即进入文档确认步（载荷为 memberId）。 */
   documentsOnboard: 'documents:onboard',
+  /**
+   * main → renderer：导入后自动派工作流命中支——后台 author 产出的可用提案已作 agent 消息追加进本项目全局对话，
+   * 请渲染层打开/聚焦对话面板、选中并重取承载该提案的会话（后台追加消息无自动刷新，故须此推送驱动）。
+   * 载荷为 `{ projectId, conversationId }`。
+   */
+  workflowProposalReady: 'workflow:proposalReady',
+  /** main → renderer：导入后自动派工作流的后台生成进度（载荷为 WorkflowGenPhase：generating/done/failed），底栏显/隐指示。 */
+  workflowGenStatus: 'workflow:genStatus',
   /** 程序化聚焦：把侧边栏切到 git 视图并定位到指定（成员仓, 分支）的 worktree。 */
   gitViewFocus: 'gitView:focus',
   /** main → renderer：请求渲染层把 git 视图聚焦到某（成员仓, 分支）。 */

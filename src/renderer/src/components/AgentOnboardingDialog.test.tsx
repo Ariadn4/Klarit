@@ -8,6 +8,7 @@ const AGENTS: DetectedAgent[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
+    executablePath: 'C:\bin\claude.exe',
     models: [
       { id: 'claude-opus-4-8', name: 'Opus 4.8' },
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }
@@ -16,6 +17,7 @@ const AGENTS: DetectedAgent[] = [
   {
     id: 'codex',
     name: 'Codex',
+    executablePath: 'C:\bin\codex.exe',
     models: [{ id: 'gpt-5-codex', name: 'GPT-5 Codex' }]
   }
 ]

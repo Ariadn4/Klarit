@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { useDocumentsStore } from '../stores/documents'
+import { useModalQueue } from '../stores/modalQueue'
 import { DocumentRegistryEditor, DocumentRegistryPurpose } from './DocumentRegistryEditor'
 
 /**
@@ -38,10 +39,19 @@ export function DocumentOnboardingDialog({
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   const { analyzing, analyzeError, analyze, approveAll, save } = useDocumentsStore()
+  const registerModalOpen = useModalQueue((s) => s.registerModalOpen)
+  const registerModalClose = useModalQueue((s) => s.registerModalClose)
 
   useEffect(() => {
     void analyze(memberId)
   }, [memberId, analyze])
+
+  // 登记进全局模态协调器：本确认步在开（含扫描期的底栏态）期间，主动弹出（如工作流提案）排队等待、
+  // 绝不叠加；卸载即撤销登记，触发协调器出队顺次弹。
+  useEffect(() => {
+    registerModalOpen('document-onboarding')
+    return () => registerModalClose('document-onboarding')
+  }, [registerModalOpen, registerModalClose])
 
   /** 「确认并保存」= 整表审批 + 落盘；「跳过」= 按当前未审批状态落盘（留待设置里继续）。 */
   const finish = async (approve: boolean): Promise<void> => {

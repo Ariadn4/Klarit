@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   AgentInstruction,
@@ -14,15 +14,21 @@ import type {
   CardValidation,
   Conversation,
   OrchestrationOutcome,
+  OrchestrationProposal,
+  WorkflowProposal,
   StoredCard,
   DecisionResponse,
   DecomposeInput,
   CardBranch,
+  CardRunSummary,
+  RunJournalEntry,
   RemoveCardOptions,
   DecomposeOutcome,
   DecomposePromptOutcome,
   DetectedAgent,
   DocRegistry,
+  EngineDecision,
+  EngineProgressEvent,
   ImportOutcome,
   Project,
   RegistryData,
@@ -48,9 +54,11 @@ import {
   setAppearance as applyAppearance,
   setDefaultAgent as applyDefaultAgent,
   setDefaultModel as applyDefaultModel,
-  setDefaultEffort as applyDefaultEffort
+  setDefaultEffort as applyDefaultEffort,
+  setNotifyOnDecision as applyNotifyOnDecision
 } from './settings'
 import { makeAgentProbe, scanAgents } from './agents'
+import { setDetectedAgents } from './agent/launch'
 import { agentSupportsSubagents } from '../shared/agents'
 import {
   clearActiveWorkflow,
@@ -66,10 +74,15 @@ import {
   setProjectCardTypes,
   unlinkMember as unlinkMemberCore
 } from './registry-core'
-import { createWorkflowStore } from './workflow-store'
-import { createAcceptanceSampleWorkflow, createDefaultWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
+import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
+import { createAcceptanceSampleWorkflow, createDefaultWorkflowPr, createRealPrWorkflow, createRollbackSampleWorkflow } from '../shared/workflow'
+import { hasAgentHabits } from './agent-habits'
+import { withHabitContextPack, type HabitContextMember } from './habit-context'
+import { runWorkflowOnboarding, formatDocEnumForIntent, type WorkflowOnboardingDeps } from './workflow-onboarding'
 import { createEngine, type AgentPrep, type AgentPrepContext, type HealPrepContext } from './engine/engine'
 import { createRunStore } from './engine/run-store'
+import { createDecisionInbox, type DecisionInbox } from './decision-inbox'
+import type { DecisionInboxEntry } from '../shared/decision-inbox'
 import { createGlobalSkillStore } from './global-skill-store'
 import { buildDecomposeSkill } from '../shared/decomposition'
 import {
@@ -86,10 +99,17 @@ import { deriveRunRequest } from './card-run'
 import { createAutoScheduler, type AutoScheduler } from './auto-scheduler'
 import { cardBranchesView } from './card-branches'
 import { createOutputBuffer } from './engine/output-buffer'
+import { createRunJournal } from './engine/run-journal'
 import { createDecomposeSeam } from './global-agent'
 import type { CandidateProducer, ResolveDeps } from './decompose-service'
 import { buildDecomposeMessage, headlessInvocation, parseCandidateCards, runAgentHeadless } from './agent-runner'
-import { createOrchestrateSeam, type OrchestrateDeps, type OpsProducer } from './orchestrate-service'
+import {
+  authorWorkflow,
+  createOrchestrateSeam,
+  type AuthorWorkflowResult,
+  type OrchestrateDeps,
+  type OpsProducer
+} from './orchestrate-service'
 import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { resolveLocalized } from '../shared/localized'
 import { createOpsProducer, type SessionBridge } from './orchestrate-producer'
@@ -115,9 +135,18 @@ import type {
 import {
   importProject,
   linkMemberByDir,
+  listPatrols,
+  markPatrolRun,
   relocateMemberToDir,
+  removePatrol as removePatrolCore,
+  setPatrolEnabled as setPatrolEnabledCore,
+  upsertPatrol,
   type ProjectServiceDeps
 } from './project-service'
+import { createPatrolScheduler, type PatrolScheduler } from './patrol-scheduler'
+import type { Patrol, PatrolFinding } from '../shared/patrol'
+import { toProposedName } from '../shared/requirement-card'
+import { runCommand } from './command-run'
 import { listBranches, listWorktrees, makeGitRunner, probeGit } from './git'
 import { makeAsyncGitRunner } from './git-write'
 import { branchCleanupInfo, recycleCardBranches, type CleanupMember } from './card-cleanup'
@@ -133,6 +162,9 @@ import { WindowManager } from './windows'
 const REGISTRY_FILE = join(app.getPath('userData'), 'registry.json')
 const SESSION_FILE = join(app.getPath('userData'), 'session.json')
 const SETTINGS_FILE = join(app.getPath('userData'), 'settings.json')
+/** 自动 author 提案的开发者调试日志（JSONL 追加，落 Electron 日志目录，不打扰普通用户）。 */
+const WORKFLOW_ONBOARDING_LOG_DIR = app.getPath('logs')
+const WORKFLOW_ONBOARDING_LOG_FILE = join(WORKFLOW_ONBOARDING_LOG_DIR, 'workflow-onboarding.log')
 
 const registry: RegistryData = normalizeRegistry(readJson<unknown>(REGISTRY_FILE, null))
 
@@ -143,14 +175,31 @@ function saveRegistry(): void {
 // 工作流库：包目录存于 userData/workflows/<id>/（含 workflow.yaml + skill 文件）。
 const workflows = createWorkflowStore(join(app.getPath('userData'), 'workflows'))
 
+// 运行断点库：`userData/engine-runs/<runId>.json`。引擎与决策收件箱（它的观察方）共用同一份。
+const ENGINE_RUNS_DIR = join(app.getPath('userData'), 'engine-runs')
+const runStore = createRunStore(ENGINE_RUNS_DIR)
+
+/** 主进程内对引擎进度事件的订阅者（决策收件箱等）；与推给渲染层的广播并行，互不影响。 */
+const engineObservers = new Set<(evt: EngineProgressEvent) => void>()
+
 // 运行引擎：断点存于 userData/engine-runs/<runId>.json；进度事件广播给所有窗口观察。
 const engine = createEngine({
   getWorkflow: (id) => workflows.get(id),
-  store: createRunStore(join(app.getPath('userData'), 'engine-runs')),
-  outputBuffer: createOutputBuffer(join(app.getPath('userData'), 'engine-runs')),
+  store: runStore,
+  outputBuffer: createOutputBuffer(ENGINE_RUNS_DIR),
+  // 运行日志：与输出桶同一个运行目录（userData/engine-runs/<runId>/journal.jsonl），二者同生共死。
+  journal: createRunJournal(ENGINE_RUNS_DIR),
   emit: (evt) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IPC.engineProgress, evt)
+    }
+    // 主进程内观察者（收件箱投影）——单个观察者出错不得影响引擎与其它观察者。
+    for (const observe of engineObservers) {
+      try {
+        observe(evt)
+      } catch {
+        /* 观察方永不拖垮引擎回路 */
+      }
     }
     // 运行状态变化 → 跟随更新其绑定卡的生命周期状态（按 activeRunId 反查所属卡）。
     if (evt.kind === 'state') {
@@ -244,7 +293,27 @@ function startCardRun(pid: string, card: StoredCard): { runId: string } | { erro
   const launched = engine.start(derived.request)
   cardStore.update(pid, card.proposedName, { activeRunId: launched.runId, status: '进行中', updatedAt: Date.now() })
   broadcastCardsChanged()
+  refreshInbox(pid) // 新起的运行刚认领到卡，让收件箱能把它的待决策归到本项目
   return { runId: launched.runId }
+}
+
+/** 某运行是否仍活跃（running/paused/waiting-decision 占槽）；done/aborted/未知不占。单一真相来源。 */
+function isRunLive(runId: string): boolean {
+  const st = engine.getRunState(runId)?.state
+  return st === 'running' || st === 'paused' || st === 'waiting-decision'
+}
+
+/**
+ * 巡检拉起的运行（每项目一份，纯内存）：这些运行**不绑卡**，故不在 `cardStore` 里，
+ * 需单独记好交给自动排程计入活跃数——上限约束的是「一切系统自动发起的运行」。
+ */
+const patrolRuns = new Map<string, Array<{ runId: string; repos: string[] }>>()
+
+/** 某项目仍活跃的巡检运行（顺手回收已终局者，不让表无限长）。 */
+function livePatrolRuns(pid: string): Array<{ runId: string; repos: string[] }> {
+  const kept = (patrolRuns.get(pid) ?? []).filter((r) => isRunLive(r.runId))
+  patrolRuns.set(pid, kept)
+  return kept
 }
 
 const autoSchedulers = new Map<string, AutoScheduler>()
@@ -256,14 +325,12 @@ function schedulerFor(pid: string): AutoScheduler {
       getProject: () => findProjectById(registry, pid) ?? null,
       getRegistry: () => typeArchetypeMap(getProjectCardTypes(registry, pid)),
       canDerive: (card, project) => deriveRunRequest(card, project).ok,
-      // 单一真相来源：运行仍活（running/paused/waiting-decision 占槽），done/aborted/未知不占。
-      isRunLive: (runId) => {
-        const st = engine.getRunState(runId)?.state
-        return st === 'running' || st === 'paused' || st === 'waiting-decision'
-      },
+      isRunLive,
       startCard: (card) => {
         startCardRun(pid, card)
       },
+      // 巡检拉起的运行与排程拉起的共享同一上限、同一活跃判定（见 scheduled-patrol）。
+      listPatrolRuns: () => livePatrolRuns(pid),
       maxConcurrent: 3
     })
     autoSchedulers.set(pid, s)
@@ -274,6 +341,225 @@ function schedulerFor(pid: string): AutoScheduler {
 /** 触发某项目的自动排程重评估（无 pid 时空操作）。 */
 function scheduleEvaluate(pid: string | null): void {
   if (pid) void schedulerFor(pid).evaluate()
+}
+
+// ── 定时巡检：每项目一个常驻回路（懒建、缓存）+ 应用级分钟 tick（见 scheduled-patrol）──
+
+/**
+ * 巡检跑工作流：与自动排程同一条启动路径（`engine.start`），只是不绑卡——巡检 MUST NOT 建活卡。
+ * 分支每次另起一档（`avoidBranchConflict`），免得撞上一轮巡检留下的分支。项目无成员/工作流不在库 → 不起。
+ */
+function startPatrolWorkflow(pid: string, workflowId: string, patrol: Patrol): string | null {
+  const project = findProjectById(registry, pid)
+  if (!project || !workflows.get(workflowId)) return null
+  const repos = project.members.map((m) => ({ memberId: m.id, repoPath: m.rootPath, tag: m.tag }))
+  if (repos.length === 0) return null
+  const launched = engine.start({
+    workflowId,
+    repoPath: repos[0].repoPath,
+    repos,
+    branch: `patrol-${toProposedName(patrol.name || patrol.id)}`,
+    avoidBranchConflict: true
+  })
+  patrolRuns.set(pid, [
+    ...livePatrolRuns(pid),
+    { runId: launched.runId, repos: repos.map((r) => r.memberId) }
+  ])
+  return launched.runId
+}
+
+/**
+ * 文档腐烂扫描：复用既有 `document-scan` 重扫各成员仓，与已建的文档登记表对账，产出漂移发现。
+ * 两类漂移：登记过的位置在磁盘上没了、磁盘上新出现的文档没进表。**从未建表的成员仓跳过**
+ * （没有基线就无从谈漂移，别拿一整仓文档当发现刷屏）。
+ */
+function patrolDocScan(pid: string): PatrolFinding[] {
+  const zh = (settings.language ?? DEFAULT_LANGUAGE) !== 'en'
+  const findings: PatrolFinding[] = []
+  for (const m of findProjectById(registry, pid)?.members ?? []) {
+    if (!documentStore.has(m.id)) continue
+    const docs = documentStore.get(m.id).docs
+    // 登记覆盖判定：命中条目本身，或落在某文件夹条目之下（登记表与新扫描的折叠粒度可能不同，
+    // 不这么比会把「同一批文档换了个折叠法」全报成漂移）。
+    const covered = (loc: string): boolean =>
+      docs.some((d) => d.location === loc || (d.isFolder && loc.startsWith(`${d.location}/`)))
+    const gone = docs
+      .map((d) => d.location)
+      .filter((loc) => !existsSync(join(m.rootPath, loc)))
+    const unregistered = scanDocuments(m.rootPath)
+      .filter((d) => (d.isFolder ? !(d.coversFiles ?? []).every(covered) : !covered(d.location)))
+      .map((d) => d.location)
+    if (gone.length === 0 && unregistered.length === 0) continue
+    const lines: string[] = []
+    if (gone.length > 0) {
+      lines.push(zh ? '登记过但磁盘上已不存在：' : 'Registered but missing on disk:')
+      lines.push(...gone.map((loc) => `- ${loc}`))
+    }
+    if (unregistered.length > 0) {
+      lines.push(zh ? '磁盘上有但未登记：' : 'On disk but not registered:')
+      lines.push(...unregistered.map((loc) => `- ${loc}`))
+    }
+    findings.push({
+      title: zh ? `文档与代码漂移：${m.derivedName}` : `Docs drifted from code: ${m.derivedName}`,
+      description: lines.join('\n')
+    })
+  }
+  return findings
+}
+
+/**
+ * 巡检运行撞上待决策 → 一条人话发现（哪条巡检、哪个节点、什么决策、已经中止了）。文案的 zh/en 分支
+ * 与 `patrolDocScan` 同一套；决策自身的文案词典在渲染层，主进程不硬翻 i18n key，只给出决策来源与
+ * 用户可读的 `reason`。
+ */
+function patrolStuckFinding(input: {
+  patrol: Patrol
+  runId: string
+  nodeId: string
+  decision: EngineDecision
+}): PatrolFinding {
+  const zh = (settings.language ?? DEFAULT_LANGUAGE) !== 'en'
+  const name = input.patrol.name || input.patrol.id
+  const lines = zh
+    ? [
+        `巡检「${name}」拉起的工作流运行在节点 ${input.nodeId} 上抛出了待决策。`,
+        '巡检是周期性巡逻、不站在那等人拍板，该运行已被中止、并发槽已释放。',
+        `决策来源：${input.decision.source}`
+      ]
+    : [
+        `The run started by patrol "${name}" raised a decision at node ${input.nodeId}.`,
+        'A patrol never waits for a verdict, so the run was aborted and its concurrency slot released.',
+        `Decision source: ${input.decision.source}`
+      ]
+  if (input.decision.reason) lines.push(zh ? `原因：${input.decision.reason}` : `Reason: ${input.decision.reason}`)
+  lines.push(
+    zh
+      ? '要不要跟进由你定：可以手动跑一次这个工作流并回答决策，或者改掉这条巡检的动作。'
+      : 'It is up to you: run the workflow manually and answer the decision, or change what this patrol does.'
+  )
+  return {
+    title: zh
+      ? `巡检「${name}」的运行卡在决策上：${input.nodeId}`
+      : `Patrol "${name}" run stuck on a decision at ${input.nodeId}`,
+    description: lines.join('\n')
+  }
+}
+
+/** 巡检推候选：经既有候选提交接缝规整+校验（不旁路），再推给绑该项目的窗口审阅——**止于审阅**。 */
+async function pushPatrolCandidates(pid: string, candidates: CandidateCard[]): Promise<void> {
+  const outcome = await createDecomposeSeam(makeResolveDeps(pid), decomposeProducer).submit(candidates, pid)
+  if ('unbound' in outcome) return
+  sendToProjectWindows(pid, IPC.patrolCandidates, {
+    candidates: outcome.candidates,
+    issues: outcome.issues
+  })
+}
+
+const patrolSchedulers = new Map<string, PatrolScheduler>()
+function patrolSchedulerFor(pid: string): PatrolScheduler {
+  let s = patrolSchedulers.get(pid)
+  if (!s) {
+    s = createPatrolScheduler({
+      listPatrols: () => listPatrols(registry, pid),
+      getProject: () => findProjectById(registry, pid) ?? null,
+      now: () => Date.now(),
+      // 与自动排程同一口径的空槽（同一上限、同一 isRunLive）；槽满时巡检跳过本次、不排队。
+      hasFreeSlot: () => schedulerFor(pid).freeSlots() > 0,
+      markRun: (patrolId, at) => {
+        markPatrolRun(registry, pid, patrolId, at, new Date().toISOString())
+        saveRegistry()
+      },
+      startWorkflow: (workflowId, patrol) => startPatrolWorkflow(pid, workflowId, patrol),
+      runCommand: (command, signal) =>
+        runCommand(command, { cwd: findProjectById(registry, pid)?.members[0]?.rootPath ?? process.cwd(), signal }),
+      scanDocuments: async () => patrolDocScan(pid),
+      // 候选卡类型取项目在册的首个 leaf 类型（container 不该被用作巡检产出）。
+      candidateTypeId: () =>
+        getProjectCardTypes(registry, pid).find((t) => t.archetype === 'leaf')?.id ?? 'feature',
+      pushCandidates: (candidates) => pushPatrolCandidates(pid, candidates),
+      // 巡检运行不绑卡 → 收件箱不投影它，只能由回路自己盯着「它撞上决策没有」（同一条观察者接缝）。
+      onEngineProgress: (handler) => {
+        engineObservers.add(handler)
+        return () => engineObservers.delete(handler)
+      },
+      abortRun: async (runId) => {
+        await engine.abort(runId)
+        // 腾出的槽立刻可用：引擎只在 `done` 时触发补位，`aborted` 这条得自己补。
+        void schedulerFor(pid).evaluate()
+      },
+      describeStuckRun: patrolStuckFinding
+    })
+    patrolSchedulers.set(pid, s)
+  }
+  return s
+}
+
+/** 巡检 tick 间隔（分钟级足够：场景是「每天凌晨扫一次文档」，不是秒级调度）。 */
+const PATROL_TICK_MS = 60_000
+let patrolTimer: NodeJS.Timeout | null = null
+
+/** 评估所有**当前有窗口绑定**的项目的巡检（软件没开就不跑，是桌面应用的诚实边界）。 */
+function evaluatePatrols(): void {
+  const bound = new Set<string>()
+  for (const win of BrowserWindow.getAllWindows()) {
+    const pid = win.isDestroyed() ? null : manager.current(win)?.id
+    if (pid) bound.add(pid)
+  }
+  for (const pid of bound) void patrolSchedulerFor(pid).evaluate()
+}
+
+// ── 决策收件箱：每项目一份 `pendingDecision` 的投影（懒建、缓存；不落盘、不双写）──
+
+const decisionInboxes = new Map<string, DecisionInbox>()
+
+/** 把一条消息发给绑定了某项目的所有窗口。 */
+function sendToProjectWindows(pid: string, channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed() && manager.current(win)?.id === pid) win.webContents.send(channel, payload)
+  }
+}
+
+/** 某项目的收件箱投影（首次访问时建好并全量重建；重建静默、不发通知）。 */
+function inboxFor(pid: string): DecisionInbox {
+  let inbox = decisionInboxes.get(pid)
+  if (!inbox) {
+    inbox = createDecisionInbox({
+      onEngineProgress: (handler) => {
+        engineObservers.add(handler)
+        return () => engineObservers.delete(handler)
+      },
+      listBreakpoints: () => runStore.list(),
+      getBreakpoint: (runId) => runStore.load(runId),
+      listCards: () => cardStore.list(pid),
+      // 老断点没有 pendingSince → 回落该运行断点文件的 mtime（不完美但不阻断，不值得为它做迁移）。
+      fallbackSince: (runId) => {
+        try {
+          return statSync(join(ENGINE_RUNS_DIR, `${runId}.json`)).mtimeMs
+        } catch {
+          return undefined
+        }
+      },
+      onChange: (entries) => sendToProjectWindows(pid, IPC.decisionInboxChanged, entries),
+      isFocused: () => BrowserWindow.getFocusedWindow() !== null,
+      notifyEnabled: () => settings.notifyOnDecision !== false,
+      // 弹通知交给渲染层——决策文案的 i18n 词典在那边；主进程只做「未聚焦 + 开关开 + 仅新增」门控。
+      // 只发给该项目的**一个**窗口，避免同项目开两窗时弹两条。
+      notify: (entry: DecisionInboxEntry) => {
+        const win = BrowserWindow.getAllWindows().find(
+          (w) => !w.isDestroyed() && manager.current(w)?.id === pid
+        )
+        win?.webContents.send(IPC.decisionInboxNotify, entry)
+      }
+    })
+    decisionInboxes.set(pid, inbox)
+    inbox.rebuild()
+  }
+  return inbox
+}
+
+/** 卡↔运行链变化后，让该项目的收件箱跟上（新起的运行要能被认领进投影）。 */
+function refreshInbox(pid: string | null): void {
+  if (pid && decisionInboxes.has(pid)) decisionInboxes.get(pid)!.rebuild()
 }
 
 /**
@@ -523,7 +809,15 @@ const E2E_WORKFLOW_PRODUCER: OpsProducer | null =
 
 // 真实 ops producer：只读姿态、脱 worktree（cwd 用 userData scratch，agent 写代码我们也不消费）。
 // 会话 sessionId 桥接到**本作用域**会话库，供多轮原生续接。agent/模型按会话选型覆盖全局默认（未选回落默认）。
-const orchestrateProducer = (scope: string, agentId?: string, model?: string): ReturnType<typeof createOpsProducer> => {
+// addDirs（可选）：额外挂给 agent 的可访问目录（→ CLI `--add-dir`）。聊天路径不带（cwd scratch，只编排卡）；
+// 自动 author 路带**本次物化的习惯上下文包**（habit-context：痕迹逐字副本 + manifest），不再挂成员仓根
+// ——挂仓根在大项目上让 author 极慢、CPU 累计上万秒。
+const orchestrateProducer = (
+  scope: string,
+  agentId?: string,
+  model?: string,
+  addDirs?: string[]
+): ReturnType<typeof createOpsProducer> => {
   const sessions: SessionBridge = {
     get: (cid) => (cid ? conversationStore.get(scope, cid)?.sessionId : undefined),
     set: (cid, sessionId) => {
@@ -536,6 +830,7 @@ const orchestrateProducer = (scope: string, agentId?: string, model?: string): R
     cwd: app.getPath('userData'),
     model: model ?? settings.defaultModel,
     effort: settings.defaultEffort,
+    addDirs,
     sessions
   })
 }
@@ -607,6 +902,14 @@ let settings: AppSettings = { language: DEFAULT_LANGUAGE }
 
 // 本机已检测到的 agent（每次启动重扫，反映新装/卸载，不持久化）；whenReady 内填充。
 let detectedAgents: DetectedAgent[] = []
+
+/**
+ * 全部「被管理的目录」：已注册项目的成员仓主工作树与其全部 worktree。这些目录的内容由外部 agent 写入、
+ * 可能源自导入的第三方项目——落在其内的可执行文件不得成为 agent CLI 的解析结果。
+ */
+function registeredDirs(): string[] {
+  return registry.projects.flatMap((p) => p.members.flatMap((m) => [m.rootPath, ...m.worktreePaths]))
+}
 
 /** 生效主题对应的窗口底色（防深色启动白闪）——取自深色令牌 canvas / 浅色 paper。 */
 const THEME_BG: Record<EffectiveTheme, string> = { dark: '#14141c', light: '#f5f1e8' }
@@ -763,6 +1066,8 @@ function registerIpc(): void {
     saveRegistry()
     bindOrOpen(win, outcome.project.id)
     broadcastProjectsChanged()
+    // 首次导入（非 reused）完成 → 触发工作流 onboarding（author 先占默认 agent，不再等文档分析返回）。
+    if (!outcome.reused) void runWorkflowOnboarding(outcome.project, workflowOnboardingDeps)
     return outcome
   })
 
@@ -791,9 +1096,9 @@ function registerIpc(): void {
     manager.openOrFocus(outcome.project.id)
     closeManageWindow()
     broadcastProjectsChanged()
-    // 新建项目（含移除后立刻重导入——项目 id 复用成员 UUID，目标窗口可能已绑定同 id、
-    // openOrFocus 只聚焦不重 bind）→ 直接推「进文档确认步」，不依赖绑定事件。
-    if (!outcome.reused) notifyDocumentsOnboard(outcome.project)
+    // 首次导入（非 reused）完成 → 触发工作流 onboarding；文档扫描改需求驱动（激活含 archive-docs 工作流时才扫），
+    // 不再在导入时无条件推文档 onboarding。
+    if (!outcome.reused) void runWorkflowOnboarding(outcome.project, workflowOnboardingDeps)
     return outcome
   })
 
@@ -801,6 +1106,9 @@ function registerIpc(): void {
     // 移除就是移除：连各成员仓的文档登记表一并删——之后重导入即白纸重新识别。
     const removed = findProjectById(registry, projectId)
     for (const m of removed?.members ?? []) documentStore.remove(m.id)
+    // 连带清该项目按 projectId 作用域的对话历史（全局对话 + 卡对话），防孤儿会话数据留存。
+    conversationStore.removeScope(projectId)
+    cardConversationStore.removeScope(projectId)
     removeProjectCore(registry, projectId)
     saveRegistry()
     // 广播给所有窗口：切换器子菜单/绑定状态即时反映移除，不需要重启。
@@ -913,6 +1221,27 @@ function registerIpc(): void {
     else win.maximize()
   })
   ipcMain.handle(IPC.windowClose, (e) => senderWindow(e)?.close())
+  // 点决策通知回到应用：把本窗口从最小化/后台唤到前台。
+  ipcMain.handle(IPC.windowFocus, (e) => {
+    const win = senderWindow(e)
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+
+  // ── 决策收件箱：只读拉取 + 通知开关（条目的真相仍是 pendingDecision，这里不提供任何写入口）──
+  ipcMain.handle(IPC.decisionInboxList, (e): DecisionInboxEntry[] => {
+    const pid = currentProjectId(e)
+    return pid ? inboxFor(pid).list() : []
+  })
+
+  ipcMain.handle(IPC.getNotifyOnDecision, (): boolean => settings.notifyOnDecision !== false)
+
+  ipcMain.handle(IPC.setNotifyOnDecision, (_e, value: unknown): boolean => {
+    settings = applyNotifyOnDecision(settings, value, { write: (s) => writeJson(SETTINGS_FILE, s) })
+    return settings.notifyOnDecision !== false
+  })
 
   ipcMain.handle(IPC.getSystemLocale, (): string => app.getLocale())
 
@@ -1005,6 +1334,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.engineListOutputBuckets, (_e, runId: string): string[] =>
     engine.listOutputBuckets(runId)
   )
+  ipcMain.handle(IPC.engineReadJournal, (_e, runId: string): RunJournalEntry[] => engine.readJournal(runId))
+  // 某卡的历次运行：断点库按 `request.cardId` 反查（正向链），新→旧；开始时刻取该运行日志的首条时刻。
+  ipcMain.handle(IPC.cardsRuns, (e, slug: string): CardRunSummary[] => {
+    const pid = currentProjectId(e)
+    if (!pid || !cardStore.get(pid, slug)) return []
+    return runStore
+      .list()
+      .filter((bp) => bp.request.cardId === slug)
+      .map((bp) => ({ runId: bp.runId, state: bp.state, startedAt: engine.readJournal(bp.runId)[0]?.at }))
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0) || b.runId.localeCompare(a.runId))
+  })
 
   // ── 需求卡持久化与运行集成 ──
   ipcMain.handle(IPC.cardsList, (e): StoredCard[] => {
@@ -1123,15 +1463,15 @@ function registerIpc(): void {
 
   // ── 文档登记表：扫描 / 读 / 写 / 补起草（per-成员仓）──
 
-  /** 把「新导入项目 → 进文档确认步」推给该项目当前绑定的所有窗口（首仓）。 */
-  function notifyDocumentsOnboard(project: Project): void {
-    const memberId = project.members[0]?.id
-    if (!memberId) return
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
-        win.webContents.send(IPC.documentsOnboard, memberId)
-      }
-    }
+  /**
+   * 激活工作流的单一收口（所有激活路径共用）：设活动工作流 → 幂等播种其建议 leaf 类型。
+   * **不在此内 saveRegistry**——落盘交各调用点，保持既有行为。
+   * 注：自动流的 archive-docs 归档配置现由 author 直接产出（据喂入的文档枚举分类），激活**不再触发**任何
+   * 文档扫描/onboarding（原 `needsDocScanOnActivate` 钩子已移除）。手搭工作流仍可回落文档登记表（设置里手动重扫）。
+   */
+  const activateWorkflow = (project: Project, workflowId: string | null, now: string): void => {
+    setActiveWorkflowCore(registry, project.id, workflowId, now)
+    if (workflowId) seedProjectCardTypes(registry, project.id, workflows.get(workflowId)?.suggestedTypes, now)
   }
 
   /** 全注册表范围找成员仓（窗口可能尚未绑定项目——onboarding 导入后立即扫）。 */
@@ -1165,32 +1505,33 @@ function registerIpc(): void {
    * （既有条目按 location 保留用户改判/审批）。无 agent → 启发式兜底 + 'no-agent'；
    * agent 失败 → 启发式兜底 + 具体错误摘要（绝不把失败误报成「未配置 agent」）。
    */
+  /** 语义分析本体（无 agent/失败回落启发式）——抽出以便分析返回后再挂工作流 onboarding 触发。 */
+  const analyzeForMember = async (
+    memberId: string,
+    rootPath: string
+  ): Promise<{ registry: DocRegistry; error: string | null }> => {
+    const existing = documentStore.get(memberId)
+    const agent = draftAgent()
+    if (!agent) {
+      return { registry: mergeScan(existing, scanDocuments(rootPath)), error: 'no-agent' }
+    }
+    const analyzed = await analyzeDocuments(scanCandidates(rootPath), sampleReaderFor(rootPath), agent)
+    if (analyzed.error) {
+      return { registry: mergeScan(existing, scanDocuments(rootPath)), error: analyzed.error }
+    }
+    const merged = mergeScan(existing, analyzed.docs)
+    return {
+      registry: { ...merged, conventionPreamble: merged.conventionPreamble || analyzed.conventionPreamble },
+      error: null
+    }
+  }
+
   ipcMain.handle(
     IPC.documentsAnalyze,
     async (_e, memberId: string): Promise<{ registry: DocRegistry; error: string | null } | null> => {
       const member = findMember(memberId)
       if (!member) return null
-      const existing = documentStore.get(memberId)
-      const agent = draftAgent()
-      if (!agent) {
-        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: 'no-agent' }
-      }
-      const analyzed = await analyzeDocuments(
-        scanCandidates(member.rootPath),
-        sampleReaderFor(member.rootPath),
-        agent
-      )
-      if (analyzed.error) {
-        return { registry: mergeScan(existing, scanDocuments(member.rootPath)), error: analyzed.error }
-      }
-      const merged = mergeScan(existing, analyzed.docs)
-      return {
-        registry: {
-          ...merged,
-          conventionPreamble: merged.conventionPreamble || analyzed.conventionPreamble
-        },
-        error: null
-      }
+      return analyzeForMember(memberId, member.rootPath)
     }
   )
 
@@ -1289,10 +1630,11 @@ function registerIpc(): void {
   ipcMain.handle(IPC.setActiveWorkflow, (e, workflowId: string | null) => {
     const projectId = currentProjectId(e)
     if (!projectId) return
+    const project = findProjectById(registry, projectId)
+    if (!project) return
     const now = new Date().toISOString()
-    setActiveWorkflowCore(registry, projectId, workflowId, now)
-    // 激活工作流时把其建议 leaf 类型幂等播种进**该项目**的类型集（已存在跳过、不覆盖；停用不删类型）。
-    if (workflowId) seedProjectCardTypes(registry, projectId, workflows.get(workflowId)?.suggestedTypes, now)
+    // 单一收口：设活动工作流 + 幂等播种建议类型（激活不再触发任何文档扫描/onboarding）。
+    activateWorkflow(project, workflowId, now)
     saveRegistry()
   })
 
@@ -1324,7 +1666,121 @@ function registerIpc(): void {
   const applyRegistryFor = (pid: string): TypeArchetypeMap => typeArchetypeMap(getProjectCardTypes(registry, pid))
   const reposFor = (pid: string): string[] => findProjectById(registry, pid)?.members.map((m) => m.id) ?? []
 
-  // 跑一轮编排：可选先落用户消息 → 按会话选型跑 → 落 agent 回复/提案（空回复不再塞占位）。
+  // 无头编排核：建 producer（E2E 钩子优先）+ deps + seam 跑一轮，返回完整 outcome。**不绑发送者事件、不追加会话。**
+  // 聊天入口（runOrchestrateTurn）与无头写工作流入口（authorWorkflowForProject）共用同一套装配。
+  const orchestrateForProject = (
+    pid: string | null,
+    intent: string,
+    opts?: { conversationId?: string; agentId?: string; model?: string }
+  ): Promise<OrchestrationOutcome> => {
+    // e2e 钩子（同 KLARIT_E2E_IMPORT_DIRS 先例）：跳过真实 agent CLI，注入一个**故意缺 delete-branch** 的
+    // 工作流产出——既走通「意图→工作流提案→预览→存库」全链路，又验证编排核的 repairWorkflow 会补上删分支使之合法。
+    const produce = E2E_WORKFLOW_PRODUCER ?? orchestrateProducer(pid ?? UNBOUND_SCOPE, opts?.agentId, opts?.model)
+    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), produce)
+    return seam.orchestrate({ intent, conversationId: opts?.conversationId }, pid)
+  }
+
+  // 无头写工作流入口：显式 projectId + 系统合成意图 → 工作流提案（无则 null）。**不绑发送者事件、不追加用户会话**，
+  // 供后台任务（导入后自动派工作流）复用；机器装配与 runOrchestrateTurn 同（orchestrateProducer + orchestrateDepsFor）。
+  // 可访问目录 = **本次物化的习惯上下文包**（habit-context）：Klarit 确定性枚举命中的痕迹路径、逐字复制进
+  // 应用临时区的一个 per-run 小目录（附 manifest：真实路径 + git log/scripts/浅层目录清单的原样输出），
+  // 把它作 `--add-dir` 传给 producer。**不再挂成员仓根**——挂仓根虽修好了「author 跑在 scratch、拿不到项目
+  // 文件、只能靠 prompt 猜」的根因，却让大项目上 author 极慢（claude 进程 CPU 累计上万秒）。包在本次调用结束
+  // （含失败/超时）后清理，绝不写进用户仓库。**回退路径保留**（design.md）：`KLARIT_HABIT_MOUNT_REPO_ROOTS=1`
+  // → 包 + 仓根一起挂（dogfood 若发现 author 漏得厉害时用，代价是 CPU 可能治不好）。仅自动 author 路带
+  // （聊天写工作流路不带，见 orchestrateProducer 注释）。只读探查由 WORKFLOW_ONBOARDING_INTENT 硬约束。
+  const authorWorkflowForProject = (projectId: string, intent: string): Promise<AuthorWorkflowResult> => {
+    const members: HabitContextMember[] = (findProjectById(registry, projectId)?.members ?? [])
+      .filter((m) => !!m.rootPath)
+      .map((m) => ({ name: m.derivedName || m.id, root: m.rootPath }))
+    // 6.3-feed：廉价文档枚举（scanDocuments = 扫候选 + classify + **collapse 折叠**、走 .gitignore、**无 agent**）
+    // 追加进 author 意图——让 author 自己据此填 archive-docs 归档配置（剔项目自有归档已覆盖的、剩余分动态/快照），
+    // 免得它靠 --add-dir 自行发现文档（不可靠）。fs 调用留此处，格式化交纯函数 formatDocEnumForIntent。
+    // collapse 后是十几条紧凑文档（openspec/ 等折成一条），而非全项目数百文件——喂全量会撑爆/拖死 agent 调用。
+    const docPaths = members.flatMap(({ root }) => scanDocuments(root).map((d) => d.location)).slice(0, 80)
+    const intentWithDocs = intent + formatDocEnumForIntent(docPaths)
+    return withHabitContextPack(
+      members,
+      {
+        tmpRoot: join(app.getPath('temp'), 'klarit-habit-context'),
+        mountMemberRoots: process.env.KLARIT_HABIT_MOUNT_REPO_ROOTS === '1'
+      },
+      ({ addDirs }) =>
+        authorWorkflow(
+          orchestrateDepsFor(projectId),
+          orchestrateProducer(projectId, undefined, undefined, addDirs),
+          projectId,
+          intentWithDocs
+        )
+    )
+  }
+
+  // ── 导入后自动派工作流：判据核 deps 装配（fs/registry/Electron 副作用都在这层，判据核纯可测）──
+  /**
+   * 把后台产出的可用提案投递进本项目全局对话：取最近会话（无则新建）→ 作一条 role:'agent' 消息追加
+   * （提案包成 OrchestrationProposal，其 `.workflow` = 该 WorkflowProposal，渲染层复用 WorkflowProposalReview
+   * + 反馈改写回路）→ 推送 `workflowProposalReady{projectId,conversationId}` 驱动渲染层打开并重取该会话
+   * （后台追加消息无 conversationChanged 广播，故须此推送）。
+   */
+  function deliverProposal(project: Project, proposal: WorkflowProposal): void {
+    const scope = project.id
+    const existing = conversationStore.list(scope)
+    const conv = existing.length > 0 ? existing[0] : conversationStore.create(scope, randomUUID(), Date.now())
+    const reply = '已按本项目习惯生成一份工作流草稿，想改哪里直接说，我就着这份改。'
+    const wrapped: OrchestrationProposal = { ops: [], issues: [], reply, workflow: proposal }
+    conversationStore.appendMessage(scope, conv.id, {
+      role: 'agent',
+      text: reply,
+      proposal: wrapped,
+      at: Date.now()
+    })
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
+        win.webContents.send(IPC.workflowProposalReady, { projectId: project.id, conversationId: conv.id })
+      }
+    }
+  }
+
+  const workflowOnboardingDeps: WorkflowOnboardingDeps = {
+    hasActiveWorkflow: (project) => !!getActiveWorkflowCore(registry, project.id),
+    hasHabits: (project) => hasAgentHabits(project.members.map((m) => m.rootPath)),
+    hasRunnableAgent: () =>
+      !!settings.defaultAgent && detectedAgents.some((a) => a.id === settings.defaultAgent),
+    // 立即派内置默认（本地直合）作占位/兜底：按稳定 id 幂等种子 → 设为活动工作流 → 幂等播种其建议类型。
+    assignDefault: (project) => {
+      const now = new Date().toISOString()
+      const id = seedDefaultLocalMergeWorkflow(workflows)
+      activateWorkflow(project, id, now)
+      saveRegistry()
+    },
+    authorWorkflow: authorWorkflowForProject,
+    deliverProposal,
+    // 后台生成进度推给该项目绑定的窗口（底栏显/隐指示；比照 deliverProposal 的窗口路由）。
+    reportStatus: (project, phase) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed() && manager.current(win)?.id === project.id) {
+          win.webContents.send(IPC.workflowGenStatus, phase)
+        }
+      }
+    },
+    log: (message) => console.warn(message),
+    // 结构化调试记录：JSONL 追加到 Electron 日志目录 + 结构化 console（开发者可读，不弹 UI、绝不抛）。
+    logProposal: (record) => {
+      console.warn('[workflow-onboarding]', JSON.stringify(record))
+      try {
+        mkdirSync(WORKFLOW_ONBOARDING_LOG_DIR, { recursive: true })
+        appendFileSync(
+          WORKFLOW_ONBOARDING_LOG_FILE,
+          JSON.stringify({ at: new Date().toISOString(), ...record }) + '\n',
+          'utf8'
+        )
+      } catch (err) {
+        console.warn('workflow-onboarding: 写调试日志失败', err)
+      }
+    }
+  }
+
+  // 跑一轮编排：可选先落用户消息 → 按会话选型跑（委托无头核）→ 落 agent 回复/提案（空回复不再塞占位）。
   const runOrchestrateTurn = async (
     e: Electron.IpcMainInvokeEvent,
     conversationId: string | undefined,
@@ -1337,11 +1793,11 @@ function registerIpc(): void {
       conversationStore.appendMessage(scope, conversationId, { role: 'user', text: intent, at: Date.now() })
     }
     const conv = conversationId ? conversationStore.get(scope, conversationId) : null
-    // e2e 钩子（同 KLARIT_E2E_IMPORT_DIRS 先例）：跳过真实 agent CLI，注入一个**故意缺 delete-branch** 的
-    // 工作流产出——既走通「意图→工作流提案→预览→存库」全链路，又验证编排核的 repairWorkflow 会补上删分支使之合法。
-    const produce = E2E_WORKFLOW_PRODUCER ?? orchestrateProducer(scope, conv?.agentId, conv?.model)
-    const seam = createOrchestrateSeam(orchestrateDepsFor(pid), produce)
-    const outcome = await seam.orchestrate({ intent, conversationId }, pid)
+    const outcome = await orchestrateForProject(pid, intent, {
+      conversationId,
+      agentId: conv?.agentId,
+      model: conv?.model
+    })
     if (conversationId && !('unbound' in outcome)) {
       // 空回复不塞占位（历史里没输出的轮次不留占位；用户可重试）。
       conversationStore.appendMessage(scope, conversationId, {
@@ -1422,10 +1878,9 @@ function registerIpc(): void {
       const outcome = importProject(registry, chosen, serviceDeps)
       const pid = outcome.project.id
       // 激活 agent 选定的工作流并播种其建议类型——新项目由此拿到对应类型集（卡的 typeId 据此校验）。
+      // 走单一收口 activateWorkflow（激活不再触发文档扫描；archive-docs 归档配置由 author 产出）。
       if (workflowId && workflows.get(workflowId)) {
-        const now = new Date().toISOString()
-        setActiveWorkflowCore(registry, pid, workflowId, now)
-        seedProjectCardTypes(registry, pid, workflows.get(workflowId)?.suggestedTypes, now)
+        activateWorkflow(outcome.project, workflowId, new Date().toISOString())
       }
       saveRegistry()
       bindOrOpen(win, pid)
@@ -1699,6 +2154,36 @@ function registerIpc(): void {
       settings.language ?? DEFAULT_LANGUAGE
     )
   })
+
+  // ── 定时巡检：随项目持久化，四个写口都回全量新列表；写完踢一次评估（新建的巡检可立刻到期）──
+  const patrolsOf = (e: Electron.IpcMainInvokeEvent): Patrol[] => {
+    const pid = currentProjectId(e)
+    return pid ? listPatrols(registry, pid) : []
+  }
+  /** 写口收口：命中项目才落盘并重评估，否则原样回当前列表。 */
+  const writePatrol = (
+    e: Electron.IpcMainInvokeEvent,
+    apply: (pid: string, now: string) => Patrol[] | null
+  ): Patrol[] => {
+    const pid = currentProjectId(e)
+    if (!pid) return []
+    const next = apply(pid, new Date().toISOString())
+    if (!next) return patrolsOf(e)
+    saveRegistry()
+    void patrolSchedulerFor(pid).evaluate()
+    return next
+  }
+
+  ipcMain.handle(IPC.listPatrols, (e): Patrol[] => patrolsOf(e))
+  ipcMain.handle(IPC.savePatrol, (e, patrol: Patrol): Patrol[] =>
+    writePatrol(e, (pid, now) => upsertPatrol(registry, pid, patrol, now))
+  )
+  ipcMain.handle(IPC.removePatrol, (e, patrolId: string): Patrol[] =>
+    writePatrol(e, (pid, now) => removePatrolCore(registry, pid, patrolId, now))
+  )
+  ipcMain.handle(IPC.setPatrolEnabled, (e, patrolId: string, enabled: boolean): Patrol[] =>
+    writePatrol(e, (pid, now) => setPatrolEnabledCore(registry, pid, patrolId, enabled, now))
+  )
 }
 
 function restoreOrStart(): void {
@@ -1722,17 +2207,28 @@ app.whenReady().then(() => {
     systemLocale: () => app.getLocale()
   })
   // 扫描本机已安装 agent（每次启动重扫；探测健壮、永不抛出，扫不到即空列表）。
-  detectedAgents = scanAgents(makeAgentProbe())
+  // 解析**钉在 userData**（Klarit 自己的目录）下跑：`where` 的搜索范围含当前目录，钉住才不让被管理的
+  // 仓库参与决定解析结果；同时把已注册项目 / worktree 目录交给护栏，落在其内的候选一律拒。
+  const scan = scanAgents(makeAgentProbe(app.getPath('userData')), { forbiddenDirs: registeredDirs() })
+  detectedAgents = scan.agents
+  // 解析出的绝对路径灌进共用启动实现——它是起 agent 子进程的唯一可信来源（绝不回落裸命令名）。
+  setDetectedAgents(detectedAgents)
+  for (const issue of scan.issues) {
+    if (issue.reason === 'rejected-by-guard') {
+      console.warn(`[agents] ${issue.id} 的路径候选被安全护栏拒绝，视为未检测到：${issue.candidates.join(' | ')}`)
+    }
+  }
   // 让 nativeTheme 跟随已存外观（'system' 则跟随 OS），使窗口首帧底色与生效主题一致、无白闪。
   nativeTheme.themeSource = settings.appearance ?? DEFAULT_APPEARANCE
   // 系统明暗变化时（仅「跟随系统」会改变 shouldUseDarkColors）广播新生效主题。
   nativeTheme.on('updated', broadcastTheme)
-  // 库为空时种入三个内置默认工作流（本地直合 + PR 模式 + 真 PR）。
+  // 库为空时种入 PR 模式 + 真 PR 两个内置默认工作流；本地直合走下面的稳定 id 种入，避免重复。
   if (workflows.list().length === 0) {
-    workflows.save(createDefaultWorkflow(randomUUID()))
     workflows.save(createDefaultWorkflowPr(randomUUID()))
     workflows.save(createRealPrWorkflow(randomUUID()))
   }
+  // 内置主默认（本地直合）按稳定 id 幂等种入（空库/非空库都种，且只此一份）——供导入后自动派工作流的默认/兜底支指名激活。
+  seedDefaultLocalMergeWorkflow(workflows)
   // 「验收样例」按稳定 id 幂等种入（库非空也补，便于随时验收）。
   const ACCEPTANCE_WF_ID = 'acceptance-sample-multicmd'
   if (!workflows.get(ACCEPTANCE_WF_ID)) workflows.save(createAcceptanceSampleWorkflow(ACCEPTANCE_WF_ID))
@@ -1745,7 +2241,14 @@ app.whenReady().then(() => {
   // 恢复完再对每个项目踢一次自动排程：恢复可能既成超额（活跃>3，排程容忍不填），也可能有空槽可补待办。
   void engine.resumeAll().finally(() => {
     for (const p of registry.projects) scheduleEvaluate(p.id)
+    // 恢复后建好各项目的收件箱投影（由断点全量重建；重建静默，开机不糊一脸通知）。
+    for (const p of registry.projects) inboxFor(p.id)
+    // 开机补跑：软件没开的那段时间不跑，错过多少个窗口也只补**一次**（由 isDue + lastRunAt 保证）。
+    evaluatePatrols()
   })
+  // 巡检常驻回路：分钟级 tick 唤醒评估（只评估当前有窗口绑定的项目）。
+  patrolTimer = setInterval(evaluatePatrols, PATROL_TICK_MS)
+  patrolTimer.unref?.()
   restoreOrStart()
 
   app.on('activate', () => {
@@ -1756,6 +2259,9 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   writeJson(SESSION_FILE, manager.snapshotSession())
   engine.killAllBackground() // 杀掉所有转后台的命令,不留孤儿
+  // 停巡检 tick 并取消在飞的巡检命令（杀进程树由既有运行器负责）。
+  if (patrolTimer) clearInterval(patrolTimer)
+  for (const s of patrolSchedulers.values()) s.dispose()
 })
 
 app.on('window-all-closed', () => {

@@ -144,7 +144,6 @@ skill 文本 SHALL 讲清「引擎操作」是**平台预制的现成节点**—
 - **WHEN** 保存时 `save()` 判定定义非法
 - **THEN** 编辑器回报可读原因、不写盘，草稿保留供改后再存
 
-
 ### Requirement: 写工作流 skill 覆盖 archive-docs
 
 `buildAuthorWorkflowSkill` 从数据模型自动合成时 SHALL 带上新引擎操作 `archive-docs`，讲清其面向需求的语义：读文档登记表、按 `kind` 归档（动态就地更新 / 快照按习惯追加）、照审批过的习惯 prompt、子 agent 支持时并行否则串行退化、产生并提交文档改动。skill 文案 MUST 从引擎操作集单一来源派生，不手写漂移。
@@ -156,3 +155,238 @@ skill 文本 SHALL 讲清「引擎操作」是**平台预制的现成节点**—
 #### Scenario: skill 随操作集单一来源
 - **WHEN** `ENGINE_OPERATIONS` 含 `archive-docs`
 - **THEN** skill 自动包含它，无需手写维护
+
+### Requirement: author 支持系统合成意图的无头调用
+
+除经全局聊天由用户打字触发外,系统 SHALL 支持一个**无头写工作流入口**——以**显式 projectId** 与**系统合成的意图字符串**驱动 author,产出与聊天路径同构的 `WorkflowProposal`。该入口 MUST NOT 依赖聊天发送者事件取 projectId,MUST NOT 强制把结果追加进某个用户会话(是否留痕由调用方决定)。产出 SHALL 仍走现有 `buildWorkflowProposal`(`repairWorkflow` + `validateWorkflow` + `checkBranchPairing`),返回永远合法的定义 + `issues[]`;`buildAuthorWorkflowSkill()` 契约不变、照旧注入。
+
+系统意图为「针对某已有项目、照其习惯写工作流」时,措辞 SHALL 指示 author **自行查看项目里的 agent 使用与 git/交付习惯**并据此产出——author 依赖其自身探查能力,不由调用方预抽取并喂入痕迹内容。
+
+#### Scenario: 无头以系统意图产出提案
+
+- **WHEN** 后台任务以显式 projectId + 系统合成意图调用 author 入口
+- **THEN** author 产出一份经修复与两闸校验的 `WorkflowProposal`,不追加到用户会话、不依赖发送者事件
+
+#### Scenario: 无头产出与聊天路径同构
+
+- **WHEN** 无头入口与聊天入口对等价意图产出工作流
+- **THEN** 两者产出的都是完整 `WorkflowDefinition` + `issues[]`,经同一 `repairWorkflow`/校验,提案形态一致
+
+#### Scenario: 系统意图指示 author 自探项目习惯
+
+- **WHEN** 系统意图为「照这项目的习惯写工作流」
+- **THEN** 意图指示 author 自行查看 `.claude/`、`CLAUDE.md`、`.cursor` 等与 git/交付习惯,而非要求调用方预先抽取喂入
+
+### Requirement: 写工作流 skill 以正向讲原因的措辞给搭流约束
+
+`buildAuthorWorkflowSkill` 生成的新增搭流约束 SHALL 以**正向、讲清原因**的措辞表达:说明**应当怎么做及其缘由**,而非以负向禁止句罗列「不要做什么」;举例 SHALL 仅作轻点、不写满,以免 agent 只照抄示例而不外推到相邻情境。此为约束的**表达方式**要求,适用于下述两条及后续同类约束。
+
+#### Scenario: 约束用正向讲原因而非负向禁止
+
+- **WHEN** 合成写工作流 skill 的新增搭流约束
+- **THEN** 文本正向陈述应当怎么做并给出原因,不以「不要/禁止」为主句式,示例点到为止
+
+### Requirement: 写工作流 skill 教「连续作业交同一个节点」
+
+`buildAuthorWorkflowSkill` SHALL 指导 author:**一段有连续状态、需靠 agent 保持上下文并据即时反馈逐步收敛的工作,应交给同一个 agent 节点完成**——因为只有同一 agent 在一个节点内持续作业,才有连续的上下文与反馈闭环把这段工作做到位。skill SHALL 说明**何时才分节点**(各段之间有明确交接产物,或换了执行者/仓)。措辞遵「正向讲原因」。
+
+#### Scenario: skill 教连续作业归一个节点
+
+- **WHEN** 合成写工作流 skill
+- **THEN** 文本正向说明「据即时反馈逐步收敛的连续工作交同一 agent 节点」及其原因(连续上下文与反馈闭环),并说明何时才该分节点
+
+### Requirement: 写工作流 skill 教「固化步骤排在人工验收之后」
+
+`buildAuthorWorkflowSkill` SHALL 指导 author:**把结果固化下来、使改动离开可回退工作区的步骤(合入主线、对外公开、封存归档等),应安排在一道人工评审/验收之后**——因为固化一旦发生便难以收回,先让人有最后一次判断(满意才固化,不满意仍可打回改),工作流才稳。措辞遵「正向讲原因」,固化步骤以类别轻点(留「等」以示可外推),不逐一穷举。
+
+#### Scenario: skill 教固化后置于人工验收
+
+- **WHEN** 合成写工作流 skill
+- **THEN** 文本正向说明「让改动离开可回退区的固化步骤排在人工验收之后」及其原因(固化难回退、留最后一次人判),固化类别轻点不穷举
+
+### Requirement: 写工作流 skill 教「要人拍板处落成 manual 门」
+
+`buildAuthorWorkflowSkill` SHALL 指导 author:**凡是要人来拍板/验收的地方,用 `manual` 门实现**——`manual` 门能弹出决策、带动作按钮、可驳回(触发内容驱动回退让人打回改),这才是真正拦得住、能交互的人工检查点。措辞遵「正向讲原因」:说清「要人拍板 → 落成 manual 门」及其缘由(唯有 manual 门才拦得住、可驳回),而非把「验收」写成一个只是叫这名字、实则跑命令或跑 agent 的普通节点(那样并不会真的等人)。
+
+#### Scenario: skill 教人工验收用 manual 门
+
+- **WHEN** 合成写工作流 skill
+- **THEN** 文本正向说明「要人拍板/验收处用 `manual` 门(可弹决策、可驳回)」及其原因,指明这才是真正的人工检查点,而非徒有其名的命令/agent 节点
+
+### Requirement: 写工作流 skill 把「不可逆固化前必有人工审批」立为硬要求
+
+`buildAuthorWorkflowSkill` SHALL 正向、讲原因地把**「不可逆固化(合并回主干、推送、开 PR)之前必须有一道人工审批门」立为硬要求**——这是产品底线,**不因项目"自主/无人值守"而省**;人工审批用 `manual` 门实现(可弹决策、可驳回)。措辞遵「正向讲原因」,不以负向禁止句为主。
+
+#### Scenario: skill 把固化前审批立为硬要求
+
+- **WHEN** 合成写工作流 skill
+- **THEN** 文本明确「不可逆固化前必须有一道人工审批 manual 门」是硬要求,且说明不因项目自主而省,并给出原因(重大不可逆步骤须人来把最后一关)
+
+### Requirement: 自动 author 须能读到项目文件
+
+自动(无头)author 一份「照项目习惯写」的工作流时,系统 SHALL 让 author agent **能读到该项目的习惯材料**——把一个 per-run 物化的**习惯上下文包**（组成与生命周期见 `workflow-onboarding`）作为 agent 的**可访问目录**（如 `--add-dir`）传入。该包内含项目习惯痕迹文件的**逐字副本**、各文件真实路径的 manifest，以及 Klarit 预先跑好的廉价确定性摘要（`git log --oneline`、各成员仓 `package.json` 的 scripts、成员仓清单、深度受限的项目目录清单）。
+
+系统 SHALL **不再**把项目各成员仓根目录整体作为可访问目录传入——那是「author 在大项目上极慢、CPU 累计上万秒」的成因；author 需要的习惯材料已由 Klarit 确定性地收集进包中。
+
+系统意图 SHALL 相应告知 agent「本项目的习惯材料已收集在可访问目录中，直接读它、不必也无法遍历整个项目」,并保留**只读约束**:只做只读探查、只输出工作流定义、不改动任何文件。
+
+author 的**产出契约不变**——照旧产出整份工作流定义，照旧经固定脚手架规整与既有两闸校验。
+
+#### Scenario: author 拿到的是上下文包而非仓根
+
+- **WHEN** 自动 author 触发
+- **THEN** author agent 的可访问目录是本次物化的习惯上下文包,**不含**项目成员仓根目录
+
+#### Scenario: 包内可读到痕迹原文
+
+- **WHEN** 项目某成员仓有 `CLAUDE.md` 与 `.claude/`
+- **THEN** author 能在包内读到它们的逐字副本,内容与原文件逐字节相同
+
+#### Scenario: 包内可读到预算摘要
+
+- **WHEN** author 需要推断提交习惯与常用命令
+- **THEN** 包的 manifest 已含 `git log --oneline` 近若干条与各成员仓 `package.json` 的 scripts,author 无需自行起子进程获取
+
+#### Scenario: 意图带只读约束与「材料已备」告知
+
+- **WHEN** 合成自动 author 的系统意图
+- **THEN** 意图告知习惯材料已收集在可访问目录中,并约束只读探查、只输出工作流、不改动任何文件
+
+#### Scenario: 产出契约不变
+
+- **WHEN** author 基于上下文包产出工作流定义
+- **THEN** 产出照旧为整份定义,照旧经脚手架规整与两闸校验,契约与本变更前一致
+
+### Requirement: 改写基准可取会话里的未存草稿
+
+改写工作流时,若**当前会话最后一条 agent 消息带着一份未存库的工作流草稿**(`message.proposal.workflow.workflow`),系统 SHALL 以**该草稿定义**作为改写基准注入 prompt(覆盖默认的「库里活动工作流」基准),使用户「就着刚产出的这份草稿改」;此时 `baseId` 留空(草稿未落库→整体替换、新建,合「无 diff/patch」契约)。会话无未存草稿时,基准回落到活动工作流(原行为)。草稿全程不落库——改写只在会话里滚动,人确认(保存/设为项目工作流)才落库,不违「只提案、人确认才落库」红线。
+
+#### Scenario: 就着草稿改而非改活动工作流
+
+- **WHEN** 会话末条 agent 消息带未存工作流草稿,用户回复「加一道人工验收 manual 门」
+- **THEN** 系统以该草稿为基准改写、产出更新后的完整草稿,而非改动库里的活动工作流
+
+#### Scenario: 无草稿则回落活动工作流
+
+- **WHEN** 会话里没有未存工作流草稿
+- **THEN** 改写基准仍取当前项目的活动工作流(原行为不变)
+
+### Requirement: 自动 author 产出经固定脚手架规整(头尾写死、中间为其生成的干活段)
+
+自动（导入后）author 产出的工作流,系统 SHALL 经**固定脚手架规整**成最终提案——即把 author 产出里的**干活节点当作中间**喂给 `buildScaffoldedWorkflow`,由它套上**固定头**（建分支→开 worktree→关联环境）与**固定尾**（人工验收门 → 归档 `archive-docs` → 合并/推送/清理,按变体）,顺序钉死为 **中间→验收门→归档→合并→清理**。author 产出里的**脊柱类节点**（分支/worktree/合并/推送/清理/归档/验收门）SHALL 被脚手架**丢弃并以固定脊柱替换**（比照 `repairWorkflow` 丢非法节点）——故 author 把脊柱摆错也无所谓,结构由脚手架保证。规整后仍走 `repairWorkflow`+`validateWorkflow`+`checkBranchPairing` 兜底。
+
+- **变体**：由 author 产出推断（含 `open-pr` → `pr`,否则 `local-merge`；缺省 `local-merge`）。
+- **归档清单**：从 author 产出的 `archive-docs` 节点的 `executor.archiveDocs` 抽出,带进脚手架的归档节点（无则空、走扫描兜底）。
+- **聊天写工作流路不变**（仍产整份、用户全权控制、不走脚手架规整）。
+
+> 机制注:让 author 照旧产整份、再确定性规整到脚手架——比改 author 的产出契约(只产中间)更稳,结果等价(头尾固定、中间是 author 生成的干活段)。
+
+#### Scenario: author 产出被规整成固定脚手架
+
+- **WHEN** 自动 author 产出一份工作流（脊柱可能摆错）
+- **THEN** 系统把其干活节点当中间、套固定头/尾,产出 中间→验收门→归档→合并→清理 的合法提案
+
+#### Scenario: 脊柱位置永远正确(结构消灭排序问题)
+
+- **WHEN** 任何自动 author 产出经脚手架规整
+- **THEN** 验收门在合并前、归档在验收后合并前、清理在最后——位置由脚手架固定,author 摆错被替换
+
+#### Scenario: author 脊柱/验收/归档节点被替换
+
+- **WHEN** author 产出里含自己的 `merge-branch`/验收门/`archive-docs` 等脊柱节点
+- **THEN** 规整丢弃它们、以固定脊柱替换（archive 清单从其 archive-docs 节点抽出后带入固定归档节点）
+
+#### Scenario: 聊天路不走脚手架
+
+- **WHEN** 用户在全局聊天里写/改工作流
+- **THEN** 仍产整份 `WorkflowDefinition`,不套脚手架规整
+
+#### Scenario: 自动 author 产中间被脚手架拼成整份
+
+- **WHEN** 自动 author 产 `{ variant:'local-merge', middle:[...干活...], archiveDocPaths:[...] }`
+- **THEN** 系统拼成:固定头 + middle + 验收门 + archive-docs(带清单) + 合并/推送/清理,顺序为 中间→验收门→归档→合并→清理,过两闸校验
+
+#### Scenario: 脊柱位置永远正确(结构消灭排序问题)
+
+- **WHEN** 任何自动 author 产出经脚手架装配
+- **THEN** 验收门在合并前、归档在验收后合并前、清理在最后——位置由脚手架固定,LLM 产不出错位
+
+#### Scenario: middle 混入脊柱节点 → 丢弃
+
+- **WHEN** author 的 `middle` 里误含 `merge-branch`/`create-branch` 等脊柱节点
+- **THEN** 装配丢弃这些、只保留干活类节点
+
+#### Scenario: 聊天路不走脚手架
+
+- **WHEN** 用户在全局聊天里写/改工作流
+- **THEN** 仍产整份 `WorkflowDefinition`,不套脚手架
+
+### Requirement: 写工作流 skill 教归档规范(列清单 + 优先项目自带 + 通用不点名)
+
+`buildAuthorWorkflowSkill` SHALL 正向、讲原因地加轻量**归档规范**(脊柱由脚手架规整,故 skill 只需管归档这块的内容质量):
+
+- 归档**尽量只一个文档归档节点**；
+- **项目若有自己的归档/沉淀方式,优先用它**（措辞**通用**,MUST NOT 点名具体技能名,例子只轻点）；
+- 它没覆盖到的文档,在 `archive-docs` 节点里**把该归档的文档路径列进清单**（`executor.archiveDocs`）,这样归档直接按清单走、免二次扫描；
+- 归档**不设门**（脚手架已保证归档在人工验收之后,author 不必自己摆位置）。
+
+#### Scenario: skill 教归档规范
+
+- **WHEN** 合成写工作流 skill
+- **THEN** 文本正向说明「优先项目自带归档(通用不点名)、尽量单归档节点、没覆盖的文档在 archive-docs 里列清单、归档不设门」及原因
+
+#### Scenario: 措辞通用不点名
+
+- **WHEN** skill 讲优先用项目自带归档
+- **THEN** 用「项目自己的归档方式」这类通用措辞,不写死某个具体技能名
+
+### Requirement: 提案预览浮层主操作为「保存并设为本项目工作流」一键
+
+工作流提案预览浮层（chromeless 底栏）的**主操作** SHALL 由原「保存为正式工作流 → (二次确认) 设置为本项目工作流」两步**合并为一键**:
+
+- 当这份工作流**尚不是**当前项目的活动工作流时,主按钮显示「**保存并设为本项目工作流**」,点击 SHALL **先保存入库、再激活为本项目工作流**(一次点击完成);保存被校验拦下则不激活、回报原因。
+- 当它**已是**当前项目活动工作流时,主按钮显示「**更新工作流**」(仅保存/更新,不必再激活)。
+- 底栏保留「关闭」;**移除**原独立的「设置为本项目工作流」按钮与其二次确认步骤(一键即人确认)。
+
+此改仅作用于**提案预览浮层**(chromeless 底栏);设置里的工作流编辑（顶栏保存）不受影响。
+
+#### Scenario: 未激活 → 一键保存并设为本项目工作流
+
+- **WHEN** 预览浮层里这份工作流尚不是当前项目活动工作流,用户点主按钮「保存并设为本项目工作流」
+- **THEN** 系统先保存入库、再 `setActiveWorkflow` 激活到当前项目(一次点击);之后按钮变为「更新工作流」
+
+#### Scenario: 已是活动工作流 → 主按钮仅「更新工作流」
+
+- **WHEN** 这份已是当前项目活动工作流
+- **THEN** 主按钮显示「更新工作流」,点击仅保存/更新
+
+#### Scenario: 保存校验不过 → 不激活
+
+- **WHEN** 点「保存并设为本项目工作流」但保存被语义校验拦下
+- **THEN** 回报原因、不激活、不写盘
+
+#### Scenario: 设置里编辑不受影响
+
+- **WHEN** 在设置里编辑库中工作流(非 chromeless 预览)
+- **THEN** 仍是顶栏保存那套,无此合并按钮
+
+### Requirement: 自动 author 被喂项目文档枚举、产出 archive-docs 分类配置
+
+自动 author 运行时,系统 SHALL 把**项目文档枚举**(复用 `scanCandidates` 的**廉价文件遍历**,无 agent)注入 author 上下文,使 author 无需自行发现文档。author SHALL 据此为 `archive-docs` 节点产出**分类文档配置** `[{ path, kind: 'dynamic'|'snapshot' }]`:
+
+- **剔除**项目自有归档方式已覆盖的文档(不重复归);
+- 剩余文档各判 `dynamic`(就地更新现状)/ `snapshot`(冻结追加);
+- 写进 archive-docs 节点配置(经脚手架规整时带入固定归档节点)。
+
+如此归档配置随工作流一次产出,自动流**无需独立的文档分析 agent、激活时不触发扫描**。skill 相应教 author 此产出方式(措辞通用、不点名具体技能)。
+
+#### Scenario: 喂枚举、author 产分类配置
+
+- **WHEN** 自动 author 运行,系统注入项目文档枚举
+- **THEN** author 剔除项目自有归档覆盖的文档、把剩余分动态/快照,产出 archive-docs 的 `[{path,kind}]` 配置
+
+#### Scenario: 配置随工作流产出、免二次扫描
+
+- **WHEN** 自动 author 产出含分类配置的 archive-docs
+- **THEN** 该配置经脚手架带入固定归档节点,激活/运行时按配置归档,不触发独立文档分析 agent
+

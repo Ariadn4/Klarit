@@ -8,6 +8,7 @@ import type {
   RegistryData,
   RepoMember
 } from '../shared/types'
+import { coercePatrols, type Patrol } from '../shared/patrol'
 import {
   createProject,
   findProjectById,
@@ -204,6 +205,85 @@ export function rebindMemberIfGitAppeared(
     rootPath: toplevel,
     now: deps.now()
   })
+}
+
+// ── 项目定时巡检（scheduled-patrol）─────────────────────────────────────
+//
+// 巡检随项目管理数据持久化（registry.json，`normalizeRegistry` 原样保留、不入 git）。
+// 读侧一律过 `coercePatrols`：老项目没有该字段读为空列表、脏条目丢弃——**默认零条巡检**，
+// 用户没建时本能力对系统行为影响为零。写侧命中项目返回新列表、项目不存在返回 null（不静默造项目）。
+
+/** 读某项目的巡检列表（缺省 / 脏值 → 空列表）。 */
+export function listPatrols(data: RegistryData, projectId: string): Patrol[] {
+  return coercePatrols(findProjectById(data, projectId)?.patrols)
+}
+
+/** 写回并记更新时刻的内部收口。 */
+function writePatrols(
+  data: RegistryData,
+  projectId: string,
+  now: string,
+  mutate: (list: Patrol[]) => Patrol[]
+): Patrol[] | null {
+  const project = findProjectById(data, projectId)
+  if (!project) return null
+  project.patrols = mutate(coercePatrols(project.patrols))
+  project.updatedAt = now
+  return project.patrols
+}
+
+/** 新建或按 id 覆盖一条巡检。 */
+export function upsertPatrol(
+  data: RegistryData,
+  projectId: string,
+  patrol: Patrol,
+  now: string
+): Patrol[] | null {
+  return writePatrols(data, projectId, now, (list) => {
+    const clean = coercePatrols([patrol])
+    if (clean.length === 0) return list // 非法巡检不落库
+    const idx = list.findIndex((p) => p.id === patrol.id)
+    if (idx < 0) return [...list, clean[0]]
+    const next = list.slice()
+    next[idx] = clean[0]
+    return next
+  })
+}
+
+/** 删除一条巡检。 */
+export function removePatrol(
+  data: RegistryData,
+  projectId: string,
+  patrolId: string,
+  now: string
+): Patrol[] | null {
+  return writePatrols(data, projectId, now, (list) => list.filter((p) => p.id !== patrolId))
+}
+
+/** 启停一条巡检（**不删除**：配置与 `lastRunAt` 原样保留）。 */
+export function setPatrolEnabled(
+  data: RegistryData,
+  projectId: string,
+  patrolId: string,
+  enabled: boolean,
+  now: string
+): Patrol[] | null {
+  return writePatrols(data, projectId, now, (list) =>
+    list.map((p) => (p.id === patrolId ? { ...p, enabled } : p))
+  )
+}
+
+/** 记一次**发起**（不是成功）：把 `lastRunAt` 置为发起时刻，否则总失败的巡检会每个 tick 重试。 */
+export function markPatrolRun(
+  data: RegistryData,
+  projectId: string,
+  patrolId: string,
+  at: number,
+  now: string
+): Patrol[] | null {
+  return writePatrols(data, projectId, now, (list) =>
+    list.map((p) => (p.id === patrolId ? { ...p, lastRunAt: at } : p))
+  )
 }
 
 /** 供 WindowManager 使用：找出项目对象。 */

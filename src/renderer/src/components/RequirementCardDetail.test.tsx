@@ -65,6 +65,11 @@ function installKlarit(extra: Record<string, unknown> = {}): Record<string, Retu
     listCards: vi.fn(async () => []),
     listCardTypes: vi.fn(async () => TYPES),
     copyText: vi.fn(async () => {}),
+    listCardRuns: vi.fn(async () => []),
+    readRunJournal: vi.fn(async () => []),
+    listRunOutputBuckets: vi.fn(async () => []),
+    readRunOutput: vi.fn(async () => ''),
+    onEngineProgress: vi.fn(() => () => {}),
     ...extra
   }
   ;(window as unknown as { klarit: unknown }).klarit = api
@@ -261,5 +266,58 @@ describe('RequirementCardDetail · 删除按钮', () => {
     expect(dialog).toHaveTextContent('未合并提交将丢失')
     await userEvent.click(within(dialog).getByRole('button', { name: '删除' }))
     expect(api.removeCard).toHaveBeenCalledWith('add-thing', { recycleBranches: true, allowUnmerged: true })
+  })
+})
+
+describe('RequirementCardDetail · 「运行记录」页签', () => {
+  const journal = (runId: string, nodeId: string) => [
+    { kind: 'node-enter' as const, runId, nodeId, at: 0 },
+    { kind: 'node-exit' as const, runId, nodeId, at: 2000 }
+  ]
+
+  it('默认选中当前活跃运行：切到页签即看该运行的时间线', async () => {
+    const api = installKlarit({
+      getWorkflow: vi.fn(async () => workflow()),
+      listCardRuns: vi.fn(async () => [{ runId: 'r1', state: 'running', startedAt: 1_700_000_000_000 }]),
+      readRunJournal: vi.fn(async (runId: string) => journal(runId, 'n1'))
+    })
+    seed(card({ activeRunId: 'r1' }), { r1: bp() })
+    render(<RequirementCardDetail />)
+
+    await userEvent.click(screen.getByRole('tab', { name: '运行记录' }))
+    await waitFor(() => expect(api.readRunJournal).toHaveBeenCalledWith('r1'))
+    // 时间线按节点分段渲染（节点名取自工作流定义）。
+    expect(await screen.findByText('跑测试')).toBeInTheDocument()
+    // 页签内容互斥：详情页的正文不再显示。
+    expect(screen.queryByText('描述')).not.toBeInTheDocument()
+  })
+
+  it('有历史运行 → 可在页签内切换回看，用户不需要知道 runId', async () => {
+    const api = installKlarit({
+      getWorkflow: vi.fn(async () => workflow()),
+      listCardRuns: vi.fn(async () => [
+        { runId: 'r1', state: 'running', startedAt: 1_700_000_100_000 },
+        { runId: 'r0', state: 'done', startedAt: 1_700_000_000_000 }
+      ]),
+      readRunJournal: vi.fn(async (runId: string) => journal(runId, 'n1'))
+    })
+    seed(card({ activeRunId: 'r1' }), { r1: bp() })
+    render(<RequirementCardDetail />)
+
+    await userEvent.click(screen.getByRole('tab', { name: '运行记录' }))
+    const picker = await screen.findByRole('combobox', { name: '选择要回看的运行' })
+    expect(await screen.findByText('跑测试')).toBeInTheDocument()
+
+    await userEvent.selectOptions(picker, 'r0')
+    await waitFor(() => expect(api.readRunJournal).toHaveBeenCalledWith('r0'))
+  })
+
+  it('该卡没有带记录的运行 → 「无记录」空态，不报错', async () => {
+    installKlarit({ listCardRuns: vi.fn(async () => []) })
+    seed(card())
+    render(<RequirementCardDetail />)
+
+    await userEvent.click(screen.getByRole('tab', { name: '运行记录' }))
+    expect(await screen.findByText('这张卡还没有带记录的运行')).toBeInTheDocument()
   })
 })

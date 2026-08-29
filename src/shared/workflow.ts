@@ -2,6 +2,7 @@
 
 import type {
   AgentInstruction,
+  ArchiveDocEntry,
   DocRegistry,
   ExternalVerify,
   GateCheck,
@@ -42,26 +43,52 @@ export interface EngineOpCapabilities {
   producesOutputs: boolean
   supportsGate: boolean
   supportsWritableScope: boolean
+  /**
+   * 该操作是否**不可逆固化**：一旦执行，改动便离开可回退的工作区、难以收回
+   * （合入主线 merge-branch、推送 push-branch、对外开 PR open-pr）。
+   * `archive-docs` **不属**固化——它把文档提交到特性分支/worktree，合入前驳回即随分支丢弃、可回退。
+   * 软校验（lintWorkflow）据此派生固化操作集，判「固化前是否有人工验收」——新增固化类操作只需在此打真即随之覆盖。
+   */
+  finalizesIrreversibly: boolean
 }
 
 const NO_ENGINE_CAP: EngineOpCapabilities = {
   producesOutputs: false,
   supportsGate: false,
-  supportsWritableScope: false
+  supportsWritableScope: false,
+  finalizesIrreversibly: false
 }
 
-/** 支持挂门的引擎操作：push-branch（推送后人工评审点）与 open-pr（其上挂「等平台合并」外部门）。 */
+/** 不可逆固化、无门/无产出的引擎操作：merge-branch（合入主线，改动离开可回退区）。 */
+const FINALIZE_ENGINE_CAP: EngineOpCapabilities = {
+  producesOutputs: false,
+  supportsGate: false,
+  supportsWritableScope: false,
+  finalizesIrreversibly: true
+}
+
+/**
+ * 支持挂门、且**不可逆固化**的引擎操作：push-branch（推送后人工评审点、推送即离开本地）与
+ * open-pr（其上挂「等平台合并」外部门、对外公开）。二者都对外固化，故 finalizesIrreversibly 为真。
+ */
 const GATE_ENGINE_CAP: EngineOpCapabilities = {
   producesOutputs: false,
   supportsGate: true,
-  supportsWritableScope: false
+  supportsWritableScope: false,
+  finalizesIrreversibly: true
 }
 
-/** 产出文档并提交的引擎操作：archive-docs（内部委派 agent 归档、产生文档写入并提交；不支持门）。 */
+/**
+ * 产出文档并提交、但**可回退**的引擎操作：archive-docs（内部委派 agent 归档、产生文档写入并提交）。
+ * 它把文档提交到**特性分支/worktree**，合入前驳回即随分支丢弃、**可回退**，故 `finalizesIrreversibly` 为假
+ * ——不属固化，软校验不据它判「固化前缺人工验收」（唯 merge-branch/push-branch/open-pr 才让改动离开可回退区）。
+ * 不支持门。此 cap 仅 archive-docs 独用。
+ */
 const PRODUCE_ENGINE_CAP: EngineOpCapabilities = {
   producesOutputs: true,
   supportsGate: false,
-  supportsWritableScope: false
+  supportsWritableScope: false,
+  finalizesIrreversibly: false
 }
 
 /**
@@ -77,7 +104,7 @@ const ENGINE_OPERATION_SPECS: Readonly<Record<string, EngineOpCapabilities>> = {
   'create-branch': NO_ENGINE_CAP,
   'open-worktree': NO_ENGINE_CAP,
   'link-env': NO_ENGINE_CAP,
-  'merge-branch': NO_ENGINE_CAP,
+  'merge-branch': FINALIZE_ENGINE_CAP,
   'push-branch': GATE_ENGINE_CAP,
   'remove-worktree': NO_ENGINE_CAP,
   'delete-branch': NO_ENGINE_CAP,
@@ -86,7 +113,8 @@ const ENGINE_OPERATION_SPECS: Readonly<Record<string, EngineOpCapabilities>> = {
   // 天然 host，故 supportsGate 为真。（「核查已合并」不是操作，而是外部门的过门条件，见 workflow-definition。）
   'open-pr': GATE_ENGINE_CAP,
   // 平台预制节点（内部委派 agent 读文档登记表按习惯归档）。与 open-pr 不同：它**产生文档写入并提交**
-  // （producesOutputs 为真），且不作外部门 host（supportsGate 为否）。见 engine 分派与 document-archive。
+  // （producesOutputs 为真），且不作外部门 host（supportsGate 为否）。提交到特性分支/worktree、可回退，
+  // 故不属固化（finalizesIrreversibly 为否）。见 engine 分派与 document-archive。
   'archive-docs': PRODUCE_ENGINE_CAP
 }
 
@@ -177,6 +205,38 @@ auto 门是「命令**退出码 0 才放行**」，**没有「反着判」**。�
 - **别做「必须失败」的红门**（如「npm test 必须失败才放行」）：它得靠把命令取反来实现，且只要测试套件里有任何**已知失败 / xfail / 无关坏掉**的测试，后面的「绿门」就会被**永久卡死**——这类工作流不靠谱，不要搭。
 - 「测试先行（先写测试、先看它红）」是**过程纪律**，写进 agent 节点的**指令文本**里（让 agent 先写测试、自己确认它失败、再实现），**不要**做成硬 auto 门。
 - 要用 auto 门验测试，就只用**绿门**（测试**通过**才放行）。
+
+## 一段连续收敛的作业，交给同一个 agent 节点
+
+一个 agent 节点承载一段有连续状态的完整工作。当一段工作要靠 agent 自己保持上下文、据即时反馈一步步收敛（比如一边写测试、一边据结果改实现，直到达成），就把它**整段交给同一个 agent 节点**——这样它才有**连续的上下文与反馈闭环**，把这段事做到位。需要分成多个节点，是当各段之间有了**明确的交接产物**，或**换了执行者 / 换了仓**时——那才是自然的切分点。
+
+## 把结果固化下来的步骤，排在人来拍板之后
+
+有些步骤会让改动**离开可回退的工作区**——合入主线、对外公开、封存归档等——做了就难收回。所以在这些固化步骤**之前**安排一道**人工评审 / 验收门**（\`manual\`），让人有最后一次判断：满意才固化，不满意还能打回改。这样工作流才稳。（会离开可回退区的固化步骤不止上面几种，留个「等」字，遇到相邻的照此**外推**即可。）
+
+## 要人拍板、验收的地方，落成一道 \`manual\` 门
+
+凡是要**人来判定通过与否**的地方（验收、评审、放行前最后一道人工确认），把它落成一道 \`manual\` 门——\`manual\` 门会**弹出决策、带动作按钮、可驳回**（打回改，触发内容驱动回退让人退回之前节点修），这才真的会**等人、拦得住**，是真正的人工检查点。让「人来拍板」成为一道门；而一个**只是叫「验收」、实则跑命令或跑 agent 的普通节点**并不会真的等谁——它跑完就过、拦不住人，徒有其名。
+
+## 不可逆固化前，必有一道人工审批门（硬要求）
+
+把改动**合并回主干**、**推送**到远端、对外**开 PR** 这类**不可逆固化**，一旦做了就难以收回。所以在任何这类固化动作**之前，必须**有一道人工审批门（\`manual\`，可弹决策、可驳回）让**人来把最后一关**——满意才固化。这是产品底线，**不因项目"自主/无人值守"地运转就省**掉这道门：越是让流程自动往下跑，越要在离开可回退区的那一步留一个人拍板。（这道审批门就落成上面讲的 \`manual\` 门，别用只是叫「验收」实则跑命令/跑 agent 的普通节点顶替——那不会真的等人。）
+
+## 归档：尽量一个归档节点，优先项目自己的归档方式
+
+把本次任务该沉淀的内容归档，**尽量只放一个文档归档节点**。归档集中在一处，「哪些文档会被动到」就一目了然、也不会几处归档各扫一遍、彼此打架；散在多处反而看不清、易重复。
+
+**项目若有自己的归档 / 沉淀文档的约定，优先用它**——项目自带的方式最懂自己的文档该怎么续写、往哪归，比你另起一套稳。（例如项目自带某个负责归档收尾的技能或流程，就走它，按上面「已装技能」的办法按名引用即可；至于叫什么名字、怎么归，运行时 agent 自己清楚，你不必替它写死。）
+
+项目自己的归档**没覆盖到的文档**，就在 \`archive-docs\` 节点的**分类文档配置**里（\`executor.archiveDocs\`）把它们列出来。下方会给你一份**项目文档枚举**（系统已廉价遍历列好，你无需自己去发现文档）；据它这样产出配置：
+
+- 先**剔除**项目自己的归档方式已经覆盖的那些文档（那部分交给项目自带的方式归，别重复归）；
+- **剩下的**每个文档判一个 kind：\`dynamic\`（就地更新到最新现状、只留现状）或 \`snapshot\`（冻结、只往后追加一条记录）；
+- 列成 \`[{ "path": "相对路径", "kind": "dynamic" | "snapshot" }]\` 写进该节点的 \`archiveDocs\`。
+
+这样归档直接照这份分类配置把文档归到位，省掉「先扫描登记表、再决定归哪些」这一次二次动作——配置已经指明路径与归法，无需再扫描。
+
+**归档不必自己挂门**：归档只是把文档提交到特性分支 / worktree，合入前驳回即随分支丢弃、**可回退**，且它本就排在人工验收**之后**（那道验收门已经把关）。所以别再单独为归档设一道门，直接把归档节点摆在交付段收尾即可。
 
 ## agent 节点：用「已装技能」而不是臆造
 
@@ -521,6 +581,17 @@ export function validateWorkflow(def: WorkflowDefinition): WorkflowValidation {
 }
 
 /**
+ * 工作流是否用到 `archive-docs` 引擎操作——纯结构判定：至少一个节点的执行者是 `engine` 且 `operation` 为
+ * `archive-docs`。仅命中**引擎** archive-docs；引用了名为 archive 的**已装技能**的 agent 节点不算。
+ * 空/缺失节点列表安全回落为 false。文档登记表运行时只被此操作消费，故它是「文档扫描需不需要」的需求驱动信号。
+ */
+export function workflowUsesArchiveDocs(def: WorkflowDefinition): boolean {
+  return (def?.nodes ?? []).some(
+    (n) => n.executor?.kind === 'engine' && n.executor.operation === 'archive-docs'
+  )
+}
+
+/**
  * 分支配对语义校验：若有 `create-branch` 节点，则必须至少有一个 `delete-branch-worktree` 节点，
  * 否则分支/worktree 会被泄漏，判为无效。只约束「建了必须删」单一方向，不做顺序/计数/反向校验。
  * 这是与结构校验（validateWorkflow）分离的「可载入但不可用」软标记——无效工作流仍被列出，只是被标记并拦截。
@@ -543,10 +614,100 @@ export function checkBranchPairing(def: WorkflowDefinition): WorkflowValidation 
   return { ok: true }
 }
 
-/** 提取轻量摘要（列表/选择器用）；未通过分支配对校验时带出无效原因，供 UI 标「（无效）」并禁用选择。 */
+/**
+ * 不可逆固化引擎操作集——从引擎操作能力单一来源（`finalizesIrreversibly`）派生，恰为 `merge-branch`、
+ * `push-branch`、`open-pr`。这些操作一旦执行，改动便离开可回退工作区、难以收回。
+ * `archive-docs` **不在**其中——它把文档提交到特性分支/worktree、合入前驳回即随分支丢弃、可回退。
+ * 软校验据此判「固化前是否有人工验收」；新增固化类操作只需在其能力声明打 `finalizesIrreversibly` 即随之覆盖。
+ */
+export const IRREVERSIBLE_FINALIZATION_OPS: ReadonlyArray<string> = ENGINE_OPERATIONS.filter(
+  (op) => engineOpCapabilities(op).finalizesIrreversibly
+)
+
+/**
+ * 工作流**软校验**（比照 `checkBranchPairing` 的「可加载但有隐患」定位）：对**结构上可判**的反模式返回零或
+ * 多条**非阻断**告警串。纯结构判定（执行序 + 固化操作集 + 门类），**不看命令文本**；不阻断存库/加载，
+ * `validateWorkflow` 硬校验语义不动。同时兜住 agent 生成与用户手动改乱（作用于最终定义、与来源无关）。
+ *
+ * 首条规则：若工作流含**不可逆固化**引擎操作（见 `IRREVERSIBLE_FINALIZATION_OPS`），而按节点执行顺序在**第一个**
+ * 固化操作**之前或就挂在该固化节点自身上**都无任何 `manual` 门，则告警「固化步骤前缺人工验收」。
+ * 挂在固化节点自身上的 `manual` 门**计入**——把人工评审门挂在 `push-branch`/`merge-branch`/`open-pr` 上
+ * （该门在其固化动作生效前拦一道人来拍板）是正规打法，不应误报；故取「第一个固化节点**及其之前**」范围。
+ * （「期望失败的红门」判据依赖自由命令文本、不可靠，故不纳入。）
+ */
+/** 「不可逆固化前缺人工审批」软校验告警文字——lint 产出与确定性修复（ensureApprovalBeforeFinalization）单一来源。 */
+export const MISSING_FINALIZATION_APPROVAL_WARNING = '固化步骤前缺人工验收'
+
+/** 引擎执行者是否为不可逆固化操作（lint 与确定性修复共用）。 */
+function isFinalizeNode(n: WorkflowNode): boolean {
+  return n.executor?.kind === 'engine' && IRREVERSIBLE_FINALIZATION_OPS.includes(n.executor.operation)
+}
+
+/** 节点是否挂了至少一道 manual 门。 */
+function hasManualGate(n: WorkflowNode): boolean {
+  return (n.gate ?? []).some((g) => g.kind === 'manual')
+}
+
+export function lintWorkflow(def: WorkflowDefinition): string[] {
+  const warnings: string[] = []
+  const nodes = def?.nodes ?? []
+  const firstFinalizeIdx = nodes.findIndex(isFinalizeNode)
+  // 取「第一个固化节点及其之前」——挂在该固化节点自身上的 manual 门也拦得住其固化动作，计入。
+  if (firstFinalizeIdx >= 0 && !nodes.slice(0, firstFinalizeIdx + 1).some(hasManualGate)) {
+    warnings.push(MISSING_FINALIZATION_APPROVAL_WARNING)
+  }
+  return warnings
+}
+
+/**
+ * **确定性**保证「不可逆固化前有一道人工审批 `manual` 门」（设计决策 #16：别再赌 LLM）。实测表明 author 反复把
+ * 「验收」做成 agent/command 节点而非 `manual` 门、连喂回修订多轮仍不改正；而 lint 已精确知道「第一个不可逆固化前
+ * 缺 `manual` 门」，补它是机械动作。故：
+ * - 若 `lintWorkflow(def)` **不含**「固化步骤前缺人工验收」告警 → **原样返回**（幂等 no-op，覆盖「已有审批门」
+ *   与「无固化操作」两种情形）。
+ * - 否则在**第一个**不可逆固化节点**之前**插入一个复核节点（照默认工作流 `review-before-merge` 的 command+manual
+ *   写法）：`command` 执行者、一道 `manual` 门、与该固化节点**同 `stageId`**、id 避开既有冲突、双语名。
+ *
+ * 结果必过 `validateWorkflow` + `checkBranchPairing`，且 `lintWorkflow` 不再含该告警。幂等（二次应用＝一次）。
+ * 与 `repairWorkflow` 的「建了分支自动补删分支」同类——硬规则用代码保证。纯函数，main 与 renderer 共享。
+ */
+export function ensureApprovalBeforeFinalization(def: WorkflowDefinition): WorkflowDefinition {
+  // lint 干净（已有固化前 manual 门，或压根没有固化操作）→ no-op：原样返回，保证幂等。
+  if (!lintWorkflow(def).includes(MISSING_FINALIZATION_APPROVAL_WARNING)) return def
+  const nodes = def.nodes ?? []
+  const idx = nodes.findIndex(isFinalizeNode)
+  if (idx < 0) return def // lint 命中即保证 idx>=0；防御性兜底，不臆造插入点。
+  // 复核节点 id：避开既有节点 id 冲突。
+  const existingIds = new Set(nodes.map((n) => n.id))
+  let reviewId = 'approve-before-finalizing'
+  for (let i = 2; existingIds.has(reviewId); i++) reviewId = `approve-before-finalizing-${i}`
+  const reviewNode: WorkflowNode = {
+    id: reviewId,
+    name: L('合并前人工审批', 'Approve before finalizing'),
+    stageId: nodes[idx].stageId,
+    executor: {
+      kind: 'command',
+      commands: [
+        { command: `node -e "console.log('待审批：查看本卡改动，满意就通过固化，不满意可驳回打回改')"` }
+      ]
+    },
+    outputs: [],
+    gate: [{ kind: 'manual', actions: [{ label: '查看改动', command: 'git diff' }] }]
+  }
+  return { ...def, nodes: [...nodes.slice(0, idx), reviewNode, ...nodes.slice(idx)] }
+}
+
+/**
+ * 提取轻量摘要（列表/选择器用）：未通过分支配对校验时带出 `invalidReason`（可载入但不可用，UI 标「（无效）」
+ * 并禁用选择）；软校验命中时带出 `warnings`（可用但有隐患，UI 提示但不拦）。两者严重度不同、各占一字段。
+ */
 export function workflowSummary(def: WorkflowDefinition): WorkflowSummary {
   const v = checkBranchPairing(def)
-  return v.ok ? { id: def.id, name: def.name } : { id: def.id, name: def.name, invalidReason: v.reason }
+  const warnings = lintWorkflow(def)
+  const summary: WorkflowSummary = { id: def.id, name: def.name }
+  if (!v.ok) summary.invalidReason = v.reason
+  if (warnings.length) summary.warnings = warnings
+  return summary
 }
 
 /** 引擎节点速记。 */
@@ -583,21 +744,44 @@ const DEFAULT_STAGES: WorkflowStage[] = [
 ]
 
 /**
- * 内置默认工作流（本地直合）：建分支→开 worktree→关联环境→〔实现占位〕→合并→push main→删 worktree→删本地分支。
- * 全程本地、可无人值守跑完，作引擎的第一个集成 smoke。id 由调用方注入；亦用作「新建工作流」的默认模板。
+ * 内置主默认工作流（本地直合）的稳定 id：让兜底/否则支能指名派发（`setActiveWorkflow(project, DEFAULT_LOCAL_MERGE_WORKFLOW_ID)`）。
+ * 比照两份验收样例已按稳定 id 幂等种子的做法，主默认不再用 `randomUUID()`，多次启动始终同一 id、不产生重复副本。
+ */
+export const DEFAULT_LOCAL_MERGE_WORKFLOW_ID = 'builtin-default-local-merge'
+
+/**
+ * 内置默认工作流（本地直合）：建分支→开 worktree→关联环境→〔实现占位〕→合并前人工审批→合并→push main→删 worktree→删本地分支。
+ * 合并回主干等不可逆固化前**停下等你审批**——「重大步骤须人拍板」是产品硬原则，故默认流自身即含一道合并前 `manual` 门
+ * （挂在支持挂门的评审节点上；`merge-branch` 自身 supportsGate=false，故不挂其上），过 `lintWorkflow`。作引擎的第一个集成 smoke。
+ * id 由调用方注入；亦用作「新建工作流」的默认模板。
  */
 export function createDefaultWorkflow(id: string): WorkflowDefinition {
   return {
     id,
     name: L('默认工作流（本地直合）', 'Default workflow (local merge)'),
     description: L(
-      '需求→交付的本地脊柱：开分支/worktree→实现→合并回主干→推送主干→清理。全程本地、可无人值守跑完。',
-      'Local spine from requirement to delivery: branch/worktree → implement → merge to main → push → cleanup. Fully local, unattended.'
+      '开分支/worktree→实现→合并前停下等你审批→合并回主干→推送主干→清理。合并等重大步骤前先经你确认再固化。',
+      'branch/worktree → implement → pause for your approval before merging → merge to main → push → cleanup. It stops for your sign-off before the merge and other major steps.'
     ),
     suggestedTypes: DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
     stages: DEFAULT_STAGES.map((s) => ({ ...s })),
     nodes: [
       ...defaultPrelude(),
+      // 合并前的人工审批门：merge-branch（supportsGate=false）不能挂门，故挂在一个支持挂门的评审节点上，
+      // 让「合并回主干」这一不可逆固化前必经人拍板（体现产品硬原则，并使本流自身过 lintWorkflow）。
+      {
+        id: 'review-before-merge',
+        name: L('合并前审批', 'Approve before merge'),
+        stageId: 'deliver',
+        executor: {
+          kind: 'command',
+          commands: [
+            { command: `node -e "console.log('待审批：查看本卡改动，满意就通过合并回主干，不满意可驳回打回改')"` }
+          ]
+        },
+        outputs: [],
+        gate: [{ kind: 'manual', actions: [{ label: '查看改动', command: 'git diff' }] }]
+      },
       engineNode('merge-branch', L('合并分支', 'Merge branch'), 'deliver', 'merge-branch'),
       engineNode('push-main', L('推送主干', 'Push main'), 'deliver', 'push-branch'),
       engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
@@ -615,8 +799,8 @@ export function createDefaultWorkflowPr(id: string): WorkflowDefinition {
     id,
     name: L('默认工作流（PR 模式）', 'Default workflow (PR mode)'),
     description: L(
-      '需求→交付的 PR 脊柱：push 需求分支→人工评审→合并→推送主干→删云端分支→清理。供需评审/CI 的项目。',
-      'PR spine from requirement to delivery: push feature branch → manual review → merge → push main → delete remote branch → cleanup. For projects needing review/CI.'
+      'push 需求分支→人工评审→合并→推送主干→删云端分支→清理。供需评审/CI 的项目。',
+      'push feature branch → manual review → merge → push main → delete remote branch → cleanup. For projects needing review/CI.'
     ),
     suggestedTypes: DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
     stages: DEFAULT_STAGES.map((s) => ({ ...s })),
@@ -645,8 +829,8 @@ export function createRealPrWorkflow(id: string): WorkflowDefinition {
     id,
     name: L('默认工作流（真 PR）', 'Default workflow (real PR)'),
     description: L(
-      '需求→交付的真 PR 脊柱：push 需求分支→在平台开 PR/MR→评审与合并在平台上完成→外部门核查已合并→清理。合并不由本地施加。',
-      'Real-PR spine from requirement to delivery: push feature branch → open PR/MR on the platform → review & merge happen on the platform → external gate verifies merged → cleanup. Merge is not applied locally.'
+      'push 需求分支→在平台开 PR/MR→评审与合并在平台上完成→外部门核查已合并→清理。合并不由本地施加。',
+      'push feature branch → open PR/MR on the platform → review & merge happen on the platform → external gate verifies merged → cleanup. Merge is not applied locally.'
     ),
     suggestedTypes: DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
     stages: DEFAULT_STAGES.map((s) => ({ ...s })),
@@ -658,6 +842,135 @@ export function createRealPrWorkflow(id: string): WorkflowDefinition {
       engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
       engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
     ]
+  }
+}
+
+// ── 固定脚手架装配（固定头 + LLM 中间 + 固定尾） ─────────────────────────────
+
+/** 脊柱引擎操作集：这些属脚手架（头/尾），middle 里误产的一律丢弃（含旧复合别名）。 */
+const SCAFFOLD_SPINE_OPS: ReadonlySet<string> = new Set<string>([
+  ...ENGINE_OPERATIONS,
+  LEGACY_DELETE_BRANCH_WORKTREE
+])
+
+/** middle 节点是否属脊柱（须丢弃）：引擎脊柱操作，或挂了人工门（验收门属脚手架固定槽）。 */
+function isSpineMiddleNode(n: WorkflowNode): boolean {
+  if (n.executor?.kind === 'engine' && SCAFFOLD_SPINE_OPS.has(n.executor.operation)) return true
+  return (n.gate ?? []).some((g) => g.kind === 'manual')
+}
+
+/** 脚手架固定头：建分支→开 worktree→关联环境（准备段，所有变体同）。 */
+function scaffoldHead(): WorkflowNode[] {
+  return [
+    engineNode('create-branch', L('建分支', 'Create branch'), 'prepare', 'create-branch'),
+    engineNode('open-worktree', L('开 worktree', 'Open worktree'), 'prepare', 'open-worktree'),
+    engineNode('link-env', L('关联环境', 'Link env'), 'prepare', 'link-env')
+  ]
+}
+
+/** 脚手架固定的合并前人工验收门（command + manual，复用默认工作流 review-before-merge 写法）。 */
+function scaffoldApprovalGate(): WorkflowNode {
+  return {
+    id: 'review-before-merge',
+    name: L('合并前审批', 'Approve before merge'),
+    stageId: 'deliver',
+    executor: {
+      kind: 'command',
+      commands: [
+        { command: `node -e "console.log('待审批：查看本卡改动，满意就通过归档并固化，不满意可驳回打回改')"` }
+      ]
+    },
+    outputs: [],
+    gate: [{ kind: 'manual', actions: [{ label: '查看改动', command: 'git diff' }] }]
+  }
+}
+
+/**
+ * 脚手架固定的归档节点（archive-docs），携带 author 产出的**分类文档配置**（存于 engine executor 的
+ * `archiveDocs`，每条 `{ path, kind }`）。配置为空 → 不带字段，运行期回落到扫描登记表兜底（见 document-archive）。
+ * 路径非法（`path` 不合规）的条目过滤掉。
+ */
+function scaffoldArchiveNode(archiveDocs: ArchiveDocEntry[]): WorkflowNode {
+  const entries = archiveDocs.filter((d) => d && isSafeRelativePath(d.path))
+  const executor: Extract<NodeExecutor, { kind: 'engine' }> = { kind: 'engine', operation: 'archive-docs' }
+  if (entries.length) executor.archiveDocs = entries
+  return { id: 'archive-docs', name: L('归档文档', 'Archive docs'), stageId: 'deliver', executor, outputs: [] }
+}
+
+/**
+ * 脚手架固定尾（交付段）：验收门 → 归档 → 合并/收尾（按变体）→ 清理。
+ * - `local-merge`：merge-branch → push-branch(推主干) → remove-worktree → delete-branch。
+ * - `pr`：push-branch(需求分支,挂人工评审) → open-pr(挂外部门 pr-merged) → remove-worktree → delete-branch（不本地合并）。
+ */
+function scaffoldTail(variant: 'local-merge' | 'pr', archiveDocs: ArchiveDocEntry[]): WorkflowNode[] {
+  const front = [scaffoldApprovalGate(), scaffoldArchiveNode(archiveDocs)]
+  if (variant === 'pr') {
+    return [
+      ...front,
+      engineNode('push-feature', L('push 需求分支', 'Push feature branch'), 'deliver', 'push-branch', [
+        { kind: 'manual', actions: [{ label: '查看分支提交', command: 'git log --oneline -10' }] }
+      ]),
+      engineNode('open-pr', L('开 PR/MR', 'Open PR/MR'), 'deliver', 'open-pr', [
+        { kind: 'external', verify: 'pr-merged' }
+      ]),
+      engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
+      engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
+    ]
+  }
+  return [
+    ...front,
+    engineNode('merge-branch', L('合并分支', 'Merge branch'), 'deliver', 'merge-branch'),
+    engineNode('push-main', L('推送主干', 'Push main'), 'deliver', 'push-branch'),
+    engineNode('remove-worktree', L('删 worktree', 'Remove worktree'), 'deliver', 'remove-worktree'),
+    engineNode('delete-branch', L('删本地分支', 'Delete local branch'), 'deliver', 'delete-branch')
+  ]
+}
+
+/**
+ * **固定脚手架装配器**（纯函数，shared）——把 **固定头**（建分支/开 worktree/关联环境）+ **LLM 生成的中间干活段** +
+ * **固定尾**（人工验收门 → 归档 archive-docs(带清单) → 合并/收尾/清理，按 `variant`）拼成一份完整合法
+ * `WorkflowDefinition`。顺序**钉死**：中间 → 验收门 → 归档 → 合并 → 清理，排序问题从结构上消失（见 design）。
+ *
+ * - `variant`：`'local-merge'`（本地直合，缺省）或 `'pr'`（推分支+开 PR，合并在平台上发生）。缺省/未知 → 本地直合。
+ * - `middle`：中间纯干活节点（agent/command）。**脊柱类**（引擎分支/合并/推送/清理/归档等）与**带人工门**的节点被
+ *   丢弃（那些属脚手架，比照 repairWorkflow 丢非法节点）；保留节点 stageId 一律归 `build`、id 冲突则重命名保唯一。
+ * - `archiveDocs`：author 产出的、该由 archive-docs 归档的**分类文档配置** `{ path, kind }[]`（可空；空则归档节点
+ *   不带配置、运行期回落扫描登记表）。
+ * - `meta`：可选覆盖 `id` / `name` / `suggestedTypes`（缺省给合理值 / DEFAULT_CARD_TYPES）。
+ *
+ * 结果必过 `validateWorkflow` + `checkBranchPairing`，且 `lintWorkflow` 无「固化步骤前缺人工验收」告警
+ * （固定验收门在归档与所有固化之前）。
+ */
+export function buildScaffoldedWorkflow(
+  variant: 'local-merge' | 'pr' | undefined,
+  middle: WorkflowNode[],
+  archiveDocs: ArchiveDocEntry[],
+  meta: { id?: string; name?: Localized; suggestedTypes?: WorkflowDefinition['suggestedTypes'] } = {}
+): WorkflowDefinition {
+  const v = variant === 'pr' ? 'pr' : 'local-merge'
+  const head = scaffoldHead()
+  const tail = scaffoldTail(v, Array.isArray(archiveDocs) ? archiveDocs : [])
+  // 脚手架头/尾的 id 先占位，middle 的 id 须避开它们与彼此。
+  const usedIds = new Set<string>([...head, ...tail].map((n) => n.id))
+  const cleanMiddle: WorkflowNode[] = []
+  let seq = 0
+  for (const n of Array.isArray(middle) ? middle : []) {
+    if (!n || typeof n !== 'object' || isSpineMiddleNode(n)) continue
+    let id = nonEmpty(n.id) ? n.id : ''
+    if (id === '' || usedIds.has(id)) {
+      do {
+        id = `work-${++seq}`
+      } while (usedIds.has(id))
+    }
+    usedIds.add(id)
+    cleanMiddle.push({ ...n, id, stageId: 'build' })
+  }
+  return {
+    id: nonEmpty(meta.id) ? meta.id : 'scaffolded-workflow',
+    name: meta.name && hasAnyLanguage(meta.name) ? meta.name : L('自动装配工作流', 'Scaffolded workflow'),
+    suggestedTypes: meta.suggestedTypes ?? DEFAULT_CARD_TYPES.map((t) => ({ ...t })),
+    stages: DEFAULT_STAGES.map((s) => ({ ...s })),
+    nodes: [...head, ...cleanMiddle, ...tail]
   }
 }
 

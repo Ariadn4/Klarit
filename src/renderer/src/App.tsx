@@ -11,13 +11,18 @@ import { Topbar } from './components/Topbar'
 import { Sidebar } from './components/Sidebar'
 import { FileViewer } from './components/FileViewer'
 import { NewRequirementFlow } from './components/NewRequirementFlow'
-import GlobalChatPanel, { GlobalChatEntry } from './components/GlobalChatPanel'
+import GlobalChatPanel, { GlobalChatEntry, WorkflowPreviewModal } from './components/GlobalChatPanel'
 import { KanbanBoard } from './components/KanbanBoard'
 import { AgentOnboardingDialog } from './components/AgentOnboardingDialog'
 import { DocumentOnboardingDialog } from './components/DocumentOnboardingDialog'
 import { DocumentScanStatus } from './components/DocumentScanStatus'
+import { WorkflowGenStatus } from './components/WorkflowGenStatus'
 import { RequirementCardDetail } from './components/RequirementCardDetail'
 import { useCardsStore } from './stores/cards'
+import { useDecisionInboxStore } from './stores/decisionInbox'
+import { useGlobalChatStore } from './stores/globalChat'
+import { useModalQueue } from './stores/modalQueue'
+import { useWorkflowGenStore } from './stores/workflowGen'
 import i18n from './i18n'
 
 export function App(): React.JSX.Element {
@@ -86,6 +91,8 @@ export function App(): React.JSX.Element {
     setProjects(list)
     // 当前项目的需求卡 + 类型集（驱动看板真卡）。
     void useCardsStore.getState().load()
+    // 当前项目的决策收件箱（顶栏徽标与列表）；主进程侧是 pendingDecision 的投影，这里只镜像。
+    void useDecisionInboxStore.getState().load()
   }, [])
 
   // 取当前窗口项目的激活工作流定义：先拿激活 id，再读完整定义；无激活/定义缺失则置空（看板退回两列书挡）。
@@ -97,19 +104,6 @@ export function App(): React.JSX.Element {
   // 用户在工作流选择器激活某工作流后：重读该定义刷新看板（中间阶段列实时重算，书挡列不变）。
   const onActiveWorkflowChange = useCallback(async (id: string): Promise<void> => {
     setActiveWorkflow(await window.klarit.getWorkflow(id))
-  }, [])
-
-  /**
-   * 新导入项目 → 触发文档确认步（首仓；多仓项目其余成员在设置里继续）。
-   * 只对**新建**项目触发；旧项目（复用/重开）按 spec 在设置里手动扫。
-   */
-  const maybeDocOnboard = useCallback(async (project: Project | null) => {
-    const member = project?.members[0]
-    if (!project || !member) return
-    // projectBound 也会带旧项目进来——只认刚导入的（创建时间在 2 分钟内且尚无登记表）。
-    if (Date.now() - new Date(project.createdAt).getTime() > 120_000) return
-    const reg = await window.klarit.getDocuments(member.id)
-    if (reg.docs.length === 0 && reg.conventionPreamble === '') setDocOnboardMember(member.id)
   }, [])
 
   useEffect(() => {
@@ -149,14 +143,24 @@ export function App(): React.JSX.Element {
     const offBound = window.klarit.onProjectBound(() => {
       void refresh()
       void refreshActiveWorkflow()
-      // 从管理项目窗口导入的新项目绑到本窗口 → 同样进文档确认步（旧项目由 maybeDocOnboard 判掉）。
-      void window.klarit.getCurrentProject().then(maybeDocOnboard)
     })
     // 主进程推送：新导入项目落定（管理窗导入，含移除后立刻重导入——窗口已绑定同 id 时不会重触发
     // projectBound，只能靠这条显式推送）→ 立即进文档确认步。
     const offDocsOnboard = window.klarit.onDocumentsOnboard((memberId) => {
       void refresh()
       setDocOnboardMember(memberId)
+    })
+    // 主进程主动推送：导入后无头 author 产出的可用提案已作 agent 消息追加进本项目全局对话 → 经全局模态协调器
+    // 排队打开对话面板并选中承载该提案的会话（复用会话里的 WorkflowProposalReview + 反馈改写回路）。若此刻有全局
+    // 模态在开（如文档 onboarding），则排队待其关闭再打开，绝不叠加；无模态在开则立即打开、选中并滚到该消息。
+    const offWorkflowProposal = window.klarit.onWorkflowProposalReady(({ conversationId }) => {
+      useModalQueue.getState().requestPopup(() =>
+        useGlobalChatStore.getState().openConversation(conversationId)
+      )
+    })
+    // 主进程主动推送：导入后自动派工作流的后台生成进度 → 底栏显/隐生成指示（不打断用户）。
+    const offWorkflowGen = window.klarit.onWorkflowGenStatus((phase) => {
+      useWorkflowGenStore.getState().setStatus(phase)
     })
     // 注册表变更广播（管理窗移除/导入等）→ 刷新项目列表与绑定状态：被移除项目从切换器消失、
     // 当前项目被移除则窗口回空态；激活工作流随绑定状态一并重读。
@@ -197,6 +201,22 @@ export function App(): React.JSX.Element {
       if (evt.kind === 'op-output') setRefreshKey((k) => k + 1)
       if (evt.kind === 'state' || evt.kind === 'background') void useCardsStore.getState().load()
     })
+    // 决策收件箱变更（主进程投影的全量快照）→ 顶栏徽标与列表实时跟随。
+    const offInbox = window.klarit.onDecisionInboxChange((entries) => {
+      useDecisionInboxStore.getState().setEntries(entries)
+    })
+    // 主进程已做「未聚焦 + 开关开 + 仅新增」门控，这里只负责按当前语言翻译并弹通知；
+    // 点通知＝点收件箱条目：把窗口唤到前台并跳到该卡的决策面板。
+    const offInboxNotify = window.klarit.onDecisionNotify((entry) => {
+      if (typeof Notification === 'undefined') return
+      const n = new Notification(entry.cardName, {
+        body: i18n.t(entry.titleKey, entry.titleParams)
+      })
+      n.onclick = () => {
+        void window.klarit.focusWindow()
+        useCardsStore.getState().openDetail(entry.cardId, 'decision')
+      }
+    })
     // 卡上分支名点击 → 主进程解析卡首仓+分支 → 切到 git 视图并定位该 worktree（按窗口持久化）。
     const offGitFocus = window.klarit.onGitViewFocus(({ repoId, branch }) => {
       const next: SidebarViewState = { view: 'git', gitMemberId: repoId, gitBranch: branch }
@@ -207,13 +227,17 @@ export function App(): React.JSX.Element {
       offTheme()
       offBound()
       offDocsOnboard()
+      offWorkflowProposal()
+      offWorkflowGen()
       offProjects()
       offCards()
       offTree()
       offEngine()
+      offInbox()
+      offInboxNotify()
       offGitFocus()
     }
-  }, [refresh, refreshActiveWorkflow, maybeDocOnboard])
+  }, [refresh, refreshActiveWorkflow])
 
   const onChangeLanguage = useCallback(async (lang: SupportedLanguage) => {
     const saved = await window.klarit.setLanguage(lang)
@@ -310,9 +334,8 @@ export function App(): React.JSX.Element {
       const outcome = await window.klarit.importProject()
       if (outcome) {
         await refresh()
-        // 本窗口内导入：新建项目**一律**进文档确认步（含移除后重导入——重导入=重新识别）；
-        // 复用既有项目（重复导入/多 worktree）不弹。
-        if (!outcome.reused) setDocOnboardMember(outcome.project.members[0]?.id ?? null)
+        // 首次导入不再无条件弹文档确认步（改需求驱动）——仅当激活含 archive-docs 的工作流、
+        // 主进程推送 documents:onboard 时才进文档确认步。
       }
     } finally {
       setImporting(false)
@@ -349,7 +372,7 @@ export function App(): React.JSX.Element {
 
   return (
     <div className="flex h-full flex-col">
-      <Topbar collapsed={collapsed} onToggleSidebar={toggleSidebar} />
+      <Topbar collapsed={collapsed} onToggleSidebar={toggleSidebar} hasProject={current !== null} />
       <div className={`flex min-h-0 flex-1${resizing ? ' select-none' : ''}`}>
         {!collapsed && (
           <Sidebar
@@ -398,15 +421,19 @@ export function App(): React.JSX.Element {
             {/* 全局对话：常驻入口「项目Agent」+ 无蒙层面板；限看板区，不漂到详情抽屉上。 */}
             <GlobalChatEntry />
             <GlobalChatPanel />
-            {/* 底栏左侧状态位：文档扫描进度——只告知不可交互，故整条 pointer-events-none 让点击穿透。 */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[61] flex h-7 items-center px-2">
+            {/* 底栏左侧状态位：文档扫描 + 工作流生成进度——均只告知不可交互，故整条 pointer-events-none 让点击穿透。 */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[61] flex h-7 items-center gap-3 px-2">
               <DocumentScanStatus />
+              <WorkflowGenStatus />
             </div>
           </div>
           {/* 需求卡详情：右侧推挤式侧抽屉（含底部询问 Agent 抽屉）；关闭时 null 不占宽。 */}
           <RequirementCardDetail />
         </main>
       </div>
+      {/* 工作流预览浮层：App 级常驻一处（portal 挂 body）——聊天面板内「预览草稿」与导入后主动推送的
+          提案预览共用它；面板开合不影响其渲染，也不会双开。 */}
+      <WorkflowPreviewModal />
       {onboarding && (
         <AgentOnboardingDialog
           agents={detectedAgents}

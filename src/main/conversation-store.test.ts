@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ConversationMessage } from '../shared/types'
@@ -121,6 +121,22 @@ function contract(name: string, make: () => ConversationStore): void {
       expect(store.get('p1', 'c')).toBeNull()
     })
 
+    it('removeScope 整删某项目全部会话，不动其它项目', () => {
+      store.create('A', 'a1', NOW)
+      store.create('A', 'a2', NOW + 1)
+      store.create('B', 'b1', NOW)
+      store.removeScope('A')
+      expect(store.list('A')).toEqual([])
+      expect(store.get('A', 'a1')).toBeNull()
+      expect(store.get('A', 'a2')).toBeNull()
+      expect(store.list('B').map((c) => c.id)).toEqual(['b1'])
+    })
+
+    it('removeScope 对无会话项目是安全 no-op', () => {
+      expect(() => store.removeScope('ghost')).not.toThrow()
+      expect(store.list('ghost')).toEqual([])
+    })
+
     it('appendMessage 到不存在会话 → null', () => {
       expect(store.appendMessage('p1', 'ghost', userMsg('x', NOW))).toBeNull()
     })
@@ -145,6 +161,25 @@ describe('createConversationStore（文件持久化）', () => {
     const got = s2.get('p1', 'c')
     expect(got?.messages).toHaveLength(1)
     expect(got?.sessionId).toBe('sess-1')
+  })
+
+  it('removeScope 删除整个项目目录、其它项目目录不受影响', () => {
+    const s = createConversationStore(dir)
+    s.create('A', 'a1', NOW)
+    s.create('B', 'b1', NOW)
+    expect(existsSync(join(dir, 'A'))).toBe(true)
+    s.removeScope('A')
+    expect(existsSync(join(dir, 'A'))).toBe(false)
+    expect(existsSync(join(dir, 'B'))).toBe(true)
+    // 重开实例确认落盘：A 空、B 在
+    const s2 = createConversationStore(dir)
+    expect(s2.list('A')).toEqual([])
+    expect(s2.list('B').map((c) => c.id)).toEqual(['b1'])
+  })
+
+  it('removeScope 对不存在的项目目录是安全 no-op', () => {
+    const s = createConversationStore(dir)
+    expect(() => s.removeScope('never')).not.toThrow()
   })
 
   contract('file-backed 契约', () => createConversationStore(mkdtempSync(join(tmpdir(), 'klarit-conv-c-'))))

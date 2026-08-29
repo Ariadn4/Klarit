@@ -22,7 +22,21 @@ export const en: Dictionary = {
   },
   topbar: {
     expandSidebar: 'Expand sidebar',
-    collapseSidebar: 'Collapse sidebar'
+    collapseSidebar: 'Collapse sidebar',
+    decisionInbox: 'Decision inbox'
+  },
+  decisionInbox: {
+    title: 'Waiting on you',
+    empty: 'Nothing is waiting on you',
+    pendingCount: '{{n}} waiting on you',
+    gateReview: 'Waiting for review',
+    gateFailure: 'Needs your call',
+    waitedJustNow: 'Just now',
+    waitedMinutes: 'Waiting {{value}}m',
+    waitedHours: 'Waiting {{value}}h',
+    waitedDays: 'Waiting {{value}}d',
+    notifyLabel: 'Notify me when a new decision is waiting',
+    notifyHint: 'Only interrupts you when the app is not in the foreground.'
   },
   sidebar: {
     filesView: 'File tree view',
@@ -75,6 +89,9 @@ export const en: Dictionary = {
     navDocuments: 'Documents',
     sectionProjectDocuments: 'Project documents',
     noProjectDocuments: 'No project bound — open a project to manage its document registry here.',
+    navPatrol: 'Patrols',
+    sectionProjectPatrol: 'Scheduled patrols',
+    noProjectPatrol: 'No project bound — open a project to configure its scheduled patrols here.',
     appearanceLabel: 'Appearance',
     appearanceOption: {
       dark: 'Dark',
@@ -114,6 +131,49 @@ export const en: Dictionary = {
     effectiveHeading: 'Effective constitution ({{count}} rules)',
     effectiveEmpty: 'None yet — activated rule packs are summarized here as effective rules.'
   },
+  patrol: {
+    title: 'Scheduled patrols',
+    description:
+      'Run a maintenance action on a schedule: run a workflow, run a command, or scan for doc rot. A patrol only finds problems and pushes them as candidate requirements for your review — it never changes code on its own.',
+    empty: 'No patrols yet — add one so something keeps an eye on the project while nobody is working.',
+    add: 'New patrol',
+    untitled: 'Untitled patrol',
+    nameLabel: 'Name',
+    namePlaceholder: 'Scan the docs every night…',
+    triggerLabel: 'Trigger',
+    triggerKind: { everyHours: 'Every n hours', daily: 'Daily', weekly: 'Weekly' },
+    hoursLabel: 'Every how many hours',
+    timeLabel: 'Time',
+    weekdayLabel: 'Day of week',
+    weekday: {
+      '0': 'Sunday',
+      '1': 'Monday',
+      '2': 'Tuesday',
+      '3': 'Wednesday',
+      '4': 'Thursday',
+      '5': 'Friday',
+      '6': 'Saturday'
+    },
+    triggerEveryHours: 'Every {{hours}} hours',
+    triggerDaily: 'Daily at {{time}}',
+    triggerWeekly: '{{weekday}} at {{time}}',
+    actionLabel: 'Action',
+    actionKind: { workflow: 'Run a workflow', command: 'Run a command', docScan: 'Scan for doc rot' },
+    workflowLabel: 'Workflow',
+    noWorkflows: 'Workflow library is empty — create one in App settings · Workflows first.',
+    commandLabel: 'Command',
+    commandPlaceholder: 'npm run lint',
+    actionWorkflow: 'Run workflow: {{name}}',
+    actionCommand: 'Run command: {{command}}',
+    actionDocScan: 'Scan for doc rot',
+    enableAriaLabel: 'Enable patrol {{name}}',
+    editAriaLabel: 'Edit patrol {{name}}',
+    deleteAriaLabel: 'Delete patrol {{name}}',
+    disabledBadge: 'Disabled',
+    lastRunNever: 'Never run',
+    concurrencyHint:
+      'Patrols share the auto-scheduling concurrency limit; when all slots are busy this round is skipped, not queued.'
+  },
   cardTypeLibrary: {
     title: 'Cards',
     description:
@@ -147,6 +207,7 @@ export const en: Dictionary = {
     newAria: 'New workflow',
     empty: 'No workflows yet — create or import above.',
     invalid: '(invalid)',
+    advisory: '(advisory)',
     editAria: 'Edit {{name}}',
     cloneAria: 'Clone {{name}}',
     deleteAria: 'Delete {{name}}'
@@ -155,7 +216,8 @@ export const en: Dictionary = {
     title: 'Workflow',
     description: 'Choose which workflow is active for the current project (selection only, no editing).',
     empty: 'No workflows yet — create one in App settings.',
-    invalid: '(invalid)'
+    invalid: '(invalid)',
+    advisory: '(advisory)'
   },
   ruleLibrary: {
     backToLibrary: 'Back to rule library',
@@ -322,6 +384,16 @@ export const en: Dictionary = {
     targetTag: 'By member repo tag (tag)',
     targetTagName: 'Tag',
     targetTagPlaceholder: 'e.g. backend',
+    archiveDocsTitle: 'Archive doc list',
+    archiveDocsHint: 'Updates the documents below per their type: Dynamic — rewritten in place to the current state; Snapshot — one frozen record appended, existing content untouched.',
+    archiveDocsAdd: 'Add doc',
+    archiveDocsEmpty: 'No documents specified for archiving yet.',
+    archiveDocsPath: 'Archive doc path {{n}}',
+    archiveDocsPathPlaceholder: 'Relative branch path, e.g. docs/architecture.md',
+    archiveDocsKind: 'Archive kind {{n}}',
+    archiveDocsKindDynamic: 'Dynamic',
+    archiveDocsKindSnapshot: 'Snapshot',
+    archiveDocsDelete: 'Delete archive doc {{n}}',
     deleteNode: 'Delete node {{name}}',
     writableScope: 'Writable scope',
     writableScopeHint: 'Relative paths, empty = whole branch writable',
@@ -333,6 +405,7 @@ export const en: Dictionary = {
     cannotSaveTitle: 'Cannot save workflow',
     gotIt: 'Got it',
     backToList: 'Back to list',
+    advisoryTitle: 'Advisory (does not block saving)',
     backToNodes: 'Back to nodes',
     editNode: 'Edit node {{name}}',
     saved: 'Saved',
@@ -349,7 +422,11 @@ export const en: Dictionary = {
     nodes: 'Nodes',
     nodesHint: 'Order is execution order',
     addNode: 'Add node',
-    newNode: 'New node'
+    newNode: 'New node',
+    gateBadgeGroup: 'Gate checkpoints',
+    gateBadgeManual: 'Needs review',
+    gateBadgeAuto: 'Auto check',
+    gateBadgeExternal: 'External gate'
   },
   fileViewer: {
     binaryNotPreviewable: 'Cannot preview as text (binary file)',
@@ -403,11 +480,42 @@ export const en: Dictionary = {
       exited: 'Ended',
       timeout: 'Timed out'
     },
+    detailTab: 'Details',
+    runLogTab: 'Run log',
+    timeline: {
+      empty: 'No record for this run',
+      noRuns: 'This card has no recorded run yet',
+      selectRun: 'Pick a run to review',
+      runAt: 'Run at {{time}}',
+      runUnknownTime: 'Run {{runId}}',
+      currentRun: ' (current)',
+      nthEntry: 'Entry #{{n}}',
+      durationBelowSecond: 'under 1s',
+      durationSec: '{{sec}}s',
+      durationMin: '{{min}}m {{sec}}s',
+      completed: 'Completed',
+      skipped: 'Skipped',
+      stoppedAtDecision: 'Waiting on decision',
+      unfinished: 'Unfinished',
+      gateRetries: 'Gate retried {{times}}× ({{detail}})',
+      cause: {
+        error: 'error',
+        timeout: 'timeout'
+      },
+      rerun: {
+        node: 'rerun node',
+        gate: 'rerun gate'
+      },
+      bgRunning: 'Running',
+      expand: 'Show output of {{node}}',
+      collapse: 'Hide output of {{node}}'
+    },
     submit: 'Submit',
     advanceDetach: 'Next node (detach)',
     advanceAbort: 'Abort and go to next node',
     abortFinish: 'Abort and finish',
     noOutput: 'No output yet',
+    loadEarlierOutput: 'Load earlier output',
     copy: 'Copy',
     copied: 'Copied',
     detail: 'Details',
@@ -500,12 +608,13 @@ export const en: Dictionary = {
     confirmBody: 'Will merge/split and delete: {{targets}}. This removes cards — continue?',
     confirmApply: 'Confirm & apply',
     workflowProposalTitle: 'Workflow proposal',
+    workflowGenStatus: 'Generating a workflow for this project…',
+    workflowGenFailed: 'Couldn’t generate a custom workflow; using the default one',
     workflowPreview: 'Preview draft',
     workflowClose: 'Close',
     workflowSaveFormal: 'Save as workflow',
     workflowUpdate: 'Update workflow',
-    workflowSetActive: 'Set as project workflow',
-    workflowSetActiveConfirm: 'This project’s new requirements will be decomposed and run by this workflow. Confirm?',
+    workflowSaveAndActive: 'Save & set as project workflow',
     workflowCreate: 'New workflow',
     workflowOverwrite: 'Overwrite "{{id}}"',
     workflowGate: 'Gate',

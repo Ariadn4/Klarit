@@ -99,6 +99,12 @@ export function WorkflowLibrary({
               {t('workflowLibrary.invalid')}
             </span>
           )}
+          {/* 软校验告警：可用但有隐患，仅提示、不禁用任何入口（warning 令牌，非 danger）。 */}
+          {w.warnings && w.warnings.length > 0 && (
+            <span className="shrink-0 text-[12px] text-warning" title={w.warnings.join('\n')}>
+              {t('workflowLibrary.advisory')}
+            </span>
+          )}
           <IconButton label={t('workflowLibrary.editAria', { name })} onClick={() => setEditingId(w.id)}>
             <Pencil size={15} />
           </IconButton>

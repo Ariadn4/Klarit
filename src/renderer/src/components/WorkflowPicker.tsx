@@ -68,6 +68,12 @@ export function WorkflowPicker({ onActiveChange }: WorkflowPickerProps = {}): Re
                   </span>
                   <span className="truncate">{resolveLocalized(w.name, i18n.language)}</span>
                   {invalid && <span className="shrink-0 text-[12px] text-danger">{t('workflowPicker.invalid')}</span>}
+                  {/* 软校验告警：非阻断，工作流仍可选中激活（warning 令牌，区别于 danger 无效）。 */}
+                  {!invalid && w.warnings && w.warnings.length > 0 && (
+                    <span className="shrink-0 text-[12px] text-warning" title={w.warnings.join('\n')}>
+                      {t('workflowPicker.advisory')}
+                    </span>
+                  )}
                 </button>
               </li>
             )

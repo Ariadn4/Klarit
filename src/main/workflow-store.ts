@@ -16,6 +16,7 @@ import { basename, join } from 'node:path'
 import YAML from 'yaml'
 import type { WorkflowDefinition, WorkflowSummary, WorkflowValidation } from '../shared/types'
 import {
+  DEFAULT_LOCAL_MERGE_WORKFLOW_ID,
   createDefaultWorkflow,
   migrateWorkflowShape,
   validateWorkflow,
@@ -184,4 +185,16 @@ export function createWorkflowStore(baseDir: string): WorkflowStore {
     }
   }
   return store
+}
+
+/**
+ * 幂等种入内置主默认工作流（本地直合）到其稳定 id：库里没有该 id 时按稳定 id 存一份，已存在则原样不动。
+ * 纯/可组合——启动种子与 onboarding 兜底都可调用；返回该稳定 id，供调用方随后 `setActiveWorkflow(project, id)`。
+ * 与两份验收样例「按稳定 id 补种」同构：库非空也补，不覆盖既有别的工作流。
+ */
+export function seedDefaultLocalMergeWorkflow(store: WorkflowStore): string {
+  if (!store.get(DEFAULT_LOCAL_MERGE_WORKFLOW_ID)) {
+    store.save(createDefaultWorkflow(DEFAULT_LOCAL_MERGE_WORKFLOW_ID))
+  }
+  return DEFAULT_LOCAL_MERGE_WORKFLOW_ID
 }

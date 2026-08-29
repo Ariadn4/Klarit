@@ -318,3 +318,44 @@ describe('审阅窗跨卡依赖门（呈现 / 删除 / 加边校验）', () => {
     expect(useNewRequirementStore.getState().reviewCards[0].relations).toEqual([])
   })
 })
+
+describe('巡检推来的候选 —— 复用同一审阅窗，止于审阅', () => {
+  /** 装一份带 onPatrolCandidates 订阅口的 api，并把推送函数交出来。 */
+  function installWithPatrol(): { push: (outcome: { candidates: CandidateCard[]; issues: [] }) => void; off: ReturnType<typeof vi.fn> } {
+    const off = vi.fn()
+    let handler: ((o: { candidates: CandidateCard[]; issues: [] }) => void) | null = null
+    installKlarit({
+      onPatrolCandidates: vi.fn((h: (o: { candidates: CandidateCard[]; issues: [] }) => void) => {
+        handler = h
+        return off
+      })
+    })
+    return { push: (o) => act(() => handler?.(o)), off }
+  }
+
+  it('空闲时收到巡检候选 → 直接进审阅窗，卡片可见', () => {
+    const { push } = installWithPatrol()
+    render(<NewRequirementFlow />)
+    push({ candidates: [card({ title: '文档漂移：web' })], issues: [] })
+    expect(screen.getByRole('dialog', { name: '审阅候选任务' })).toBeInTheDocument()
+    expect(screen.getByText('文档漂移：web')).toBeInTheDocument()
+    // 止于审阅：未落库（createCards 没被调）
+    expect((window.klarit as unknown as { createCards: ReturnType<typeof vi.fn> }).createCards).not.toHaveBeenCalled()
+  })
+
+  it('用户正在描述/审阅时不打断（丢弃本次推送，下个周期问题还在还会再来）', async () => {
+    const { push } = installWithPatrol()
+    render(<NewRequirementFlow />)
+    await openEntry()
+    push({ candidates: [card({ title: '文档漂移：web' })], issues: [] })
+    expect(screen.getByRole('dialog', { name: '描述想法' })).toBeInTheDocument()
+    expect(screen.queryByText('文档漂移：web')).toBeNull()
+  })
+
+  it('卸载时取消订阅', () => {
+    const { off } = installWithPatrol()
+    const view = render(<NewRequirementFlow />)
+    view.unmount()
+    expect(off).toHaveBeenCalled()
+  })
+})

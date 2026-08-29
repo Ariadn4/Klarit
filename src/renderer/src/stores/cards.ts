@@ -6,8 +6,12 @@
 import { create } from 'zustand'
 import type { CardTypeDef, RemoveCardOptions, RunBreakpoint, StoredCard } from '@shared/types'
 
-/** 命令输出渲染缓冲上限：只留末段（长命令/测试不爆内存）。 */
-const OUTPUT_CAP = 20000
+/**
+ * 每桶在渲染层的**常驻尾部窗口**：只留末段，超出部分从内存丢弃（几十分钟的 agent 会一直往里流，
+ * 无上限累积就是拿内存换一份盘上已经有的东西）。想回看更早的，走既有 `readRunOutput` 从引擎缓冲读盘
+ * （见 `CommandOutputView`）——那份才是完整的。
+ */
+export const OUTPUT_WINDOW = 20000
 
 /** 输出桶缓冲键。 */
 export const outputKey = (runId: string, bucket: string): string => `${runId}::${bucket}`
@@ -33,8 +37,10 @@ interface CardsState {
   cardTypes: CardTypeDef[]
   /** runId → 最新断点（运行态、当前节点/阶段、待决策、后台命令）。 */
   runs: Record<string, RunBreakpoint>
-  /** `${runId}::${bucket}` → 命令输出累积。 */
+  /** `${runId}::${bucket}` → 命令输出的**常驻尾部窗口**（非全量，全量在引擎缓冲里）。 */
   outputs: Record<string, string>
+  /** `${runId}::${bucket}` → 该桶是否丢过开头（界面据此给出「载入更早」的回看入口）。 */
+  outputTruncated: Record<string, boolean>
   /** runId → 后台命令条目（含已终止的，保留到用户清除）。 */
   backgrounds: Record<string, BgEntry[]>
   /** 打开的卡详情（预取名）；null=未打开。 */
@@ -65,6 +71,7 @@ export const useCardsStore = create<CardsState>((set, get) => ({
   cardTypes: [],
   runs: {},
   outputs: {},
+  outputTruncated: {},
   backgrounds: {},
   detailSlug: null,
   detailFocus: null,
@@ -133,12 +140,22 @@ export const useCardsStore = create<CardsState>((set, get) => ({
   appendOutput: (runId, bucket, chunk) =>
     set((s) => {
       const key = outputKey(runId, bucket)
-      const next = ((s.outputs[key] ?? '') + chunk).slice(-OUTPUT_CAP)
-      return { outputs: { ...s.outputs, [key]: next } }
+      const full = (s.outputs[key] ?? '') + chunk
+      const next = full.slice(-OUTPUT_WINDOW)
+      // 丢过开头就记一笔：界面得知道这里不是全部，别把截过的开头当完整历史。
+      const cut = next.length < full.length || s.outputTruncated[key] === true
+      return { outputs: { ...s.outputs, [key]: next }, outputTruncated: { ...s.outputTruncated, [key]: cut } }
     }),
 
   seedOutput: (runId, bucket, text) =>
-    set((s) => ({ outputs: { ...s.outputs, [outputKey(runId, bucket)]: text.slice(-OUTPUT_CAP) } })),
+    set((s) => {
+      const key = outputKey(runId, bucket)
+      const next = text.slice(-OUTPUT_WINDOW)
+      return {
+        outputs: { ...s.outputs, [key]: next },
+        outputTruncated: { ...s.outputTruncated, [key]: next.length < text.length }
+      }
+    }),
 
   openDetail: (slug, focus = null) => set({ detailSlug: slug, detailFocus: focus }),
   closeDetail: () => set({ detailSlug: null, detailFocus: null }),

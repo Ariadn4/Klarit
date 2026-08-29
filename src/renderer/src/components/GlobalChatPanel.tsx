@@ -6,6 +6,7 @@ import type { CardOp, ConversationMessage, DetectedAgent, OrchestrationProposal,
 import type { RulePack } from '@shared/rule-pack'
 import { listSupportedAgents } from '@shared/agents'
 import { useGlobalChatStore } from '../stores/globalChat'
+import { useModalQueue } from '../stores/modalQueue'
 import { FloatingWindow, MarkdownView } from './NewRequirementFlow'
 import { ProposalReview, describeOp } from './ProposalReview'
 import { WorkflowEditor } from './WorkflowEditor'
@@ -62,14 +63,21 @@ function WorkflowProposalReview({
   )
 }
 
-/** 工作流提案的完整编辑器浮层（草稿态可编辑、顶部保存入库）；复用设置里的 `WorkflowEditor`。 */
-function WorkflowPreviewModal(): React.JSX.Element | null {
+/**
+ * 工作流提案的完整编辑器浮层（草稿态可编辑、顶部保存入库）；复用设置里的 `WorkflowEditor`。
+ * 由全局 `globalChat` store 的 `workflowPreview` 驱动、经 portal 挂 body，故渲染点与聊天面板开合解耦——
+ * 在 App 级**常驻**渲染一处即可（既供会话内「预览草稿」，也供导入后主动推送的提案预览），
+ * 不要再在聊天面板里重复渲染（否则面板开着时会双开浮层）。
+ */
+export function WorkflowPreviewModal(): React.JSX.Element | null {
   const { t } = useTranslation()
   const preview = useGlobalChatStore((s) => s.workflowPreview)
   const close = useGlobalChatStore((s) => s.closeWorkflowPreview)
   const markSaved = useGlobalChatStore((s) => s.markWorkflowSaved)
   const alreadySaved = useGlobalChatStore((s) => (preview ? s.savedWorkflowAt.includes(preview.messageAt) : false))
   const previewSeq = useGlobalChatStore((s) => s.previewSeq)
+  const registerModalOpen = useModalQueue((s) => s.registerModalOpen)
+  const registerModalClose = useModalQueue((s) => s.registerModalClose)
   const [others, setOthers] = useState<WorkflowSummary[]>([])
   const [detectedAgents, setDetectedAgents] = useState<DetectedAgent[]>([])
   const [rulePacks, setRulePacks] = useState<RulePack[]>([])
@@ -82,6 +90,13 @@ function WorkflowPreviewModal(): React.JSX.Element | null {
     void window.klarit.allRulePacks?.().then((p) => setRulePacks(p ?? []))
     void window.klarit.getActiveWorkflow?.().then((id) => setActiveWorkflowId(id ?? null))
   }, [preview])
+  // 预览浮层自身也登记进全局模态协调器：开着期间，后续主动弹出（如第二份提案）排队等待、绝不叠加；
+  // 关闭即撤销登记，触发协调器出队顺次弹。
+  useEffect(() => {
+    if (!preview) return
+    registerModalOpen('workflow-preview')
+    return () => registerModalClose('workflow-preview')
+  }, [preview, registerModalOpen, registerModalClose])
   if (!preview) return null
   // 改写：草稿的 def.id 强制为 baseId（覆盖那个包）；创建：按 def.id 新建。
   const def = preview.wf.baseId ? { ...preview.wf.workflow, id: preview.wf.baseId } : preview.wf.workflow
@@ -101,13 +116,11 @@ function WorkflowPreviewModal(): React.JSX.Element | null {
           initialDef={def}
           libraryFirst={alreadySaved}
           chromeless
-          alreadySaved={alreadySaved}
           footerLabels={{
             close: t('globalChat.workflowClose'),
             save: t('globalChat.workflowSaveFormal'),
             update: t('globalChat.workflowUpdate'),
-            setActive: t('globalChat.workflowSetActive'),
-            setActiveConfirm: t('globalChat.workflowSetActiveConfirm')
+            saveAndActive: t('globalChat.workflowSaveAndActive')
           }}
           isActive={def.id === activeWorkflowId}
           onSetActive={async (id) => {
@@ -511,7 +524,7 @@ export default function GlobalChatPanel(): React.JSX.Element | null {
         </div>
       </FloatingWindow>
       <ConfirmDialog />
-      <WorkflowPreviewModal />
+      {/* 工作流预览浮层已上提到 App 级常驻渲染（见 WorkflowPreviewModal 注释），此处不再渲染以免双开。 */}
       {menu &&
         createPortal(
           <>

@@ -7,6 +7,7 @@ import {
   setDefaultAgent,
   setDefaultModel,
   setDefaultEffort,
+  setNotifyOnDecision,
   type SettingsDeps
 } from './settings'
 
@@ -279,5 +280,38 @@ describe('默认 effort 偏好', () => {
   it('首启（read 为 null）defaultEffort 为未设置', () => {
     const settings = initSettings(deps({ read: () => null }))
     expect(settings.defaultEffort).toBeUndefined()
+  })
+})
+
+describe('决策通知开关 notifyOnDecision（默认开）', () => {
+  it('首启（无存档）为开', () => {
+    expect(initSettings(deps({ read: () => null })).notifyOnDecision).toBe(true)
+  })
+
+  it('老存档没有该字段 → 视为开（不因升级静默关掉通知）', () => {
+    const settings = initSettings(deps({ read: () => ({ language: 'zh' }) }))
+    expect(settings.notifyOnDecision).toBe(true)
+  })
+
+  it('存档里显式关掉 → 保持关', () => {
+    const stored = { language: 'zh', notifyOnDecision: false } as AppSettings
+    expect(initSettings(deps({ read: () => stored })).notifyOnDecision).toBe(false)
+  })
+
+  it('存档里是非布尔脏值 → 收敛为开', () => {
+    const stored = { language: 'zh', notifyOnDecision: 'nope' } as unknown as AppSettings
+    expect(initSettings(deps({ read: () => stored })).notifyOnDecision).toBe(true)
+  })
+
+  it('setNotifyOnDecision 写入并返回新设置', () => {
+    const write = vi.fn()
+    const next = setNotifyOnDecision({ language: 'zh', notifyOnDecision: true }, false, { write })
+    expect(next.notifyOnDecision).toBe(false)
+    expect(write).toHaveBeenCalledWith(next)
+  })
+
+  it('setNotifyOnDecision 对非布尔入参收敛为开', () => {
+    const next = setNotifyOnDecision({ language: 'zh' }, 'yes', { write: vi.fn() })
+    expect(next.notifyOnDecision).toBe(true)
   })
 })

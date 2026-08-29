@@ -6,9 +6,8 @@
  * 一个 agent 节点一个 agent（跨其全部目标仓）：`cwd`=主目标仓 worktree，`extraDirs`=其余目标仓。
  */
 
-import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
-import { killTree } from '../command-run'
+import { spawnAgent } from './launch'
 import { resolveAdapter, type AgentAdapter, type AgentInvocation, type AgentInvokeOpts } from './adapter'
 import type { EffortLevel } from '../../shared/agents'
 
@@ -49,22 +48,23 @@ export interface AgentRunner {
   resume: (spec: AgentRunSpec & { inject: string }) => AgentLaunch | null
 }
 
-const isWin = process.platform === 'win32'
-
-/** 按调用式拉起子进程：喂 stdin、流式（按行：抓 session id + 落历史 + 转人可读）、可取消（杀进程树）。永不抛。 */
-function runInvocation(inv: AgentInvocation, spec: AgentRunSpec, adapter?: AgentAdapter): AgentLaunch {
-  // win 上 agent CLI 多为 .cmd，需 shell 解析；input 走 stdin、参数为受信 flag，无注入面。
-  const child = spawn(inv.command, inv.args, {
-    cwd: spec.cwd,
-    shell: isWin,
-    detached: !isWin, // POSIX：独立进程组以便整组 kill；win 由 taskkill /T 处理
-    stdio: ['pipe', 'pipe', 'pipe']
-  })
+/**
+ * 按调用式拉起子进程：走**共用启动实现**（绝对路径 / 不经 shell 拼接 / env 净化，见 `launch.ts`），
+ * 喂 stdin、流式（按行：抓 session id + 落历史 + 转人可读）、可取消（杀进程树）。永不抛。
+ * 起不来（解析不到可信绝对路径等）返回 null——由调用方归技术失败，绝不回落裸命令名。
+ */
+function runInvocation(inv: AgentInvocation, spec: AgentRunSpec, adapter?: AgentAdapter): AgentLaunch | null {
+  const spawned = spawnAgent({ toolId: spec.toolId, args: inv.args, cwd: spec.cwd })
+  if (!spawned.ok) {
+    spec.onChunk?.('stderr', `[启动失败] ${spawned.reason}\n`)
+    return null
+  }
+  const child = spawned.child
 
   let killed = false
   const kill = (): void => {
     killed = true
-    if (child.pid) killTree(child.pid)
+    spawned.kill()
   }
   if (spec.signal) {
     if (spec.signal.aborted) kill()
@@ -120,7 +120,20 @@ function runInvocation(inv: AgentInvocation, spec: AgentRunSpec, adapter?: Agent
   return { kill, done }
 }
 
-/** 真实 agent 运行器：经 adapter 翻 argv、拉无头子进程。 */
+/**
+ * 翻 argv 时的失败（如透传参数含 shell 元字符）→ 归技术失败：把可辨认原因推进输出，返回 null。
+ * **不**剥掉出问题的参数照常启动——那会让工作流的实际行为与其定义不一致。
+ */
+function translate(spec: AgentRunSpec, toInvocation: () => AgentInvocation | null): AgentInvocation | null {
+  try {
+    return toInvocation()
+  } catch (e) {
+    spec.onChunk?.('stderr', `[启动失败] ${e instanceof Error ? e.message : String(e)}\n`)
+    return null
+  }
+}
+
+/** 真实 agent 运行器：经 adapter 翻 argv、走共用启动实现拉无头子进程。 */
 export const realAgentRunner: AgentRunner = {
   supportsResume: (toolId) => resolveAdapter(toolId)?.supportsResume ?? false,
 
@@ -133,7 +146,8 @@ export const realAgentRunner: AgentRunner = {
       extraArgs: spec.extraArgs,
       extraDirs: spec.extraDirs
     }
-    return runInvocation(adapter.start(spec.prompt, opts), spec, adapter)
+    const inv = translate(spec, () => adapter.start(spec.prompt, opts))
+    return inv ? runInvocation(inv, spec, adapter) : null
   },
 
   resume: (spec) => {
@@ -146,7 +160,7 @@ export const realAgentRunner: AgentRunner = {
       extraDirs: spec.extraDirs,
       sessionId: spec.sessionId
     }
-    const inv = adapter.resume(spec.inject, opts)
+    const inv = translate(spec, () => adapter.resume(spec.inject, opts))
     return inv ? runInvocation(inv, spec, adapter) : null
   }
 }

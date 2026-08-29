@@ -277,3 +277,41 @@
 #### Scenario: 结构字段与只读引用不受编辑语言影响
 - **WHEN** 切换编辑语言
 - **THEN** 引擎操作、命令、路径等结构字段不变；所属阶段/目标工作流等只读下拉按界面语言显示名称
+
+### Requirement: 节点列表对含门节点显示门徽标
+
+工作流编辑器的**节点列表**(每行一个节点)SHALL 对**挂了门的节点**显示一个**门徽标**,按门类区分 `manual`/`auto`/`external`,使人工评审/自动校验/外部门等检查点**在列表层一眼可见**,而无需逐个点开节点。徽标 SHALL 从 `node.gate[]` 派生(有几类显示几类),纯展示、不改数据模型,配色用语义令牌(深浅两套)。无门的节点不显示徽标。
+
+#### Scenario: 挂了 manual 门的节点显示徽标
+
+- **WHEN** 节点列表渲染一个 `node.gate` 含 `manual` 门的节点
+- **THEN** 该行显示可辨识的门徽标(标出 manual),用户不必点开即知此处有人工检查点
+
+#### Scenario: 多类门都标出
+
+- **WHEN** 某节点同时挂了不同类的门(如 auto + manual)
+- **THEN** 徽标按门类分别标出
+
+#### Scenario: 无门节点不显示徽标
+
+- **WHEN** 节点没有任何门(`node.gate` 空/缺)
+- **THEN** 该行不显示门徽标
+
+### Requirement: archive-docs 节点详情展示/编辑归档文档配置
+
+工作流编辑器的**节点详情**视图,对**引擎操作为 `archive-docs`** 的节点 SHALL 展示并允许编辑其 `executor.archiveDocs` 归档文档配置——每条为 `{ path, kind: 'dynamic' | 'snapshot' }`:一行一条,含路径输入 + 动态/快照选择,可增删。这样 author 产出的(或用户手改的)归档清单**可见可改**。非 archive-docs 节点不显示该块。空配置时显示"尚未指定要归档的文档"之类提示(**不提登记表**——已不再回落)。说明文案讲清动态/快照规则。配色用语义令牌。
+
+#### Scenario: archive-docs 节点显示归档文档清单
+
+- **WHEN** 在节点详情打开一个引擎操作 `archive-docs` 的节点,其 `executor.archiveDocs` 有若干 `{path,kind}`
+- **THEN** 逐条展示路径 + 动态/快照,且可编辑(改路径/切 kind/增删)
+
+#### Scenario: 非 archive-docs 不显示该块
+
+- **WHEN** 打开一个非 archive-docs 节点
+- **THEN** 不显示归档文档清单块
+
+#### Scenario: 空配置给提示
+
+- **WHEN** archive-docs 节点无 `executor.archiveDocs`
+- **THEN** 显示空态提示「尚未指定要归档的文档」(不提登记表),而非什么都不显示

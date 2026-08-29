@@ -6,6 +6,10 @@ import type { Project, WorkflowDefinition } from '@shared/types'
 import { useFileViewerStore } from './stores/fileViewer'
 import { useNewRequirementStore } from './stores/newRequirement'
 import { useCardsStore } from './stores/cards'
+import { useGlobalChatStore } from './stores/globalChat'
+import { useModalQueue } from './stores/modalQueue'
+import { useWorkflowGenStore } from './stores/workflowGen'
+import { useDecisionInboxStore } from './stores/decisionInbox'
 
 interface KlaritMock {
   getSidebarWidth: ReturnType<typeof vi.fn>
@@ -26,6 +30,8 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     onDocumentsOnboard: vi.fn(() => () => {}),
     onProjectsChanged: vi.fn(() => () => {}),
     onCardsChanged: vi.fn(() => () => {}),
+    onWorkflowProposalReady: vi.fn(() => () => {}),
+    onWorkflowGenStatus: vi.fn(() => () => {}),
     getSidebarWidth: vi.fn(async () => 240),
     setSidebarWidth: vi.fn(async () => {}),
     getSidebarView: vi.fn(async () => ({ view: 'files', gitMemberId: null, gitBranch: null })),
@@ -36,6 +42,9 @@ function installKlarit(over: Partial<KlaritMock> = {}): KlaritMock {
     listProjects: vi.fn(async () => []),
     onFileTreeChange: vi.fn(() => () => {}),
     onEngineProgress: vi.fn(() => () => {}),
+    listDecisionInbox: vi.fn(async () => []),
+    onDecisionInboxChange: vi.fn(() => () => {}),
+    onDecisionNotify: vi.fn(() => () => {}),
     onGitViewFocus: vi.fn(() => () => {}),
     getRunState: vi.fn(async () => null),
     cardBranches: vi.fn(async () => []),
@@ -69,6 +78,12 @@ beforeEach(() => {
   useNewRequirementStore.getState().cancel()
   // 详情态跨用例会驱动「开卡联动 git 视图」副作用，逐用例复位避免泄漏。
   useCardsStore.setState({ cards: [], runs: {}, detailSlug: null, detailFocus: null })
+  // 工作流预览浮层为全局 store 驱动、跨用例常驻，逐用例复位避免泄漏。
+  useGlobalChatStore.setState({ workflowPreview: null, open: false, savedWorkflowAt: [] })
+  // 全局模态协调器 / 工作流生成状态亦为常驻单例 store，逐用例复位避免队列/状态泄漏。
+  useModalQueue.setState({ openIds: new Set(), queue: [] })
+  useDecisionInboxStore.setState({ entries: [], open: false })
+  useWorkflowGenStore.setState({ generating: false })
 })
 
 function workflow(stages: { id: string; name: string }[]): WorkflowDefinition {
@@ -265,7 +280,7 @@ describe('App 文档确认步（导入后）', () => {
     conventionApproved: false
   }
 
-  it('新导入项目绑定本窗口（projectBound）→ 弹文档确认步并触发扫描', async () => {
+  it('新导入项目绑定本窗口（projectBound）→ 不再自动弹文档确认步（改需求驱动）', async () => {
     let boundCb: (() => void) | undefined
     const fresh = singleRepoProject('/p')
     fresh.createdAt = new Date().toISOString()
@@ -282,15 +297,15 @@ describe('App 文档确认步（导入后）', () => {
     render(<App />)
     await waitFor(() => expect(api.getSidebarView).toHaveBeenCalled())
     act(() => boundCb?.())
-    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
-    await waitFor(() => expect(api.analyzeDocuments).toHaveBeenCalledWith('m1'))
-    // 跳过 → 保存当前态并关闭。
-    await userEvent.click(screen.getByRole('button', { name: '跳过' }))
-    await waitFor(() => expect(api.saveDocuments).toHaveBeenCalled())
+    // projectBound 仍刷新项目（getCurrentProject 再被调），但首次导入不再无条件弹文档 onboarding / 跑 analyze。
+    await waitFor(() =>
+      expect((api.getCurrentProject as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2)
+    )
     expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+    expect(api.analyzeDocuments).not.toHaveBeenCalled()
   })
 
-  it('导入进行中显示加载指示，完成后进入文档确认步', async () => {
+  it('导入进行中显示加载指示，完成后不再自动弹文档确认步（改需求驱动）', async () => {
     let resolveImport: ((v: unknown) => void) | undefined
     const fresh = singleRepoProject('/p')
     fresh.createdAt = new Date().toISOString()
@@ -311,9 +326,10 @@ describe('App 文档确认步（导入后）', () => {
     // 导入/识别期间显示加载指示。
     expect(await screen.findByText('正在导入项目…')).toBeInTheDocument()
     act(() => resolveImport?.({ project: fresh, reused: false }))
-    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
-    expect(screen.queryByText('正在导入项目…')).toBeNull()
-    expect(api.analyzeDocuments).toHaveBeenCalledWith('m1')
+    // 加载指示消失，但首次导入不再无条件弹文档 onboarding / 跑 analyze。
+    await waitFor(() => expect(screen.queryByText('正在导入项目…')).toBeNull())
+    expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull()
+    expect(api.analyzeDocuments).not.toHaveBeenCalled()
   })
 
   it('主进程推送 documents:onboard（管理窗导入/移除后立刻重导入）→ 立即弹文档确认步', async () => {
@@ -377,6 +393,107 @@ describe('App 注册表变更广播', () => {
     // 无项目后切换器回「导入新项目」空态。
     expect(screen.getByRole('button', { name: '导入新项目' })).toBeInTheDocument()
     expect((api.listProjects as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('App 工作流提案主动露出', () => {
+  it('收到 onWorkflowProposalReady 推送后打开对话面板并选中承载提案的会话（无需先开面板）', async () => {
+    let readyCb: ((p: { projectId: string; conversationId: string }) => void) | undefined
+    const api = installKlarit({
+      onWorkflowProposalReady: vi.fn((cb: (p: { projectId: string; conversationId: string }) => void) => {
+        readyCb = cb
+        return () => {}
+      }),
+      listConversations: vi.fn(async () => [
+        { id: 'conv-x', projectId: 'p1', title: 't', messages: [], createdAt: 1, updatedAt: 1 }
+      ]),
+      getConversation: vi.fn(async (id: string) => ({
+        id,
+        projectId: 'p1',
+        title: 't',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }))
+    })
+    render(<App />)
+    await waitFor(() => expect(api.onWorkflowProposalReady).toHaveBeenCalled())
+    // 面板初始关闭。
+    expect(useGlobalChatStore.getState().open).toBe(false)
+    await act(async () => {
+      readyCb?.({ projectId: 'p1', conversationId: 'conv-x' })
+    })
+    // 无模态在开 → 立即打开对话面板并选中承载该提案的会话。
+    await waitFor(() => expect(useGlobalChatStore.getState().open).toBe(true))
+    expect(useGlobalChatStore.getState().activeId).toBe('conv-x')
+    expect(api.getConversation).toHaveBeenCalledWith('conv-x')
+  })
+
+  it('文档 onboarding 开着时收到就绪推送不叠加，待其关闭再打开对话面板', async () => {
+    let onboardCb: ((memberId: string) => void) | undefined
+    let readyCb: ((p: { projectId: string; conversationId: string }) => void) | undefined
+    const scannedRegistry = {
+      memberId: 'm1',
+      docs: [{ id: 'README.md', location: 'README.md', kind: 'dynamic', habitPrompt: '', approved: false }],
+      conventionPreamble: '',
+      conventionApproved: false
+    }
+    installKlarit({
+      onDocumentsOnboard: vi.fn((cb: (memberId: string) => void) => {
+        onboardCb = cb
+        return () => {}
+      }),
+      onWorkflowProposalReady: vi.fn((cb: (p: { projectId: string; conversationId: string }) => void) => {
+        readyCb = cb
+        return () => {}
+      }),
+      getDocuments: vi.fn(async () => ({ memberId: 'm1', docs: [], conventionPreamble: '', conventionApproved: false })),
+      analyzeDocuments: vi.fn(async () => ({ registry: scannedRegistry, error: null })),
+      saveDocuments: vi.fn(async () => undefined),
+      listConversations: vi.fn(async () => [
+        { id: 'conv-x', projectId: 'p1', title: 't', messages: [], createdAt: 1, updatedAt: 1 }
+      ]),
+      getConversation: vi.fn(async (id: string) => ({
+        id,
+        projectId: 'p1',
+        title: 't',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      }))
+    })
+    render(<App />)
+    // 先让文档 onboarding 弹出（登记进协调器）。
+    act(() => onboardCb?.('m1'))
+    expect(await screen.findByRole('dialog', { name: '文档登记表' })).toBeInTheDocument()
+
+    // 此刻推送就绪：应排队、不叠加——对话面板不打开。
+    await act(async () => {
+      readyCb?.({ projectId: 'p1', conversationId: 'conv-x' })
+    })
+    expect(useGlobalChatStore.getState().open).toBe(false)
+
+    // 关闭文档 onboarding（跳过）→ 协调器出队 → 对话面板这才打开并选中该会话。
+    await userEvent.click(screen.getByRole('button', { name: '跳过' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '文档登记表' })).toBeNull())
+    await waitFor(() => expect(useGlobalChatStore.getState().open).toBe(true))
+    expect(useGlobalChatStore.getState().activeId).toBe('conv-x')
+  })
+
+  it('底栏工作流生成指示：收到 generating 事件显示，done 后清除', async () => {
+    let genCb: ((phase: 'generating' | 'done' | 'failed') => void) | undefined
+    installKlarit({
+      onWorkflowGenStatus: vi.fn((cb: (phase: 'generating' | 'done' | 'failed') => void) => {
+        genCb = cb
+        return () => {}
+      })
+    })
+    render(<App />)
+    await waitFor(() => expect(useWorkflowGenStore.getState()).toBeTruthy())
+    act(() => genCb?.('generating'))
+    expect(await screen.findByText('正在为本项目生成工作流…')).toBeInTheDocument()
+    act(() => genCb?.('done'))
+    await waitFor(() => expect(screen.queryByText('正在为本项目生成工作流…')).toBeNull())
   })
 })
 

@@ -3,7 +3,7 @@ import { act } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { CardOp, Conversation, ConversationMessage, OrchestrationProposal } from '@shared/types'
-import GlobalChatPanel, { GlobalChatEntry, messageToText } from './GlobalChatPanel'
+import GlobalChatPanel, { GlobalChatEntry, WorkflowPreviewModal, messageToText } from './GlobalChatPanel'
 import { useGlobalChatStore } from '../stores/globalChat'
 
 /** 内存会话状态，模拟主进程：orchestrate 追加用户+agent 消息、getConversation 读回。 */
@@ -56,7 +56,12 @@ function installKlarit(over: Record<string, unknown> = {}): void {
     allRulePacks: vi.fn(async () => []),
     getWorkflow: vi.fn(async () => null),
     scanAgents: vi.fn(async () => [
-      { id: 'claude-code', name: 'Claude Code', models: [{ id: 'm1', name: 'M1' }, { id: 'm2', name: 'M2' }] }
+      {
+        id: 'claude-code',
+        name: 'Claude Code',
+        executablePath: 'C:\bin\claude.exe',
+        models: [{ id: 'm1', name: 'M1' }, { id: 'm2', name: 'M2' }]
+      }
     ]),
     getDefaultAgent: vi.fn(async () => 'claude-code'),
     getDefaultModel: vi.fn(async () => null),
@@ -432,9 +437,16 @@ describe('工作流提案审阅', () => {
     }
   })
 
-  it('板子只留「工作流提案」+「预览草稿」；点开进编辑器、底部「保存为正式工作流」入库并标记已存（不关闭）', async () => {
+  it('板子只留「工作流提案」+「预览草稿」；点开进编辑器、主按钮「保存并设为本项目工作流」一键保存并激活（不关闭）', async () => {
     nextProposal = wfProposal()
-    render(<GlobalChatPanel />)
+    const setActiveWorkflow = vi.fn(async (_id: string) => {})
+    installKlarit({ setActiveWorkflow })
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('帮我做个带评审门的 PR 工作流')
@@ -449,22 +461,31 @@ describe('工作流提案审阅', () => {
       await userEvent.click(screen.getByRole('button', { name: '预览草稿' }))
     })
     expect(await screen.findByDisplayValue('PR 流')).toBeInTheDocument()
-    // 顶栏无返回/保存；底部横栏有「关闭」+「保存为正式工作流」
+    // 顶栏无返回/保存；底部横栏有「关闭」+ 合并后的主按钮「保存并设为本项目工作流」，无独立「设置为本项目工作流」
     expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
+    // 一键：保存入库 + 激活（setActiveWorkflow），两件事一次点击完成
     await act(async () => {
-      await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
+      await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
     })
     expect(saveWorkflow).toHaveBeenCalledTimes(1)
     expect(saveWorkflow.mock.calls[0][0].id).toBe('pr-flow')
-    // 标记已存、浮层不关闭；保存按钮改为「更新工作流」
+    await waitFor(() => expect(setActiveWorkflow).toHaveBeenCalledWith('pr-flow'))
+    // 标记已存、浮层不关闭；激活后主按钮改为「更新工作流」，且无独立 set-active 按钮/二次确认
     expect(useGlobalChatStore.getState().savedWorkflowAt.length).toBe(1)
     expect(useGlobalChatStore.getState().workflowPreview).not.toBeNull()
     expect(await screen.findByRole('button', { name: '更新工作流' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
   })
 
   it('改写提案（带 baseId）：编辑器草稿 def.id 强制为 baseId → 保存覆盖那个包', async () => {
     nextProposal = wfProposal({ baseId: 'existing-flow' })
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('在我的流里加个门')
@@ -475,16 +496,22 @@ describe('工作流提案审阅', () => {
     })
     await screen.findByDisplayValue('PR 流')
     await act(async () => {
-      await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
+      await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
     })
     expect(saveWorkflow.mock.calls[0][0].id).toBe('existing-flow')
   })
 
-  it('浮层「设置为本项目工作流」：二次确认后保存并激活（setActiveWorkflow），关闭浮层', async () => {
+  it('浮层已是本项目活动工作流：主按钮仅「更新工作流」，点击只保存不再激活', async () => {
     nextProposal = wfProposal()
     const setActiveWorkflow = vi.fn(async (_id: string) => {})
-    installKlarit({ setActiveWorkflow })
-    render(<GlobalChatPanel />)
+    // 这份提案的 id 已是当前项目活动工作流 → isActive 为真
+    installKlarit({ setActiveWorkflow, getActiveWorkflow: vi.fn(async () => 'pr-flow') })
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('做个 PR 流')
@@ -494,21 +521,43 @@ describe('工作流提案审阅', () => {
       await userEvent.click(screen.getByRole('button', { name: '预览草稿' }))
     })
     await screen.findByDisplayValue('PR 流')
-    // 「设置为本项目工作流」仅在保存为正式后出现
+    // 已激活：主按钮是「更新工作流」，无「保存并设为本项目工作流」、无独立 set-active 按钮
+    expect(await screen.findByRole('button', { name: '更新工作流' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '保存并设为本项目工作流' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument()
     await act(async () => {
-      await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
+      await userEvent.click(screen.getByRole('button', { name: '更新工作流' }))
+    })
+    expect(saveWorkflow).toHaveBeenCalledTimes(1)
+    // 已激活 → 仅保存，不再调 setActiveWorkflow
+    expect(setActiveWorkflow).not.toHaveBeenCalled()
+  })
+
+  it('保存校验不过 → 不激活（不调 setActiveWorkflow）', async () => {
+    nextProposal = wfProposal()
+    const setActiveWorkflow = vi.fn(async (_id: string) => {})
+    installKlarit({ setActiveWorkflow, saveWorkflow: vi.fn(async () => ({ ok: false, reason: '不合法' })) })
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
+    await openPanel()
+    await act(async () => {
+      useGlobalChatStore.getState().setInput('做个 PR 流')
+      await useGlobalChatStore.getState().send()
     })
     await act(async () => {
-      await userEvent.click(await screen.findByRole('button', { name: '设置为本项目工作流' }))
+      await userEvent.click(screen.getByRole('button', { name: '预览草稿' }))
     })
-    // 二次确认后激活；浮层不关，「设置为本项目工作流」按钮消失（已是激活工作流）
+    await screen.findByDisplayValue('PR 流')
     await act(async () => {
-      await userEvent.click(screen.getByRole('button', { name: '确定' }))
+      await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
     })
-    await waitFor(() => expect(setActiveWorkflow).toHaveBeenCalledWith('pr-flow'))
+    // 保存被校验拦下 → 不激活
+    expect(setActiveWorkflow).not.toHaveBeenCalled()
     expect(useGlobalChatStore.getState().workflowPreview).not.toBeNull()
-    await waitFor(() => expect(screen.queryByRole('button', { name: '设置为本项目工作流' })).not.toBeInTheDocument())
   })
 
   it('已入库后再次预览：从库读（含编辑）的版本，而非重放原始草稿', async () => {
@@ -522,7 +571,12 @@ describe('工作流提案审阅', () => {
       nodes: [{ id: 'n1', name: { zh: '推送主干' }, stageId: 's1', executor: { kind: 'engine', operation: 'push-branch' }, outputs: [] }]
     }))
     installKlarit({ getWorkflow })
-    render(<GlobalChatPanel />)
+    render(
+      <>
+        <GlobalChatPanel />
+        <WorkflowPreviewModal />
+      </>
+    )
     await openPanel()
     await act(async () => {
       useGlobalChatStore.getState().setInput('做个 PR 流')
@@ -536,7 +590,7 @@ describe('工作流提案审阅', () => {
     expect(getWorkflow).not.toHaveBeenCalled()
     // 保存 → 关闭
     await act(async () => {
-      await userEvent.click(screen.getByRole('button', { name: '保存为正式工作流' }))
+      await userEvent.click(screen.getByRole('button', { name: '保存并设为本项目工作流' }))
     })
     await act(async () => useGlobalChatStore.getState().closeWorkflowPreview())
     // 再次预览（已入库）：initialDef 置空 → 从库读 → 显编辑后的名，而非原始草稿名

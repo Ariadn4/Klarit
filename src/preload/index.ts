@@ -1,7 +1,15 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '../shared/ipc'
-import type { EngineProgressEvent, FileTreeChange, KlaritApi } from '../shared/types'
+import type {
+  CandidateCard,
+  CandidateIssue,
+  EngineProgressEvent,
+  FileTreeChange,
+  KlaritApi,
+  WorkflowGenPhase
+} from '../shared/types'
 import type { EffectiveTheme } from '../shared/theme'
+import type { DecisionInboxEntry } from '../shared/decision-inbox'
 
 const api: KlaritApi = {
   importProject: () => ipcRenderer.invoke(IPC.importProject),
@@ -50,6 +58,8 @@ const api: KlaritApi = {
   },
   readRunOutput: (runId, bucket) => ipcRenderer.invoke(IPC.engineReadOutput, runId, bucket),
   listRunOutputBuckets: (runId) => ipcRenderer.invoke(IPC.engineListOutputBuckets, runId),
+  readRunJournal: (runId) => ipcRenderer.invoke(IPC.engineReadJournal, runId),
+  listCardRuns: (slug) => ipcRenderer.invoke(IPC.cardsRuns, slug),
   listCards: () => ipcRenderer.invoke(IPC.cardsList),
   createCards: (candidates) => ipcRenderer.invoke(IPC.cardsCreate, candidates),
   updateCard: (slug, patch) => ipcRenderer.invoke(IPC.cardsUpdate, slug, patch),
@@ -93,6 +103,20 @@ const api: KlaritApi = {
   minimizeWindow: () => ipcRenderer.invoke(IPC.windowMinimize),
   toggleMaximizeWindow: () => ipcRenderer.invoke(IPC.windowMaximizeToggle),
   closeWindow: () => ipcRenderer.invoke(IPC.windowClose),
+  focusWindow: () => ipcRenderer.invoke(IPC.windowFocus),
+  listDecisionInbox: () => ipcRenderer.invoke(IPC.decisionInboxList),
+  onDecisionInboxChange: (handler) => {
+    const listener = (_e: unknown, entries: DecisionInboxEntry[]): void => handler(entries)
+    ipcRenderer.on(IPC.decisionInboxChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.decisionInboxChanged, listener)
+  },
+  onDecisionNotify: (handler) => {
+    const listener = (_e: unknown, entry: DecisionInboxEntry): void => handler(entry)
+    ipcRenderer.on(IPC.decisionInboxNotify, listener)
+    return () => ipcRenderer.removeListener(IPC.decisionInboxNotify, listener)
+  },
+  getNotifyOnDecision: () => ipcRenderer.invoke(IPC.getNotifyOnDecision),
+  setNotifyOnDecision: (on) => ipcRenderer.invoke(IPC.setNotifyOnDecision, on),
   listWorkflows: () => ipcRenderer.invoke(IPC.listWorkflows),
   getWorkflow: (id) => ipcRenderer.invoke(IPC.getWorkflow, id),
   createWorkflow: () => ipcRenderer.invoke(IPC.createWorkflow),
@@ -128,6 +152,18 @@ const api: KlaritApi = {
   getConstitution: () => ipcRenderer.invoke(IPC.getConstitution),
   setConstitution: (governance) => ipcRenderer.invoke(IPC.setConstitution, governance),
   effectiveConstitution: () => ipcRenderer.invoke(IPC.effectiveConstitution),
+  listPatrols: () => ipcRenderer.invoke(IPC.listPatrols),
+  savePatrol: (patrol) => ipcRenderer.invoke(IPC.savePatrol, patrol),
+  removePatrol: (patrolId) => ipcRenderer.invoke(IPC.removePatrol, patrolId),
+  setPatrolEnabled: (patrolId, enabled) => ipcRenderer.invoke(IPC.setPatrolEnabled, patrolId, enabled),
+  onPatrolCandidates: (handler) => {
+    const listener = (
+      _e: unknown,
+      outcome: { candidates: CandidateCard[]; issues: CandidateIssue[] }
+    ): void => handler(outcome)
+    ipcRenderer.on(IPC.patrolCandidates, listener)
+    return () => ipcRenderer.removeListener(IPC.patrolCandidates, listener)
+  },
   getDecomposePrompt: () => ipcRenderer.invoke(IPC.getDecomposePrompt),
   decomposeRequirement: (input) => ipcRenderer.invoke(IPC.decomposeRequirement, input),
   submitDecomposedCandidates: (candidates) =>
@@ -175,6 +211,17 @@ const api: KlaritApi = {
     const listener = (_e: unknown, memberId: string): void => handler(memberId)
     ipcRenderer.on(IPC.documentsOnboard, listener)
     return () => ipcRenderer.removeListener(IPC.documentsOnboard, listener)
+  },
+  onWorkflowProposalReady: (handler) => {
+    const listener = (_e: unknown, payload: { projectId: string; conversationId: string }): void =>
+      handler(payload)
+    ipcRenderer.on(IPC.workflowProposalReady, listener)
+    return () => ipcRenderer.removeListener(IPC.workflowProposalReady, listener)
+  },
+  onWorkflowGenStatus: (handler) => {
+    const listener = (_e: unknown, phase: WorkflowGenPhase): void => handler(phase)
+    ipcRenderer.on(IPC.workflowGenStatus, listener)
+    return () => ipcRenderer.removeListener(IPC.workflowGenStatus, listener)
   },
   onProjectsChanged: (handler) => {
     const listener = (): void => handler()

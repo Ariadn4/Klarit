@@ -4,13 +4,17 @@
  * 这是全局 agent producer 的真实实现（替代占位 stub）；调用失败/超时由上层按「无候选」优雅处理。
  */
 
-import { spawn } from 'node:child_process'
+import { spawnAgent } from './agent/launch'
 import { clampEffortToHigh, type AgentId, type EffortLevel } from '../shared/agents'
 import type { CandidateCard, CardRelation, CardRelationKind } from '../shared/types'
 import { CARD_RELATION_KINDS, isValidProposedName, toProposedName } from '../shared/requirement-card'
 
+/**
+ * 一次无头调用的调用式：**只有外壳 id 与 argv**，没有命令名——起哪个可执行文件由探测出的绝对路径
+ * 决定（与引擎节点 agent 共用同一套启动约束，见 `agent/launch.ts`）。
+ */
 export interface HeadlessInvocation {
-  command: string
+  agentId: AgentId
   args: string[]
 }
 
@@ -23,7 +27,7 @@ export function headlessInvocation(agentId: AgentId, model?: string, effort?: Ef
       if (m) args.push('--model', m)
       // ultracode 是提示词关键词档，本路径（分解/起草等结构化小任务）不宜编排 → 视同未设置。
       if (effort && effort !== 'ultracode') args.push('--effort', effort)
-      return { command: 'claude', args }
+      return { agentId, args }
     }
     case 'codex': {
       const args = ['exec']
@@ -31,11 +35,11 @@ export function headlessInvocation(agentId: AgentId, model?: string, effort?: Ef
       // codex 档位止于 high，xhigh/max 收敛（与 adapter 同规则）。
       if (effort) args.push('-c', `model_reasoning_effort=${clampEffortToHigh(effort)}`)
       args.push('-')
-      return { command: 'codex', args }
+      return { agentId, args }
     }
     case 'cursor':
       // cursor 无 effort 参数，忽略。
-      return { command: 'cursor-agent', args: m ? ['-p', '--model', m] : ['-p'] }
+      return { agentId, args: m ? ['-p', '--model', m] : ['-p'] }
   }
 }
 
@@ -117,26 +121,31 @@ export function parseCandidateCards(stdout: string): CandidateCard[] {
   return arr.map(coerceCandidate).filter((c): c is CandidateCard => c !== null)
 }
 
-/** 无头跑一次 agent：spawn → 写 prompt 到 stdin → 收 stdout。非零退出/超时/拉起失败均 reject。 */
+/**
+ * 无头跑一次 agent：走**与引擎节点 agent 同一个**共用启动实现（绝对路径 / 不经 shell 拼接 / env 净化，
+ * 见 `agent/launch.ts`）→ 写 prompt 到 stdin → 收 stdout。非零退出/超时/拉起失败（含解析不到可信绝对
+ * 路径）均 reject，由上层按「无候选」优雅处理，绝不回落裸命令名。
+ */
 export function runAgentHeadless(
   inv: HeadlessInvocation,
   prompt: string,
   opts: { timeoutMs?: number } = {}
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    // win 上 agent CLI 多为 .cmd，需 shell 解析；prompt 走 stdin、不进 argv，故无注入风险。
-    const child = spawn(inv.command, inv.args, {
-      shell: process.platform === 'win32',
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const spawned = spawnAgent({ toolId: inv.agentId, args: inv.args })
+    if (!spawned.ok) {
+      reject(new Error(`agent 启动失败：${spawned.reason}`))
+      return
+    }
+    const child = spawned.child
     let out = ''
     let err = ''
     const timer = setTimeout(() => {
-      child.kill()
+      spawned.kill()
       reject(new Error('agent 调用超时'))
     }, opts.timeoutMs ?? 180_000)
-    child.stdout.on('data', (d) => (out += d.toString()))
-    child.stderr.on('data', (d) => (err += d.toString()))
+    child.stdout?.on('data', (d) => (out += d.toString()))
+    child.stderr?.on('data', (d) => (err += d.toString()))
     child.on('error', (e) => {
       clearTimeout(timer)
       reject(e)
@@ -146,7 +155,7 @@ export function runAgentHeadless(
       if (code === 0) resolve(out)
       else reject(new Error(`agent 退出码 ${code}：${err.slice(0, 500)}`))
     })
-    child.stdin.write(prompt)
-    child.stdin.end()
+    child.stdin?.write(prompt)
+    child.stdin?.end()
   })
 }

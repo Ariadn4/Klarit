@@ -26,13 +26,34 @@ export function initSettings(deps: SettingsDeps): AppSettings {
       appearance: coerceAppearance(stored.appearance),
       defaultAgent,
       defaultModel: coerceDefaultModel(defaultAgent, stored.defaultModel),
-      defaultEffort: coerceEffort(stored.defaultEffort)
+      defaultEffort: coerceEffort(stored.defaultEffort),
+      notifyOnDecision: coerceNotifyOnDecision(stored.notifyOnDecision)
     }
   }
   const language = normalizeLocale(deps.systemLocale())
   const settings: AppSettings = { language }
   deps.write(settings)
-  return { ...settings, appearance: coerceAppearance(stored?.appearance) }
+  return {
+    ...settings,
+    appearance: coerceAppearance(stored?.appearance),
+    notifyOnDecision: coerceNotifyOnDecision(stored?.notifyOnDecision)
+  }
+}
+
+/** 决策通知开关：只认显式 false 为关，其余（缺省 / 脏值）一律为开——升级不静默关掉通知。 */
+function coerceNotifyOnDecision(value: unknown): boolean {
+  return value !== false
+}
+
+/** 更新决策通知开关：收敛为布尔后持久化，返回新设置。 */
+export function setNotifyOnDecision(
+  current: AppSettings,
+  value: unknown,
+  deps: Pick<SettingsDeps, 'write'>
+): AppSettings {
+  const next: AppSettings = { ...current, notifyOnDecision: coerceNotifyOnDecision(value) }
+  deps.write(next)
+  return next
 }
 
 /** 更新外观：收敛为受支持值后持久化，返回新设置。 */

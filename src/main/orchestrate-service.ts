@@ -5,6 +5,7 @@
  */
 
 import type {
+  ArchiveDocEntry,
   CardOp,
   CardTypeDef,
   ConversationMessage,
@@ -18,7 +19,7 @@ import type {
 import { validateOps } from '../shared/card-ops'
 import { buildBoardContext, type WorkflowChoice } from '../shared/board-context'
 import { typeArchetypeMap, coerceToRegisteredType, DEFAULT_CARD_TYPES } from '../shared/card-type'
-import { buildAuthorWorkflowSkill, validateWorkflow, checkBranchPairing, repairWorkflow } from '../shared/workflow'
+import { buildAuthorWorkflowSkill, validateWorkflow, checkBranchPairing, repairWorkflow, buildScaffoldedWorkflow } from '../shared/workflow'
 import { resolveLocalized } from '../shared/localized'
 import { DEFAULT_LANGUAGE } from '../shared/language'
 
@@ -204,6 +205,19 @@ export function buildOrchestratePrompt(
   return [head + board, '', OPS_CONTRACT, authoringSection, '', '# 用户这轮说', intent].join('\n')
 }
 
+/**
+ * 从会话历史里取「最后一条 agent 消息携带的未存工作流草稿定义」——即 proposal.workflow.workflow。
+ * 只看**末条** agent 消息（迭代改写场景下它正是刚产出的草稿）：命中则返回其定义，未带草稿或无 agent 消息则 null。
+ */
+function lastDraftWorkflow(history: ConversationMessage[]): WorkflowDefinition | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]
+    if (m.role !== 'agent') continue
+    return m.proposal?.workflow?.workflow ?? null
+  }
+  return null
+}
+
 export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProducer): OrchestrateSeam {
   return {
     async orchestrate({ intent, conversationId }, projectId) {
@@ -216,10 +230,15 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         workflows: deps.getWorkflows?.() ?? [],
         budgetChars: deps.budgetChars
       })
-      // 写工作流上下文：可改写工作流摘要（恒带）+ 活动工作流完整定义（改写默认基准）。缺省 provider 时为空态。
+      const history = deps.getHistory?.(conversationId) ?? []
+      // 改写基准：会话末条 agent 消息若带一份**未存库的工作流草稿**（proposal.workflow.workflow），
+      // 以该草稿定义作基准（让用户就着刚产出的草稿改），覆盖默认的「库里活动工作流」；无草稿则回落活动工作流。
+      // 草稿不落库（无库 id → baseId 由 producer 留空，整体替换新建，合「无 diff」契约），只在会话里滚动。
+      const draftBase = lastDraftWorkflow(history)
+      // 写工作流上下文：可改写工作流摘要（恒带）+ 基准完整定义（草稿优先，否则活动工作流）。缺省 provider 时为空态。
       const authoring: AuthoringContext = {
         summaries: deps.getWorkflowSummaries?.() ?? [],
-        activeWorkflow: deps.getActiveWorkflow?.() ?? null,
+        activeWorkflow: draftBase ?? deps.getActiveWorkflow?.() ?? null,
         repos: deps.getProjectRepos?.() ?? []
       }
       const prompt = buildOrchestratePrompt(board, intent, deps.getTypes(), !projectId, authoring)
@@ -228,10 +247,19 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
         produced = await produce(prompt, {
           intent,
           conversationId,
-          history: deps.getHistory?.(conversationId) ?? []
+          history
         })
-      } catch {
-        return { ops: [], issues: [], reply: '（未能产出提案：agent 调用失败或未配置默认 agent）' }
+      } catch (e) {
+        // producerFailed 标记「agent 调用抛错」，供无头 author 区分它与「跑通无产出」（见设计决策 #11）。
+        // 加性/可选，聊天路径（runOrchestrateTurn）不受影响。
+        const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+        console.error('[orchestrate] produce 抛错:', e)
+        return {
+          ops: [],
+          issues: [],
+          reply: `（未能产出提案：agent 调用失败——${detail}）`,
+          producerFailed: true
+        }
       }
       const rawOps = Array.isArray(produced?.ops) ? produced.ops : []
       // 新项目的卡将落进一个**全新项目**（默认类型、空看板）——按默认类型+空卡校验（否则会拿当前项目
@@ -265,6 +293,89 @@ export function createOrchestrateSeam(deps: OrchestrateDeps, produce: OpsProduce
       return { ops, issues, reply: produced?.reply, suggestedProject: produced?.suggestedProject, workflow }
     }
   }
+}
+
+/**
+ * 无头 author 的富结果：区分**成功**与三类**失败**，供调用方按种类记日志/有界重试/失败轻提示（设计决策 #11）——
+ * 不再把不同失败一律抹成 `null`。
+ * - `proposal` 存在 + `failure` 缺省 → 成功（issues 空、可存库）。
+ * - `proposal` 存在 + `failure==='invalid'` → 校验不过（issues 非空，仍带出提案供调用方决定）。
+ * - `proposal` 为 null + `failure==='threw'` → agent 调用抛错/未配置（seam `reply` 上浮到 `reply`）。
+ * - `proposal` 为 null + `failure==='empty'` → 跑通但无工作流产出。
+ */
+export interface AuthorWorkflowResult {
+  proposal: WorkflowProposal | null
+  /** seam 的自然语言答复（失败原因上浮用）。 */
+  reply?: string
+  failure?: 'threw' | 'empty' | 'invalid'
+}
+
+/**
+ * 无头写工作流核：以**显式 projectId** + **系统合成意图**跑编排 seam，抽出工作流提案并**区分失败种类**。
+ * 不绑发送者事件、不追加任何用户会话——聊天路径之外、供后台任务（如导入后自动派工作流）复用的可注入核。
+ * 复用同一 `createOrchestrateSeam` → `buildWorkflowProposal`（repairWorkflow + 两闸校验），不重复实现修复/校验，
+ * 也**不丢弃** seam 能区分失败的信息（producerFailed / reply / issues）。producer 抛错经 seam 内部优雅降级，此处不抛。
+ */
+export async function authorWorkflow(
+  deps: OrchestrateDeps,
+  produce: OpsProducer,
+  projectId: string,
+  intent: string
+): Promise<AuthorWorkflowResult> {
+  const outcome = await createOrchestrateSeam(deps, produce).orchestrate({ intent }, projectId)
+  if ('unbound' in outcome) return { proposal: null, failure: 'empty' }
+  const proposal = outcome.workflow ?? null
+  if (proposal) {
+    // **固定脚手架规整**（仅自动路）：author 照旧产整份，此处确定性把它套到固定脚手架上——干活节点作
+    // 中间，脊柱/验收门/归档由 buildScaffoldedWorkflow 丢弃并以固定头/尾替换（顺序钉死：中间→验收门→归档
+    // →合并→清理），从结构上消灭脊柱排序问题（见 workflow-authoring）。聊天路（seam 直用）不经此，不受影响。
+    const normalized = normalizeOntoScaffold(proposal)
+    return { proposal: normalized, reply: outcome.reply, failure: normalized.issues.length > 0 ? 'invalid' : undefined }
+  }
+  if (outcome.producerFailed) return { proposal: null, reply: outcome.reply, failure: 'threw' }
+  return { proposal: null, reply: outcome.reply, failure: 'empty' }
+}
+
+/**
+ * 推断脚手架变体：author 产出里含引擎 `open-pr` 操作 → `'pr'`（推分支 + 开 PR，合并在平台上发生），
+ * 否则 `'local-merge'`（本地直合）。纯结构判定，空/缺节点安全回落 `local-merge`。
+ */
+export function inferScaffoldVariant(def: WorkflowDefinition): 'local-merge' | 'pr' {
+  const hasOpenPr = (def?.nodes ?? []).some(
+    (n) => n.executor?.kind === 'engine' && n.executor.operation === 'open-pr'
+  )
+  return hasOpenPr ? 'pr' : 'local-merge'
+}
+
+/**
+ * 从 author 产出抽出**分类归档配置**：取**第一个**引擎 `archive-docs` 节点的 `executor.archiveDocs`
+ * （每条 `{ path, kind }`，缺省空数组）。规整时把它带进脚手架固定归档节点；无 archive-docs 节点或无配置
+ * → `[]`（运行期回落扫描登记表兜底）。纯函数。
+ */
+export function extractArchiveDocs(def: WorkflowDefinition): ArchiveDocEntry[] {
+  for (const n of def?.nodes ?? []) {
+    if (n.executor?.kind === 'engine' && n.executor.operation === 'archive-docs') {
+      return n.executor.archiveDocs ?? []
+    }
+  }
+  return []
+}
+
+/**
+ * 把 author 的整份产出**规整到固定脚手架**：推断变体、抽归档清单，将 author 的节点作 middle 喂给
+ * `buildScaffoldedWorkflow`（丢弃脊柱/验收门/归档、以固定头/尾替换），再经 `buildWorkflowProposal`
+ * （repairWorkflow + 两闸校验）重建提案。透传原 baseId。规整不可能产出 undefined（脚手架恒有骨架），
+ * 但兜底回原提案以防御。
+ */
+function normalizeOntoScaffold(proposal: WorkflowProposal): WorkflowProposal {
+  const authorDef = proposal.workflow
+  const normalizedDef = buildScaffoldedWorkflow(
+    inferScaffoldVariant(authorDef),
+    authorDef.nodes,
+    extractArchiveDocs(authorDef),
+    { id: authorDef.id, name: authorDef.name, suggestedTypes: authorDef.suggestedTypes }
+  )
+  return buildWorkflowProposal({ workflow: normalizedDef, baseId: proposal.baseId }) ?? proposal
 }
 
 /**
