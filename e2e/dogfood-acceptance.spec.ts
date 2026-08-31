@@ -141,17 +141,18 @@ test('三张卡自动并发跑到验收门 → 收件箱计数、点条目跳转
   await app.close()
 })
 
-// ── 验收 1b：未聚焦发桌面通知 —— **当前是坏的**（dogfood 查出的真 bug）───────────
-// 根因：engine 的 raiseDecision 只改内存断点就 emit，落盘在 drive() 末尾；而收件箱的
+// ── 验收 1b：未聚焦发桌面通知（曾经是坏的，dogfood 查出、已修）────────────────
+// 原根因：engine 的 raiseDecision 只改内存断点就 emit，落盘在 drive() 末尾；而收件箱的
 // getBreakpoint 是 runStore.load()（读盘）。decision 事件到达时盘上那份还没有 pendingDecision，
-// refresh() 早退 → 「新增」从未被宣告 → 通知丢失。之后 rebuild() 静默补上条目，所以计数是对的、
-// 唯独通知没了。单测发现不了：其 getBreakpoint stub 是同步内存数组，不复现落盘延迟。
-// 已验证：在 raiseDecision 的 emit 前加一次 deps.store.save(bp)，notified 立刻 0 → 1。
-test('未聚焦时新增待决策应发桌面通知（已知失败）', async () => {
-  test.fail() // 当前实现必红；修好后这条会因「意外通过」而报警，提醒来删这行
+// refresh() 早退 →「新增」从未被宣告 → 通知丢失；随后 rebuild() 静默补上条目，所以计数是对的、
+// 唯独通知没了。修法：raiseDecision 在 emit 前先 deps.store.save(bp)（见 engine-execution 规格
+// 「抛决策 MUST 先落盘、再发事件」），单测钉在 engine.test.ts。
+test('未聚焦时新增待决策发桌面通知', async () => {
   test.setTimeout(120_000)
   const { app, win } = await bootProject('notify')
 
+  // 只装工作流、**先不建卡**：卡一建出来自动排程立刻起跑，若那时监听还没挂上（或正好在
+  // win.reload() 拆重建渲染层的窗口里），通知就发给了一个没有监听的窗口，测出假阴性（已踩过）。
   await win.evaluate(async () => {
     const def = await window.klarit.createWorkflow()
     def.stages = [{ id: 's1', name: '交付' }]
@@ -170,9 +171,6 @@ test('未聚焦时新增待决策应发桌面通知（已知失败）', async ()
       throw new Error(`saveWorkflow 被拒：${JSON.stringify(saved)}`)
     }
     await window.klarit.setActiveWorkflow(def.id)
-    await window.klarit.createCards([
-      { proposedName: 'card-n', title: '通知卡', description: '', typeId: 'feature', relations: [] }
-    ])
   })
   await win.reload()
 
@@ -183,17 +181,21 @@ test('未聚焦时新增待决策应发桌面通知（已知失败）', async ()
   })
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.blur())
 
-  // 同上，交给自动排程起跑。
-  // 断言必抛（test.fail），故 app.close() 必须放 finally——否则这个 Electron 实例泄漏，
-  // 后续用例会被它的巡检/排程回路抢 CPU 而超时（已实测踩过）。
+  // 监听挂好、窗口已失焦，这时才建卡 → 自动排程起跑 → 抛决策 → 应当发通知
+  await win.evaluate(async () => {
+    await window.klarit.createCards([
+      { proposedName: 'card-n', title: '通知卡', description: '', typeId: 'feature', relations: [] }
+    ])
+  })
+
+  // app.close() 放 finally：断言一抛就跳过关闭的话，这个 Electron 实例会泄漏，
+  // 后续用例被它的巡检/排程回路抢 CPU 而超时（已实测踩过）。
   try {
-    // 先确认条目确实进了收件箱（这半是好的）
     await expect(async () => {
       const n = await win.evaluate(async () => (await window.klarit.listDecisionInbox()).length)
       expect(n).toBe(1)
     }).toPass({ timeout: 60_000 })
 
-    // 未聚焦 + 开关开 + 是新增 → 应当发一条通知
     const notified = await win.evaluate(
       () => (window as unknown as { __notified: unknown[] }).__notified.length
     )

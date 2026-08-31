@@ -279,6 +279,29 @@ describe('自动处理(不抛决策)', () => {
   })
 })
 
+describe('抛决策先落盘再发事件', () => {
+  // 消费方(决策收件箱投影)是**按 runId 回读持久化断点**来认这条决策的。若先发事件后落盘,
+  // 它在收到事件那刻读到的是旧断点、看不见 pendingDecision,于是把决策当「已消失」丢弃——
+  // 条目最终仍会被全量重建补上(计数正确),但只为新增触发的副作用(桌面通知)永久丢失。
+  it('decision 事件发出的那一刻,按 runId 回读断点即可读到 pendingDecision', async () => {
+    const repo = trash.track(initRepo())
+    const def = wf([engineNode('create-branch', [{ kind: 'manual', actions: [] }])])
+    const store = createMemoryRunStore()
+    const readable: boolean[] = []
+    const engine = createEngine({
+      getWorkflow: () => def,
+      store,
+      emit: (e) => {
+        if (e.kind === 'decision') readable.push(!!store.load(e.runId)?.pendingDecision)
+      }
+    })
+    const bp = await engine.start({ workflowId: 'wf', repoPath: repo, branch: 'feature', baseBranch: 'main' })
+      .settled
+    expect(bp.state).toBe('waiting-decision')
+    expect(readable).toEqual([true])
+  })
+})
+
 describe('人工评审门(只「通过」)+ 断点恢复(跨引擎实例)', () => {
   it('停在 manual gate → 换新引擎从断点续 → 通过完成,不重做上游', async () => {
     const repo = trash.track(initRepo())

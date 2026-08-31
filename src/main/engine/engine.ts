@@ -1840,6 +1840,11 @@ export function createEngine(deps: EngineDeps): Engine {
     bp.pendingDecision = decision
     bp.pendingSince = Date.now()
     bp.state = 'waiting-decision'
+    // 先落盘再发事件：消费方（决策收件箱投影）是按 runId 回读持久化断点来认这条决策的，
+    // 倒过来就会在事件到达那刻读到旧断点、把决策当「已消失」丢弃，
+    // 表现为条目能被全量重建补上（计数正确）但「仅新增才触发」的桌面通知永久丢失。
+    // 同约定已适用于门重试事件（先存计数再发 gate-retry）。
+    deps.store.save(bp)
     emit({ kind: 'decision', runId: bp.runId, decision })
   }
 

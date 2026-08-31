@@ -43,12 +43,12 @@
 
 - [x] 7.1 `npm run typecheck` 两套干净、`npm run test:run` 全绿
 - [x] 7.2 `npx openspec validate decision-inbox --strict`
-- [ ] 7.3 dogfood（2026-08-31 已跑真机 e2e，**两好一坏**，见 `e2e/dogfood-acceptance.spec.ts`）：
-      ✅ 三张卡自动并发跑到验收门 → 收件箱三条、徽标显示 3、点条目跳转定位到那张卡，都对
-      ❌ **未聚焦时不发桌面通知——真 bug，已复现**。根因：engine `raiseDecision` 只改内存断点就
-         `emit`，落盘在 `drive()` 末尾；而收件箱 `getBreakpoint` 是 `runStore.load()`（读盘）。
-         decision 事件到达时盘上那份还没有 `pendingDecision`，`refresh()` 早退 → 「新增」从未被宣告
-         → 通知丢失；随后 `rebuild()` 静默补上条目，所以计数对、唯独通知没了。
-         单测发现不了：其 `getBreakpoint` stub 是同步内存数组，不复现落盘延迟。
-         已验证修法：`raiseDecision` 的 `emit` 前加一次 `deps.store.save(bp)`，notified 立刻 0 → 1。
-         e2e 里已留一条 `test.fail()` 用例钉住，修好后它会因「意外通过」报警。
+- [x] 7.3 dogfood（2026-08-31 真机 e2e，见 `e2e/dogfood-acceptance.spec.ts`）：三张卡自动并发跑到
+      验收门 → 收件箱三条、徽标显示 3、点条目跳转定位、未聚焦发桌面通知，四项全对。
+      通知那项**当初是坏的、本次已修**：engine `raiseDecision` 只改内存断点就 `emit`，落盘在
+      `drive()` 末尾；而收件箱 `getBreakpoint` 是 `runStore.load()`（读盘）。事件到达时盘上那份
+      还没有 `pendingDecision`，`refresh()` 早退 →「新增」从未被宣告 → 通知丢失；随后 `rebuild()`
+      静默补上条目，所以计数对、唯独通知没了。修法是 `emit` 前先 `deps.store.save(bp)`，
+      不变量已写进 `engine-execution` 规格「抛决策 MUST 先落盘、再发事件」，单测钉在 `engine.test.ts`。
+      ⚠️ 这条 e2e 有个时序坑：卡一建出来自动排程立刻起跑，**监听必须先挂好、窗口先失焦，最后才建卡**，
+      否则通知发给没有监听的窗口，测出假阴性。
