@@ -37,4 +37,8 @@
 
 - [x] 5.1 `npm run typecheck` 两套干净、`npm run test:run` 全绿
 - [x] 5.2 `npx openspec validate run-timeline-view --strict`
-- [ ] 5.3 dogfood：跑一张含门重试与验收门的卡，确认时间线读得懂、耗时对得上
+- [x] 5.3 dogfood（2026-08-31 真机 e2e，见 `e2e/dogfood-acceptance.spec.ts`）：跑一张含门重试与验收门的卡，
+      日志按节点分段（node-enter 次序 n1→n2）、3 次门重试各记下 cause=timeout / rerun=gate、
+      事件时刻单调不减、n1 段跨度 ≥3 秒与三次 1 秒超时对得上。
+      注：门重试要用**超时**制造——command 节点的客观门以 error 失败会触发 AI 自愈（healCommand
+      起真 agent 去修），那条路不产生 gate-retry 还会真花钱。「读得懂」是人的判断，机器测不了，仍待人看一眼。

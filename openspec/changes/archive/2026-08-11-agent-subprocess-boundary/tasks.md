@@ -61,5 +61,16 @@
 ## 7. 收尾
 
 - [x] 7.1 `npm run typecheck` 两套干净 + `npm run test:run` 全绿（本 change 落地后 1826 passed / 141 files）
-- [ ] 7.2 dogfood：本机跑一张真卡的 agent 节点，确认 —— 起的是绝对路径的 CLI（可由日志/进程核对）、输出无 ANSI 转义、原始记录落盘非空、长跑不卡界面
-- [ ] 7.3 dogfood：手工制造一次 resume 失败走兜底层，核对喂回的历史含工具目标与结果
+- [x] 7.2 dogfood（2026-08-31 真机 e2e 起真 claude CLI，见 `e2e/dogfood-acceptance.spec.ts`）：四条全对 ——
+      进程可执行路径是绝对路径且等于探测出的那个、父进程是 electron.exe（不是 cmd/powershell，
+      故 argv 没经 shell 拼接）、命令行含 `--output-format`、原始记录落盘非空且是 stream-json、
+      展示输出无 ANSI 转义、agent 跑着时界面点击与 IPC 往返 <8 秒。
+      ⚠️ 只覆盖了 `.exe` 直起那条：本机 `where claude` 解析到 `.exe`。**npm 装法的 `.cmd` 加引号
+      那条仍未验**，而引号规则正是撞真 cmd.exe 定的，那条更该测——需要一台 npm 装法的机器。
+      ⚠️ 进程探针必须按「父进程是 electron.exe」筛：机器上常有别的 claude 会话在跑，不筛会拿错
+      进程验出假结论（已踩过）。
+- [x] 7.3 dogfood（同上）：抹掉断点里存的 session（这是「原生续接不可用」的忠实制造——**不能**靠
+      改成假 session id，`runner.resume` 只在 adapter 不支持或进程起不来时返回 null，假 id 是起得来的），
+      重开后驳回人工门触发内容驱动回退重入节点，**重起的 claude 命令行里没有 `--resume`**，
+      证明落到了阶梯第②层自存重建；原始流记录里含 `tool_use` / `tool_result` 与具体工具目标（CLAUDE.md）。
+      注：`agentRuns.prompt` 不是有效观测点——重入后它一字未变，分辨不出走的哪一层（已踩过）。

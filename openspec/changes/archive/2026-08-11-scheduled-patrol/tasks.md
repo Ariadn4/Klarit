@@ -69,4 +69,8 @@
 
 - [x] 8.1 `npm run typecheck` 两套干净、`npm run test:run` 全绿
 - [x] 8.2 `npx openspec validate scheduled-patrol --strict`
-- [ ] 8.3 dogfood：建一条「每 n 小时跑文档腐烂扫描」的巡检，确认到期发起、产出进收件箱/候选、槽满跳过、重开只补一次
+- [ ] 8.3 dogfood（2026-08-31 真机 e2e 覆盖了一半，见 `e2e/dogfood-acceptance.spec.ts`）：
+      ✅ 到期真发起（`everyHours: 0.001` + 主进程分钟级 tick，lastRunAt 被记上）
+      ✅ 重开只补一次（停用→启用后 lastRunAt 只前进一次，不排队补齐停用期间欠的次数）
+      ⬜ 产出进收件箱/候选 —— 未验
+      ⬜ 槽满跳过不排队 —— 未验（要先把并发槽占满，e2e 里没造这个场景）
