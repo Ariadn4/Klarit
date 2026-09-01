@@ -16,6 +16,7 @@ async function launch(userData: string): Promise<ElectronApplication> {
 
 // 多后台命令：一个不限时（运行中）、一个限时（超时被杀）；超时后条目**保留并标「已超时中止」**，不消失。
 test('后台命令：多个并存 + 超时中止后保留标状态（可清除）', async () => {
+  test.setTimeout(120_000)
   const repo = makeGitProject('bg-repo')
   const userData = tempDir('klarit-ud-')
   seedMultiRepoProject(userData, {
@@ -51,13 +52,15 @@ test('后台命令：多个并存 + 超时中止后保留标状态（可清除�
   // 不点「运行」：卡建出来即由自动排程起跑（auto-run-todo）。
 
   // 节点5 执行中 → 转后台；随后节点6 执行中 → 转后台。
+  // 这几处等的是**真子进程的调度与节点推进**，全套连跑时机器被前面的用例占着，
+  // playwright 配置里 expect 默认的 10 秒余量不够（单跑必过、全套里抖过一次）。故显式放宽。
   const detach = win.getByRole('button', { name: '进入下一节点（转后台）' })
   await detach.click()
-  await expect(detach).toBeVisible() // 节点6 的转后台按钮
+  await expect(detach).toBeVisible({ timeout: 30_000 }) // 节点6 的转后台按钮
   await detach.click()
 
   // 节点6 后台命令 3s 后超时被杀 → 条目保留、标「已超时中止」（不消失）。
-  await expect(win.getByText('已超时中止')).toBeVisible({ timeout: 12_000 })
+  await expect(win.getByText('已超时中止')).toBeVisible({ timeout: 30_000 })
   // 节点5 后台仍在运行（可中止）。两条后台并存。
   await expect(win.getByRole('button', { name: '中止' })).toBeVisible()
   await expect(win.getByText('节点5·中段长命令（转后台）')).toBeVisible()
