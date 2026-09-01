@@ -113,14 +113,6 @@ test('三张卡自动并发跑到验收门 → 收件箱计数、点条目跳转
   })
   await win.reload()
 
-  // 通知只在「未聚焦 + 开关开 + 仅新增」时发 → 先挂监听再让窗口失焦。
-  await win.evaluate(() => {
-    const w = window as unknown as { __notified: unknown[] }
-    w.__notified = []
-    window.klarit.onDecisionNotify((e) => w.__notified.push(e))
-  })
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.blur())
-
   // 不显式 runCard：卡建出来即由自动排程并发起跑（验收项要的就是「自动并发」）。
   // 三张卡都停在人工验收门 → 收件箱三条
   await expect(async () => {
@@ -172,16 +164,29 @@ test('未聚焦时新增待决策发桌面通知', async () => {
     }
     await window.klarit.setActiveWorkflow(def.id)
   })
-  await win.reload()
+  // **不 reload**：主进程有 `win.on('ready-to-show', () => win.show())`，reload 会再触发一次 show，
+  // 可能晚于我们把窗口藏起来才落地，把焦点抢回去、通知因此被门控掉（八次抖掉两次）。
+  // 这条用例也不需要 reload：工作流是主进程侧状态，卡是之后才建的，监听走 preload 不依赖重载。
 
   await win.evaluate(() => {
     const w = window as unknown as { __notified: unknown[] }
     w.__notified = []
     window.klarit.onDecisionNotify((e) => w.__notified.push(e))
   })
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.blur())
+  // 制造「未聚焦」：**在轮询里反复 hide**，直到 getFocusedWindow() 确实为空。
+  // 三种做法都试过，只有这样稳：
+  // - blur()：窗口是异步 show 出来的，随后的 show 会把焦点抢回去；
+  // - minimize()：Windows 上最小化的窗口 isFocused() 仍为 true、getFocusedWindow() 仍非空；
+  // - 只 hide() 一次：主进程有 `win.on('ready-to-show', () => win.show())`，reload 之后它可能晚于
+  //   我们的 hide 才触发，把窗口又 show 回来（八次里抖掉三次）。循环 hide 能盖住这个迟到的 show。
+  // 隐藏窗口仍在 getAllWindows() 里，IPC 照常送达，不影响监听。
+  await expect(async () => {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.hide())
+    const focused = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow() !== null)
+    expect(focused).toBe(false)
+  }).toPass({ timeout: 20_000 })
 
-  // 监听挂好、窗口已失焦，这时才建卡 → 自动排程起跑 → 抛决策 → 应当发通知
+  // 监听挂好、窗口确已失焦，这时才建卡 → 自动排程起跑 → 抛决策 → 应当发通知
   await win.evaluate(async () => {
     await window.klarit.createCards([
       { proposedName: 'card-n', title: '通知卡', description: '', typeId: 'feature', relations: [] }
@@ -196,10 +201,14 @@ test('未聚焦时新增待决策发桌面通知', async () => {
       expect(n).toBe(1)
     }).toPass({ timeout: 60_000 })
 
-    const notified = await win.evaluate(
-      () => (window as unknown as { __notified: unknown[] }).__notified.length
-    )
-    expect(notified).toBe(1)
+    // 轮询而不是读一次：通知是主进程经 IPC 推给渲染层的，送达是异步的；
+    // 收件箱 list（invoke）一返回就立刻读计数会跟 IPC 送达赛跑（实测六次抖掉一次）。
+    await expect(async () => {
+      const n = await win.evaluate(
+        () => (window as unknown as { __notified: unknown[] }).__notified.length
+      )
+      expect(n).toBe(1)
+    }).toPass({ timeout: 15_000 })
   } finally {
     await app.close()
   }

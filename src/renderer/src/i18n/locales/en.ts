@@ -57,10 +57,7 @@ export const en: Dictionary = {
     selectProject: 'Select project',
     manageProjects: 'Manage projects…'
   },
-  repoGroup: {
-    missing: 'Missing',
-    unlinkAria: 'Unlink {{name}}',
-    unlinkTitle: 'Unlink from project (does not delete from disk)',
+  missingNotice: {
     memberMissingMessage: "This member repo's directory can no longer be found on disk (moved or deleted).",
     relocate: 'Relocate…',
     removeFromProject: 'Remove from project'
@@ -178,7 +175,6 @@ export const en: Dictionary = {
     title: 'Cards',
     description:
       'Define your requirement card types; each sits on a flow archetype (container or leaf). Decomposition classifies cards by each type’s description.',
-    newAria: 'New card type',
     empty: 'No types yet — add one above (or activate a workflow that suggests types to seed them).',
     editAria: 'Edit {{name}}',
     deleteAria: 'Delete {{name}}',
@@ -612,7 +608,6 @@ export const en: Dictionary = {
     workflowGenFailed: 'Couldn’t generate a custom workflow; using the default one',
     workflowPreview: 'Preview draft',
     workflowClose: 'Close',
-    workflowSaveFormal: 'Save as workflow',
     workflowUpdate: 'Update workflow',
     workflowSaveAndActive: 'Save & set as project workflow',
     workflowCreate: 'New workflow',

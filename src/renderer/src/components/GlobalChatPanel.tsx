@@ -118,7 +118,6 @@ export function WorkflowPreviewModal(): React.JSX.Element | null {
           chromeless
           footerLabels={{
             close: t('globalChat.workflowClose'),
-            save: t('globalChat.workflowSaveFormal'),
             update: t('globalChat.workflowUpdate'),
             saveAndActive: t('globalChat.workflowSaveAndActive')
           }}

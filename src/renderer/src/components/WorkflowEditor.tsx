@@ -66,7 +66,7 @@ interface WorkflowEditorProps {
    */
   chromeless?: boolean
   /** chromeless 底部横栏的文案（关闭 / 首次保存 / 已存后更新 / 保存并设为本项目工作流一键）；仅 chromeless 用。 */
-  footerLabels?: { close: string; save: string; update: string; saveAndActive: string }
+  footerLabels?: { close: string; update: string; saveAndActive: string }
   /**
    * 优先从库读：为真时先按 id 从库读（含上次编辑），读不到（如已被删）**回落到 `initialDef` 草稿**——
    * 避免已删工作流再次预览时卡「加载中」。缺省 = 有 initialDef 就用它、否则从库读。

@@ -55,10 +55,7 @@ export const zh = {
     selectProject: '选择项目',
     manageProjects: '管理项目…'
   },
-  repoGroup: {
-    missing: '缺失',
-    unlinkAria: '解绑 {{name}}',
-    unlinkTitle: '从项目解绑（不删磁盘）',
+  missingNotice: {
     memberMissingMessage: '该成员仓的目录在磁盘上找不到了（被移动或删除）。',
     relocate: '重新定位…',
     removeFromProject: '从项目移除'
@@ -173,7 +170,6 @@ export const zh = {
   cardTypeLibrary: {
     title: '需求卡',
     description: '自定义需求卡的类型；每个类型挂在一个流动原型上（容器或子叶）。分解时 AI 按类型描述给卡分类。',
-    newAria: '新建需求卡类型',
     empty: '还没有类型，点上方新建（或激活带建议类型的工作流自动播种）。',
     editAria: '编辑 {{name}}',
     deleteAria: '删除 {{name}}',
@@ -606,7 +602,6 @@ export const zh = {
     workflowGenFailed: '未能生成定制工作流，已用默认工作流',
     workflowPreview: '预览草稿',
     workflowClose: '关闭',
-    workflowSaveFormal: '保存为正式工作流',
     workflowUpdate: '更新工作流',
     workflowSaveAndActive: '保存并设为本项目工作流',
     workflowCreate: '新建工作流',
