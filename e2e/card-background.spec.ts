@@ -32,11 +32,14 @@ test('后台命令：多个并存 + 超时中止后保留标状态（可清除�
     const def = await window.klarit.createWorkflow()
     def.stages = [{ id: 's1', name: '验收' }]
     def.nodes = [
-      { id: 'n5', name: '节点5·中段长命令（转后台）', stageId: 's1', executor: { kind: 'command', command: tick('bg5') }, outputs: [] },
-      { id: 'n6', name: '节点6·长命令（限时20s，此处3s）', stageId: 's1', executor: { kind: 'command', command: tick('bg6'), timeoutSec: 3 }, outputs: [] },
-      { id: 'n7', name: '节点7·人工门', stageId: 's1', executor: { kind: 'command', command: 'echo hold' }, outputs: [], gate: [{ kind: 'manual', actions: [] }] }
+      { id: 'n5', name: '节点5·中段长命令（转后台）', stageId: 's1', executor: { kind: 'command', commands: [{ command: tick('bg5') }] }, outputs: [] },
+      { id: 'n6', name: '节点6·长命令（限时20s，此处3s）', stageId: 's1', executor: { kind: 'command', commands: [{ command: tick('bg6'), timeoutSec: 3 }] }, outputs: [] },
+      { id: 'n7', name: '节点7·人工门', stageId: 's1', executor: { kind: 'command', commands: [{ command: 'echo hold' }] }, outputs: [], gate: [{ kind: 'manual', actions: [] }] }
     ]
-    await window.klarit.saveWorkflow(def)
+    const saved = await window.klarit.saveWorkflow(def)
+    if (saved && (saved as { ok?: boolean }).ok === false) {
+      throw new Error(`saveWorkflow 被拒：${JSON.stringify(saved)}`)
+    }
     await window.klarit.setActiveWorkflow(def.id)
     await window.klarit.createCards([
       { proposedName: 'bg-demo', title: '多后台命令演示', description: '', typeId: 'feature', relations: [] }
@@ -45,7 +48,7 @@ test('后台命令：多个并存 + 超时中止后保留标状态（可清除�
   await win.reload()
 
   await win.getByText('多后台命令演示').click()
-  await win.getByRole('button', { name: '运行' }).click()
+  // 不点「运行」：卡建出来即由自动排程起跑（auto-run-todo）。
 
   // 节点5 执行中 → 转后台；随后节点6 执行中 → 转后台。
   const detach = win.getByRole('button', { name: '进入下一节点（转后台）' })

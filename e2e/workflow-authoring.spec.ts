@@ -46,11 +46,14 @@ test('全局对话：写工作流意图 → 只读预览（含自动补的删分
   await expect(dialog.locator('input').first()).toHaveValue('PR 流（E2E）')
   await expect(dialog.getByText('删本地分支', { exact: true })).toBeVisible()
 
-  // 「设置为本项目工作流」仅在保存为正式后出现
+  // 底栏是「关闭 + 一个主按钮」：未激活时主按钮是**一键保存并激活**（旧的「保存为正式工作流」→
+  // 「设置为本项目工作流」两步流程已合并成一步；`footerLabels.save` 现为未渲染的死标签）。
   await expect(dialog.getByRole('button', { name: '设置为本项目工作流' })).toHaveCount(0)
-  // 「保存为正式工作流」入库
-  await dialog.getByRole('button', { name: '保存为正式工作流' }).click()
-  await expect(dialog.getByRole('button', { name: '设置为本项目工作流' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '保存为正式工作流' })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '保存并设为本项目工作流' }).click()
+
+  // 存库并激活后，主按钮变成「更新工作流」（仅保存），不再提供激活入口。
+  await expect(dialog.getByRole('button', { name: '更新工作流' })).toBeVisible()
 
   // 真持久化：工作流库里出现该包（经真实 saveWorkflow IPC + workflow-store 落盘）
   const ids = await win.evaluate(async () => {

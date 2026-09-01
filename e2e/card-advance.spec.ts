@@ -36,11 +36,15 @@ test('末节点长驻命令：中止并完成流程 → 卡进入已完成', asy
         id: 'n1',
         name: '启动验收',
         stageId: 's1',
-        executor: { kind: 'command', command: 'node -e "setInterval(()=>{},1000000)"' },
+        executor: { kind: 'command', commands: [{ command: 'node -e "setInterval(()=>{},1000000)"' }] },
         outputs: []
       }
     ]
-    await window.klarit.saveWorkflow(def)
+    const saved = await window.klarit.saveWorkflow(def)
+    if (saved && (saved as { ok?: boolean }).ok === false) {
+      // 不能静默吞：保存被拒的话卡会去跑**默认工作流**，用例看似在跑其实测的是别的东西。
+      throw new Error(`saveWorkflow 被拒：${JSON.stringify(saved)}`)
+    }
     await window.klarit.setActiveWorkflow(def.id)
     await window.klarit.createCards([
       { proposedName: 'accept-me', title: '验收卡', description: '', typeId: 'feature', relations: [] }
@@ -49,7 +53,7 @@ test('末节点长驻命令：中止并完成流程 → 卡进入已完成', asy
   await win.reload()
 
   await win.getByText('验收卡').click()
-  await win.getByRole('button', { name: '运行' }).click()
+  // 不点「运行」：卡建出来即由自动排程起跑（auto-run-todo），此时按钮已是「暂停」。
 
   // 命令进入执行、末节点推进按钮出现。
   const abortFinish = win.getByRole('button', { name: '中止并完成流程' })

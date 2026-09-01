@@ -1,6 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication } from '@playwright/test'
 import { join } from 'node:path'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import {
   makeGitProject,
   makePlainProject,
@@ -132,17 +132,16 @@ test('关闭后重开恢复上次的项目', async () => {
   await app.close()
 })
 
-test('导入含多子仓的容器 → 确认 → 侧边栏出现成员分组', async () => {
+test('导入含多子仓的容器 → 直接组成多仓项目（无需确认）', async () => {
   const { container } = makeMultiRepoContainer('product', ['frontend', 'backend'])
   const app = await launch({ userData: tempDir('klarit-ud-'), importDirs: [container] })
   const win = await app.firstWindow()
 
   await win.getByRole('button', { name: /导入新项目/ }).click()
-  // 应用内确认条出现
-  await expect(win.getByText(/发现 2 个 git 子仓/)).toBeVisible()
-  await win.getByRole('button', { name: '组成多仓项目' }).click()
 
-  // 切换器显示容器名，侧边栏出现两个成员仓分组
+  // 不再有确认条：含 ≥2 个 git 子仓的目录**直接组成多仓项目、无需确认**
+  // （见 project-service.ts「目录自身非 git 且其下含 ≥2 个子仓 → 直接组成多仓项目」）。
+  // 切换器显示容器名，侧边栏文件树里出现两个成员仓目录
   await expect(win.getByRole('button', { name: /product/ })).toBeVisible()
   await expect(win.getByText('frontend')).toBeVisible()
   await expect(win.getByText('backend')).toBeVisible()
@@ -185,10 +184,32 @@ test('外部删除一个成员目录 → 显示缺失，项目不丢', async () 
 
   const app = await launch({ userData })
   const win = await app.firstWindow()
-  // 项目不丢、另一个成员照常、缺失成员标记缺失
+  // 项目不丢、另一个成员照常。
+  // **不再断言逐成员的「缺失」标记**：侧边栏已改成「以项目目录为根的普通文件树」（子仓只是普通文件夹），
+  // 带该标记的 RepoGroup 组件已不被渲染。仍然存在的是「全员缺失 → 项目级提示」，见下一条用例。
   await expect(win.getByRole('button', { name: /with-missing/ })).toBeVisible()
   await expect(win.getByText('keep')).toBeVisible()
-  await expect(win.getByText('缺失')).toBeVisible()
+  await app.close()
+})
+
+test('成员目录全被外部删除 → 给项目级「找不到」提示，项目不丢', async () => {
+  const { container, repoDirs } = makeMultiRepoContainer('all-gone', ['a1', 'a2'])
+  const userData = tempDir('klarit-ud-')
+  seedMultiRepoProject(userData, {
+    id: 'grp-all-gone',
+    displayName: 'all-gone',
+    members: [
+      { id: 'm-a1', rootPath: repoDirs.a1, derivedName: 'a1' },
+      { id: 'm-a2', rootPath: repoDirs.a2, derivedName: 'a2' }
+    ]
+  })
+  rmSync(container, { recursive: true, force: true })
+
+  const app = await launch({ userData })
+  const win = await app.firstWindow()
+  await expect(win.getByRole('button', { name: /all-gone/ })).toBeVisible() // 项目不丢
+  await expect(win.getByText('该项目的目录在磁盘上找不到了（被移动或删除）。')).toBeVisible()
+  await expect(win.getByRole('button', { name: '从项目列表中移除' })).toBeVisible()
   await app.close()
 })
 
@@ -203,15 +224,16 @@ test('设置·需求卡类型：列出默认类型、新增自定义类型、预
 
   // 打开设置 → 切到「需求卡类型」分区
   await win.getByRole('button', { name: '设置' }).click()
-  await win.getByRole('button', { name: '需求卡类型' }).click()
+  await win.getByRole('button', { name: '需求卡', exact: true }).click()
 
-  // 默认类型开箱在册（首启种入 epic/feature/bug）
+  // 默认类型开箱在册（首启种入 epic/feature/bug；显示名见 shared/card-type.ts 的 DEFAULT_CARD_TYPES）
   await expect(win.getByText('Epic')).toBeVisible()
-  await expect(win.getByText('Feature')).toBeVisible()
+  await expect(win.getByText('Feat')).toBeVisible()
   await expect(win.getByText('Bug')).toBeVisible()
 
-  // 新增一个自定义子叶类型并保存
-  await win.getByRole('button', { name: '新建需求卡类型' }).click()
+  // 新增一个自定义子叶类型并保存。列表外壳换成了通用 ListEditor，新建按钮用 common.add（「新建」），
+  // 原先的专属 aria `cardTypeLibrary.newAria` 已无人引用。
+  await win.getByRole('button', { name: '新建', exact: true }).click()
   await win.getByLabel('类型名称').fill('探路')
   await win.getByLabel('类型描述').fill('不确定性高、先探路不交付')
   await win.getByRole('button', { name: '保存' }).click()
@@ -220,13 +242,13 @@ test('设置·需求卡类型：列出默认类型、新增自定义类型、预
   await expect(win.getByText('探路')).toBeVisible()
 
   // 自动生成的分解 skill 预览含新类型的描述（注册表是单一来源）
-  await win.getByRole('button', { name: /预览：自动生成的分解 skill/ }).click()
+  await win.getByRole('button', { name: '预览分解 skill' }).click()
   await expect(win.getByLabel('自动生成的分解 skill 文本')).toContainText('不确定性高、先探路不交付')
 
   await app.close()
 })
 
-test('解绑成员仓后分组减少（不删磁盘）', async () => {
+test('解绑成员仓：项目少一个成员、磁盘目录仍在、重开后仍然如此', async () => {
   const { repoDirs } = makeMultiRepoContainer('unlink-me', ['keep2', 'drop'])
   const userData = tempDir('klarit-ud-')
   seedMultiRepoProject(userData, {
@@ -238,14 +260,32 @@ test('解绑成员仓后分组减少（不删磁盘）', async () => {
     ]
   })
 
-  const app = await launch({ userData })
-  const win = await app.firstWindow()
-  await expect(win.getByText('drop')).toBeVisible()
+  let app = await launch({ userData })
+  let win = await app.firstWindow()
+  await expect(win.getByText('drop')).toBeVisible() // 文件树里作为普通文件夹出现
 
-  // 解绑 drop（按钮 hover 才显示）→ 该分组消失；只剩单成员，项目仍在（退回单仓直接展示文件树）
-  await win.getByText('drop').hover()
-  await win.getByRole('button', { name: /解绑 drop/ }).click()
-  await expect(win.getByText('drop')).toHaveCount(0)
-  await expect(win.getByRole('button', { name: /unlink-me/ })).toBeVisible()
+  // **不点侧边栏的解绑按钮**：侧边栏已改成「以项目目录为根的普通文件树」，带解绑按钮的 RepoGroup
+  // 组件已不被任何地方渲染（`unlinkMember` IPC 仍在，但目前没有界面入口）。这里直接走 IPC，
+  // 验它仍然管用：成员减一、磁盘目录不删、重开后仍然如此。
+  await win.evaluate(async () => window.klarit.unlinkMember('grp-unlink', 'm-drop'))
+
+  await expect(async () => {
+    const n = await win.evaluate(async () => {
+      const list = await window.klarit.listProjects()
+      return list.find((p) => p.id === 'grp-unlink')?.members.length ?? -1
+    })
+    expect(n).toBe(1)
+  }).toPass({ timeout: 10_000 })
+  expect(existsSync(repoDirs.drop)).toBe(true) // 不删磁盘
+
+  // 关软件重开：解绑已落盘
+  await app.close()
+  app = await launch({ userData })
+  win = await app.firstWindow()
+  const members = await win.evaluate(async () => {
+    const list = await window.klarit.listProjects()
+    return list.find((p) => p.id === 'grp-unlink')?.members.map((m) => m.derivedName) ?? []
+  })
+  expect(members).toEqual(['keep2'])
   await app.close()
 })

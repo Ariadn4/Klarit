@@ -44,17 +44,15 @@ test('需求卡 B1：建卡→看板出卡→详情运行绑卡→关软件重�
   })
   await win.reload()
 
-  // 看板「待办」列出现该卡。
-  const todo = win.getByRole('region', { name: '待办' })
-  await expect(todo.getByText('加个东西')).toBeVisible()
+  // 看板上出现该卡。**不断言它停在「待办」列**：auto-run-todo 落地后卡建出来即被自动排程起跑，
+  // 会立刻按当前节点的 stage 流出待办列。
+  await expect(win.getByText('加个东西')).toBeVisible()
 
-  // 点卡 → 详情面板打开（出现「运行」控制）。
+  // 点卡 → 详情面板打开。运行已由自动排程起，故控制按钮是「暂停」而非「运行」。
   await win.getByText('加个东西').click()
-  const runBtn = win.getByRole('button', { name: '运行' })
-  await expect(runBtn).toBeVisible()
+  await expect(win.getByRole('button', { name: '暂停' })).toBeVisible({ timeout: 20_000 })
 
-  // 点运行 → 卡绑定运行（activeRunId）。引擎在真 git 仓上跑默认工作流。
-  await runBtn.click()
+  // 卡自动绑定运行（activeRunId）。引擎在真 git 仓上跑默认工作流。
   await expect(async () => {
     const card = await win.evaluate(async () => (await window.klarit.listCards())[0])
     expect(card.activeRunId).toBeTruthy()
