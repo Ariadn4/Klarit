@@ -1,11 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import type { CommandResult } from '../command-run'
 import type { EngineProgressEvent, WorkflowDefinition, WorkflowGateItem, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps } from './engine'
 import { createMemoryRunStore } from './run-store'
+import { testTmpDir } from '../test-tmp'
 
 let nid = 0
 function commandNode(
@@ -70,7 +69,7 @@ afterEach(() => {
 
 describe('command 节点执行', () => {
   it('命令成功(code 0)→ 节点完成、运行 done,cwd 为(存在的)worktree', async () => {
-    const wtDir = mkdtempSync(join(tmpdir(), 'klarit-wt-'))
+    const wtDir = testTmpDir('klarit-wt-')
     trash.push(wtDir)
     let seenCwd = ''
     const { engine } = makeEngine(wf([commandNode('npm test')]), async (cmd, opts) => {
@@ -714,7 +713,7 @@ describe('命令节点手动推进 + 后台化', () => {
     '集成(真 runCommand):后台命令到超时被真的杀掉、记录摘除',
     async () => {
       const NODE = `"${process.execPath}"`
-      const wtDir = mkdtempSync(join(tmpdir(), 'klarit-bgto-'))
+      const wtDir = testTmpDir('klarit-bgto-')
       trash.push(wtDir)
       const def = wf([
         commandNode(`${NODE} -e "setInterval(()=>{},100)"`, { timeoutSec: 0.6 }),

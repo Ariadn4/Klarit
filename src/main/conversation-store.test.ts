@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import type { ConversationMessage } from '../shared/types'
 import { createConversationStore, createMemoryConversationStore, type ConversationStore } from './conversation-store'
+import { testTmpDir } from './test-tmp'
 
 const NOW = 1_700_000_000_000
 
@@ -148,7 +148,7 @@ contract('createMemoryConversationStore', () => createMemoryConversationStore())
 describe('createConversationStore（文件持久化）', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-conv-'))
+    dir = testTmpDir('klarit-conv-')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -182,5 +182,5 @@ describe('createConversationStore（文件持久化）', () => {
     expect(() => s.removeScope('never')).not.toThrow()
   })
 
-  contract('file-backed 契约', () => createConversationStore(mkdtempSync(join(tmpdir(), 'klarit-conv-c-'))))
+  contract('file-backed 契约', () => createConversationStore(testTmpDir('klarit-conv-c-')))
 })

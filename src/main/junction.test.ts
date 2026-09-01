@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { linkJunction, readJunction, unlinkReparsePoints } from './junction'
+import { testTmpDir } from './test-tmp'
 
 const trash: string[] = []
 function tmp(prefix: string): string {
-  const d = mkdtempSync(join(tmpdir(), prefix))
+  const d = testTmpDir(prefix)
   trash.push(d)
   return d
 }

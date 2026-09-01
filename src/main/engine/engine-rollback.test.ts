@@ -1,13 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentHandshake, RunRequest, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps, type AgentPrep } from './engine'
 import { createMemoryRunStore } from './run-store'
 import { memberWorktreePath } from './branch-naming'
 import type { AgentRunner } from '../agent/runner'
+import { testTmpDir } from '../test-tmp'
 
 const trash: string[] = []
 function track(d: string): string {
@@ -202,7 +202,7 @@ describe('重入不重置（真实仓）+ 判定 agent 只读不提交', () => {
   }
 
   it('确认回退不 git reset：判定前的提交仍可达；判定 agent 不新增提交', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'rb-')))
+    const repo = track(testTmpDir('rb-'))
     initRepo(repo)
     const git = (...a: string[]): string => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim()
     const gitWt = (wt: string, ...a: string[]): string => execFileSync('git', a, { cwd: wt, encoding: 'utf8' }).trim()
@@ -231,7 +231,7 @@ describe('重入不重置（真实仓）+ 判定 agent 只读不提交', () => {
       prepareAgent: () => nodePrep,
       prepareHealAgent: () => judgePrep,
       readHandshake: (p) => (p.includes('rollback') ? judgeHs : { status: 'done' }),
-      handshakeDir: track(mkdtempSync(join(tmpdir(), 'hs-')))
+      handshakeDir: track(testTmpDir('hs-'))
     })
     const req: RunRequest = { workflowId: 'wf', repoPath: repo, branch: 'card-x', worktreePath: wt, baseBranch: 'main' }
 

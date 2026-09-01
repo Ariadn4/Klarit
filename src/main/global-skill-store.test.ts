@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createGlobalSkillStore, DECOMPOSE_SKILL_FILE } from './global-skill-store'
+import { testTmpDir } from './test-tmp'
 
 let base: string
 let ext: string
 
 beforeEach(() => {
-  base = mkdtempSync(join(tmpdir(), 'klarit-gskill-'))
-  ext = mkdtempSync(join(tmpdir(), 'klarit-ext-'))
+  base = testTmpDir('klarit-gskill-')
+  ext = testTmpDir('klarit-ext-')
 })
 afterEach(() => {
   rmSync(base, { recursive: true, force: true })

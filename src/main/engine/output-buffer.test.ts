@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
-import { isAbsolute, join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { appendFileSync, rmSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import {
   createOutputBuffer,
   createMemoryOutputBuffer,
   type OutputBuffer
 } from './output-buffer'
+import { testTmpDir } from '../test-tmp'
 
 function contract(name: string, make: () => OutputBuffer): void {
   describe(name, () => {
@@ -66,7 +66,7 @@ contract('createMemoryOutputBuffer', () => createMemoryOutputBuffer())
 describe('createOutputBuffer（文件持久化）', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-out-'))
+    dir = testTmpDir('klarit-out-')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -85,7 +85,7 @@ describe('createOutputBuffer（文件持久化）', () => {
 describe('原始流记录（与展示转写并存）', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-raw-'))
+    dir = testTmpDir('klarit-raw-')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 

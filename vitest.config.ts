@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   test: {
+    // 全局搭台/拆台：开一个 run 级临时目录根，跑完整体删掉（见 vitest.global-setup.ts）。
+    globalSetup: ['./vitest.global-setup.ts'],
     projects: [
       {
         test: {

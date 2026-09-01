@@ -7,10 +7,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DetectedAgent } from '../../shared/types'
+import { testTmpDir } from '../test-tmp'
 
 const spawnMock = vi.fn()
 vi.mock('node:child_process', () => ({
@@ -62,7 +62,7 @@ beforeEach(() => {
   child = fakeChild()
   spawnMock.mockImplementation(() => child)
   setDetectedAgents([AGENT])
-  dir = mkdtempSync(join(tmpdir(), 'klarit-hist-'))
+  dir = testTmpDir('klarit-hist-')
 })
 
 afterEach(() => {

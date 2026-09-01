@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunRequest, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps, type AgentPrep } from './engine'
@@ -9,6 +8,7 @@ import { createMemoryRunStore } from './run-store'
 import { memberWorktreePath } from './branch-naming'
 import { buildFailureDecision, buildCommandFailedDecision, buildManualGateDecision, buildGateDecision } from './decisions'
 import type { AgentRunner } from '../agent/runner'
+import { testTmpDir } from '../test-tmp'
 
 function git(dir: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim()
@@ -105,7 +105,7 @@ function engineFor(def: WorkflowDefinition, extra: Partial<EngineDeps>): ReturnT
 
 describe('合并冲突 heal（在卡分支上解、快进合回）', () => {
   it('冲突 → heal 解冲突 → 卡分支快进合回主线 → 运行 done', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-')))
+    const repo = track(testTmpDir('heal-'))
     initRepo(repo)
     const wt = makeConflict(repo, 'card-x')
     const def = mergeWf()
@@ -122,7 +122,7 @@ describe('合并冲突 heal（在卡分支上解、快进合回）', () => {
   })
 
   it('heal 连续失败超限 → 回落人工「放弃合并，跳过该节点」，计数=3 且工作区干净', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-')))
+    const repo = track(testTmpDir('heal-'))
     initRepo(repo)
     const wt = makeConflict(repo, 'card-x')
     const def = mergeWf()
@@ -137,7 +137,7 @@ describe('合并冲突 heal（在卡分支上解、快进合回）', () => {
   })
 
   it('无 prepareHealAgent（heal 不可用）→ 直接回落人工，不尝试 heal', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-')))
+    const repo = track(testTmpDir('heal-'))
     initRepo(repo)
     const wt = makeConflict(repo, 'card-x')
     const def = mergeWf()
@@ -156,7 +156,7 @@ describe('合并冲突 heal（在卡分支上解、快进合回）', () => {
 
 describe('多仓逐仓 heal', () => {
   it('两成员仓仅一个冲突 → 只对冲突仓拉 heal，另一仓直接干净合并，运行 done', async () => {
-    const baseDir = track(mkdtempSync(join(tmpdir(), 'heal-multi-')))
+    const baseDir = track(testTmpDir('heal-multi-'))
     const web = join(baseDir, 'web')
     const api = join(baseDir, 'api')
     mkdirSync(web)
@@ -202,7 +202,7 @@ describe('命令失败 heal', () => {
   }
 
   it('命令没过 → heal 改代码+引擎提交 → 重跑命令通过 → done', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-cmd-')))
+    const repo = track(testTmpDir('heal-cmd-'))
     initRepo(repo)
     const wt = memberWorktreePath(repo, 'card-x')
     git(repo, 'branch', 'card-x')
@@ -228,7 +228,7 @@ describe('命令失败 heal', () => {
   })
 
   it('命令 heal 连续失败超限 → 回落人工「命令执行失败」决策', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-cmd-')))
+    const repo = track(testTmpDir('heal-cmd-'))
     initRepo(repo)
     const wt = memberWorktreePath(repo, 'card-x')
     git(repo, 'branch', 'card-x')
@@ -267,7 +267,7 @@ describe('决策自由输入（结构层）', () => {
 
 describe('决策自由输入 → 无当前 agent 则新起读写处置 agent', () => {
   it('引擎失败决策收到自由文本 → 新起处置 agent（runAgent.start 被调用）', async () => {
-    const repo = track(mkdtempSync(join(tmpdir(), 'heal-disp-')))
+    const repo = track(testTmpDir('heal-disp-'))
     initRepo(repo)
     // 造一个 feat 分支带未合并提交 → delete-branch 报 not-merged（无自动 heal 的失败）
     git(repo, 'checkout', '-q', '-b', 'feat')

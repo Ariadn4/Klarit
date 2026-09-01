@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { WorkflowDefinition } from '../shared/types'
 import { createDefaultWorkflow } from '../shared/workflow'
 import { serializeWorkflow, parseWorkflow, createWorkflowStore } from './workflow-store'
+import { testTmpDir } from './test-tmp'
 
 let base: string
 let ext: string
 
 beforeEach(() => {
-  base = mkdtempSync(join(tmpdir(), 'klarit-wf-'))
-  ext = mkdtempSync(join(tmpdir(), 'klarit-ext-'))
+  base = testTmpDir('klarit-wf-')
+  ext = testTmpDir('klarit-ext-')
 })
 afterEach(() => {
   rmSync(base, { recursive: true, force: true })

@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { git, initRepo, initBare, makeTrash } from '../git-test-helpers'
 import { makeGitRunner } from '../git'
 import { createDefaultWorkflow, createDefaultWorkflowPr } from '../../shared/workflow'
 import { createEngine } from './engine'
 import { createRunStore } from './run-store'
+import { testTmpDir } from '../test-tmp'
 
 const trash = makeTrash()
 afterEach(() => trash.cleanup())
@@ -30,7 +30,7 @@ describe('默认工作流端到端 smoke', () => {
     const { repo, bare } = projectWithFeature()
     const def = createDefaultWorkflow('local')
     const wt = trash.track(join(repo, '..', `wt-local-${Date.now()}`))
-    const engine = createEngine({ getWorkflow: () => def, store: createRunStore(trash.track(mkdtempSync(join(tmpdir(), 'runs-')))) })
+    const engine = createEngine({ getWorkflow: () => def, store: createRunStore(trash.track(testTmpDir('runs-'))) })
     // 合并前停在人工审批门（重大步骤须人拍板：默认工作流不再无人值守跑到底）。
     const paused = await engine.start({
       workflowId: 'local',
@@ -54,7 +54,7 @@ describe('默认工作流端到端 smoke', () => {
     const { repo, bare } = projectWithFeature()
     const def = createDefaultWorkflowPr('pr')
     const wt = trash.track(join(repo, '..', `wt-pr-${Date.now()}`))
-    const runsDir = trash.track(mkdtempSync(join(tmpdir(), 'runs-')))
+    const runsDir = trash.track(testTmpDir('runs-'))
 
     // 引擎 A：跑到 push 需求分支后的人工评审门停住。
     const engineA = createEngine({ getWorkflow: () => def, store: createRunStore(runsDir) })
@@ -86,7 +86,7 @@ describe('默认工作流端到端 smoke', () => {
     // 用一个无门、纯引擎的小工作流，手造一份「running」断点，验证 resumeAll 能把它跑完。
     const repo = trash.track(initRepo('klarit-resume-'))
     const def = createDefaultWorkflow('local')
-    const runsDir = trash.track(mkdtempSync(join(tmpdir(), 'runs-')))
+    const runsDir = trash.track(testTmpDir('runs-'))
     const store = createRunStore(runsDir)
     // 直接写入一份初始 running 断点（模拟上次关软件时留存）。
     store.save({

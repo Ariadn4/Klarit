@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import type { CandidateCard, CardTypeDef } from '../shared/types'
 import { typeArchetypeMap } from '../shared/card-type'
 import { createCardStore, createMemoryCardStore, type CardStore } from './card-store'
+import { testTmpDir } from './test-tmp'
 
 const TYPES: CardTypeDef[] = [
   { id: 'epic', name: 'Epic', description: '', archetype: 'container' },
@@ -316,7 +316,7 @@ describe('createCardStore（文件持久化）', () => {
     if (baseDir) rmSync(baseDir, { recursive: true, force: true })
   })
   beforeEach(() => {
-    baseDir = mkdtempSync(join(tmpdir(), 'klarit-cards-'))
+    baseDir = testTmpDir('klarit-cards-')
   })
 
   it('一卡一文件、损坏文件容错跳过', () => {
@@ -343,7 +343,7 @@ describe('createCardStore（文件持久化）', () => {
 describe('createCardStore 契约', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-cards-c-'))
+    dir = testTmpDir('klarit-cards-c-')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
   contract('file-backed', () => createCardStore(dir))

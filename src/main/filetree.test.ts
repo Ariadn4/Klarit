@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { listDir } from './filetree'
+import { testTmpDir } from './test-tmp'
 
 let dir: string
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'klarit-ft-'))
+  dir = testTmpDir('klarit-ft-')
 })
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })

@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { DEFAULT_LOCAL_MERGE_WORKFLOW_ID, createDefaultWorkflow, validateWorkflow } from '../shared/workflow'
 import { createWorkflowStore, seedDefaultLocalMergeWorkflow } from './workflow-store'
+import { testTmpDir } from './test-tmp'
 
 let base: string
 
 beforeEach(() => {
-  base = mkdtempSync(join(tmpdir(), 'klarit-seed-'))
+  base = testTmpDir('klarit-seed-')
 })
 afterEach(() => {
   rmSync(base, { recursive: true, force: true })

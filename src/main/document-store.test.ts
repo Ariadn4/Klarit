@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import type { DocRegistry } from '../shared/types'
 import { createDocumentStore, type DocumentStore } from './document-store'
+import { testTmpDir } from './test-tmp'
 
 const reg = (memberId: string, over: Partial<DocRegistry> = {}): DocRegistry => ({
   memberId,
@@ -29,7 +29,7 @@ describe('createDocumentStore：per-成员仓 JSON 持久化', () => {
   let store: DocumentStore
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-docstore-'))
+    dir = testTmpDir('klarit-docstore-')
     store = createDocumentStore(dir)
   })
 

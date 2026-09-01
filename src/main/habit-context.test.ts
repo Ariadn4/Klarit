@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import {
@@ -13,12 +13,13 @@ import {
 import { authorWorkflow, createOrchestrateSeam, type OpsProducer, type OrchestrateDeps } from './orchestrate-service'
 import { lintWorkflow } from '../shared/workflow'
 import type { CardTypeDef, WorkflowDefinition } from '../shared/types'
+import { testTmpDir } from './test-tmp'
 
 /** 本用例文件建的所有真实临时目录，收尾统一删。 */
 const trash: string[] = []
 
 function tmpDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `klarit-${prefix}-`))
+  const dir = testTmpDir(`klarit-${prefix}-`)
   trash.push(dir)
   return dir
 }

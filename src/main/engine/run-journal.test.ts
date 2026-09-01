@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import type { EngineProgressEvent } from '../../shared/types'
 import { createRunJournal, createMemoryRunJournal, type RunJournal } from './run-journal'
+import { testTmpDir } from '../test-tmp'
 
 /** 八类结构性事件各一（顺序即写入次序）。 */
 const STRUCTURAL: EngineProgressEvent[] = [
@@ -92,7 +91,7 @@ contract('createMemoryRunJournal', () => createMemoryRunJournal())
 describe('createRunJournal（文件持久化）', () => {
   let dir: string
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-journal-'))
+    dir = testTmpDir('klarit-journal-')
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 

@@ -1,7 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   makeAsyncGitRunner,
@@ -15,6 +14,7 @@ import {
   checkBranchMerged
 } from './git-write'
 import { listBranches, listWorktrees, makeGitRunner } from './git'
+import { testTmpDir } from './test-tmp'
 
 /** 在 dir 下同步跑 git（仅测试搭台用），失败抛出。 */
 function git(dir: string, ...args: string[]): string {
@@ -23,7 +23,7 @@ function git(dir: string, ...args: string[]): string {
 
 /** 建一个带初始提交的真实仓库，返回其路径。 */
 function initRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'klarit-gitw-'))
+  const dir = testTmpDir('klarit-gitw-')
   git(dir, 'init', '-q', '-b', 'main')
   git(dir, 'config', 'user.email', 'test@klarit.dev')
   git(dir, 'config', 'user.name', 'Klarit Test')
@@ -35,7 +35,7 @@ function initRepo(): string {
 
 /** 建一个裸仓库当远端，返回其路径。 */
 function initBare(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'klarit-bare-'))
+  const dir = testTmpDir('klarit-bare-')
   git(dir, 'init', '-q', '--bare', '-b', 'main')
   return dir
 }
@@ -65,7 +65,7 @@ describe('makeAsyncGitRunner', () => {
   })
 
   it('失败命令以非零 code + stderr 返回，Promise 不抛', async () => {
-    const dir = track(mkdtempSync(join(tmpdir(), 'klarit-nogit-')))
+    const dir = track(testTmpDir('klarit-nogit-'))
     const run = makeAsyncGitRunner(dir)
     const r = await run(['status'])
     expect(r.code).not.toBe(0)
@@ -220,7 +220,7 @@ describe('pushBranch / deleteRemoteBranch（本地裸仓当 origin）', () => {
     git(repoA, 'remote', 'add', 'origin', bare)
     await pushBranch(makeAsyncGitRunner(repoA), 'origin', 'main')
     // 第二个克隆推进远端 main
-    const repoB = track(mkdtempSync(join(tmpdir(), 'klarit-cloneB-')))
+    const repoB = track(testTmpDir('klarit-cloneB-'))
     git(repoB, 'clone', '-q', bare, '.')
     git(repoB, 'config', 'user.email', 'b@klarit.dev')
     git(repoB, 'config', 'user.name', 'B')

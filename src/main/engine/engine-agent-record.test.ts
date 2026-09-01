@@ -6,16 +6,15 @@
  * - 本能力上线前的运行没有原始记录 → 回落既有展示转写，不报错、不阻断续接。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import { appendFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import type { AgentHandshake, RunRequest, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type AgentPrep } from './engine'
 import { createMemoryRunStore } from './run-store'
 import { createOutputBuffer, createMemoryOutputBuffer, type OutputBuffer } from './output-buffer'
 import { claudeAdapter } from '../agent/adapter'
 import type { AgentRunner, AgentRunSpec } from '../agent/runner'
+import { testTmpDir } from '../test-tmp'
 
 const LONG_PATH = 'src/main/engine/engine-with-a-really-long-file-name-that-blows-past-eighty-characters.ts'
 
@@ -89,7 +88,7 @@ function failThenDone(): () => AgentHandshake {
 
 const dirs: string[] = []
 function tmpBuffer(): OutputBuffer {
-  const d = mkdtempSync(join(tmpdir(), 'klarit-engrec-'))
+  const d = testTmpDir('klarit-engrec-')
   dirs.push(d)
   return createOutputBuffer(d)
 }

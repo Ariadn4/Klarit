@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ensureProjectId, readProjectId, writeProjectId } from './identity'
+import { testTmpDir } from './test-tmp'
 
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'klarit-id-'))
+  dir = testTmpDir('klarit-id-')
 })
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
@@ -37,8 +37,8 @@ describe('project identity', () => {
   })
 
   it('生成的 UUID 各不相同', () => {
-    const a = ensureProjectId(mkdtempSync(join(tmpdir(), 'klarit-id-')))
-    const b = ensureProjectId(mkdtempSync(join(tmpdir(), 'klarit-id-')))
+    const a = ensureProjectId(testTmpDir('klarit-id-'))
+    const b = ensureProjectId(testTmpDir('klarit-id-'))
     expect(a).not.toBe(b)
   })
 })

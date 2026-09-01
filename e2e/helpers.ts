@@ -3,8 +3,31 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+/** 环境变量名：run 根路径经它在 worker 间共享（playwright 的 teardown 也读它）。 */
+export const E2E_TMP_ROOT_ENV = 'KLARIT_E2E_TMP_ROOT'
+
+let cachedRoot: string | null = null
+
+/**
+ * 本轮 e2e 的临时目录根（`<TEMP>/klarit-e2erun-<id>/`）。所有临时目录都建在它下面，
+ * 跑完由 `global-teardown.ts` 整体删掉——不依赖各用例记不记得自己清理。
+ * 引擎在「仓的兄弟位置」建出的 worktree 也因此落在根内，一并被收走。
+ */
+export function e2eTmpRoot(): string {
+  const fromEnv = process.env[E2E_TMP_ROOT_ENV]
+  if (fromEnv) {
+    mkdirSync(fromEnv, { recursive: true })
+    return fromEnv
+  }
+  if (!cachedRoot) {
+    cachedRoot = mkdtempSync(join(tmpdir(), 'klarit-e2erun-'))
+    process.env[E2E_TMP_ROOT_ENV] = cachedRoot
+  }
+  return cachedRoot
+}
+
 export function tempDir(prefix = 'klarit-e2e-'): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  return mkdtempSync(join(e2eTmpRoot(), prefix))
 }
 
 /** 在临时位置建一个名为 name 的目录（其文件夹名即派生项目名），含若干文件。 */

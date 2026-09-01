@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { makeAgentProbe, scanAgents, type AgentProbe } from './agents'
 import { SUPPORTED_AGENTS } from '../shared/agents'
+import { testTmpDir } from './test-tmp'
 
 const isWin = process.platform === 'win32'
 /** 该平台的合法可执行形态（win 上护栏只认 .exe/.cmd）。 */
@@ -23,7 +23,7 @@ function makeExe(dir: string, name: string, ext = EXT): string {
 }
 
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), 'klarit-agents-'))
+  root = testTmpDir('klarit-agents-')
   bin = join(root, 'bin')
   worktree = join(root, 'proj--wt--feat')
   mkdirSync(bin, { recursive: true })

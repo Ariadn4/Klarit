@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseHandshake, readHandshake } from './handshake'
+import { testTmpDir } from '../test-tmp'
 
 describe('parseHandshake — 纯解析（无 fs）', () => {
   it('合法 done', () => {
@@ -48,7 +48,7 @@ describe('parseHandshake — 纯解析（无 fs）', () => {
 
 describe('readHandshake — 读引擎指定的绝对路径', () => {
   it('文件存在则读并解析；不存在则乐观 done', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'klarit-hs-'))
+    const dir = testTmpDir('klarit-hs-')
     const path = join(dir, 'plan.json')
     try {
       // 不存在 → done

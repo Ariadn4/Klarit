@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import type { DocRegistry, ManagedDoc } from '../shared/types'
 import { analyzeDocuments, mergeScan, scanDocuments } from './document-scan'
+import { testTmpDir } from './test-tmp'
 
 function seed(dir: string, relPath: string, content = '# 内容'): void {
   const abs = join(dir, ...relPath.split('/'))
@@ -15,7 +15,7 @@ describe('scanDocuments：walker + IGNORED_DIRS + .gitignore + classify + collap
   let dir: string
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'klarit-docscan-'))
+    dir = testTmpDir('klarit-docscan-')
   })
 
   afterEach(() => {
@@ -72,7 +72,7 @@ describe('scanDocuments：walker + IGNORED_DIRS + .gitignore + classify + collap
 
   it('不跟进符号链接/junction（防走进 worktree/外部大目录或成环冻住主进程）', () => {
     // 链接目标放在被扫目录之外，内含文档；仓内放一个指向它的 junction。
-    const target = mkdtempSync(join(tmpdir(), 'klarit-docscan-target-'))
+    const target = testTmpDir('klarit-docscan-target-')
     try {
       seed(target, 'linked-guide.md')
       seed(dir, 'docs/guide.md')

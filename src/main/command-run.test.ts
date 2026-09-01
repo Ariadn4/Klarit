@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runCommand } from './command-run'
+import { testTmpDir } from './test-tmp'
 
 /** node 可执行（含空格路径时加引号），供 shell 解析。 */
 const NODE = `"${process.execPath}"`
@@ -15,7 +15,7 @@ afterEach(() => {
 
 /** 建一个临时工作目录并写入若干 .js 脚本，返回目录路径。 */
 function workdir(scripts: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), 'klarit-cmd-'))
+  const dir = testTmpDir('klarit-cmd-')
   trash.push(dir)
   for (const [name, body] of Object.entries(scripts)) writeFileSync(join(dir, name), body)
   return dir

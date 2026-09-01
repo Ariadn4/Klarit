@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentHandshake, RunRequest, WorkflowDefinition, WorkflowNode } from '../../shared/types'
 import { createEngine, type EngineDeps, type AgentPrep } from './engine'
 import { createMemoryRunStore } from './run-store'
 import { memberWorktreePath } from './branch-naming'
 import type { AgentRunner, AgentRunSpec } from '../agent/runner'
+import { testTmpDir } from '../test-tmp'
 
 let nid = 0
 function agentNode(gate?: WorkflowNode['gate']): WorkflowNode {
@@ -223,7 +223,7 @@ describe('多仓：一个 agent 跨仓（extraDirs 带其余目标仓）', () =>
   })
 
   it('target=all 两成员仓 → 一个 agent，主仓作 cwd、另一仓进 extraDirs', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'multi-'))
+    const base = testTmpDir('multi-')
     tmps.push(base)
     const webRepo = join(base, 'web')
     const apiRepo = join(base, 'api')
@@ -269,7 +269,7 @@ describe('多仓：一个 agent 跨仓（extraDirs 带其余目标仓）', () =>
   })
 
   it('上游 agent 判定 repos=[api] → 下游 target=fromUpstream 只作用 api', async () => {
-    const base = mkdtempSync(join(tmpdir(), 'fu-'))
+    const base = testTmpDir('fu-')
     tmps.push(base)
     const webRepo = join(base, 'web')
     const apiRepo = join(base, 'api')

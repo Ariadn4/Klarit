@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createDefaultRulePack } from '../shared/rule-pack'
 import type { RulePack } from '../shared/rule-pack'
 import { serializeRulePack, parseRulePack, createRulePackStore } from './rule-pack-store'
+import { testTmpDir } from './test-tmp'
 
 let base: string
 let ext: string
 
 beforeEach(() => {
-  base = mkdtempSync(join(tmpdir(), 'klarit-rp-'))
-  ext = mkdtempSync(join(tmpdir(), 'klarit-rpext-'))
+  base = testTmpDir('klarit-rp-')
+  ext = testTmpDir('klarit-rpext-')
 })
 afterEach(() => {
   rmSync(base, { recursive: true, force: true })
